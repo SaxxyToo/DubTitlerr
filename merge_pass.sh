@@ -11,7 +11,16 @@
 # Env: MERGE_ROOTS, OLLAMA_URL, REPAIR_MODEL, GLOSSARY_DIR, PLEX_URL, PLEX_TOKEN, PLEX_SECTION,
 #      MIN_FREE_GB, KEEP_LANGS.
 ROOT="${MERGE_ROOTS:-/media/Anime Library}"
-APP="${APP_DIR:-/scripts}"
+APP="${APP_DIR:-$(cd "$(dirname "$0")" 2>/dev/null && pwd)}"
+# Fail as a CONFIGURATION error before the per-stem loop, not as a "crashed" repair on the
+# first episode it touches: a missing $APP/repair.py used to record {"repair": "crashed"}
+# against that stem, which then blocked every later pass until someone cleared the stage.
+for _f in common.py repair.py dub_signs_merge.py mux.py; do
+	if [ ! -f "$APP/$_f" ]; then
+		echo "FATAL: $_f not found under APP=$APP — set APP_DIR to the directory holding the pipeline scripts"
+		exit 1
+	fi
+done
 export PYTHONPATH="$APP${PYTHONPATH:+:$PYTHONPATH}" # so inline `python3 -c "import common"` snippets resolve
 # Stored settings (settings.json / secrets.json, written by the web UI): applied at the start of EVERY pass, so a change takes
 # effect at the next pass boundary and never mid-episode. NOT `source`d: review_settings_write.py parses and re-validates the
