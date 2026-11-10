@@ -3,10 +3,13 @@
 # For every episode with a dubtitle sidecar that isn't muxed yet:
 #   1. assemble: repair low-confidence lines + merge signs/songs into a .ass (mkv);
 #      mp4 episodes have no embedded signs so they stay a dialogue-only .srt,
-#   2. mux: embed the .ass (mkv) / .srt (mp4) into the video as a default "Dubtitles"
-#      track WITH the embedded fonts (mp4 is remuxed to mkv) -> signs render correctly,
-#      a .dubtitles.done stamp is written, sidecars removed.
-# Idempotent: a muxed episode has the stamp + embedded track, so it's skipped next pass.
+#   2. delivery: mux (default) embeds the .ass (mkv) / .srt (mp4) into the video as a
+#      default "Dubtitles" track WITH the embedded fonts (mp4 is remuxed to mkv) -> signs
+#      render correctly, a .dubtitles.done stamp is written, sidecars removed. With
+#      OUTPUT_MODE=sidecar the assembled subtitle is published as
+#      <episode><SIDECAR_SUFFIX>.<ass|srt> instead and the video is never rewritten.
+# Idempotent: a delivered episode has the stamp (and, in mux mode, the track), so it's
+# skipped next pass.
 # Per-episode availability; refreshes Plex when this pass muxed anything new.
 # Env: MERGE_ROOTS, OLLAMA_URL, REPAIR_MODEL, GLOSSARY_DIR, PLEX_URL, PLEX_TOKEN, PLEX_SECTION,
 #      MIN_FREE_GB, KEEP_LANGS.
