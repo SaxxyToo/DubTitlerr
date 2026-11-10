@@ -73,6 +73,7 @@ services:
       # delivery: mux (default) embeds the track; sidecar writes the subtitle beside the video and never rewrites it
       # OUTPUT_MODE: sidecar
       # SIDECAR_SUFFIX: .dub.en   # <episode>.dub.en.ass / .srt; default .eng.dubtitles
+      # ADOPT_DUB_EN: "1"         # upgrade an existing .dub.en sidecar through repair + signs merge
       # MUX_KEEP_ALL_SUBS: "1"    # keep every embedded subtitle track instead of the KEEP_LANGS whitelist
       # on by default (repair):
       # REPAIR_KEEP_NAME_PARTS: "1" # "0": no name-part check and no prompt rule

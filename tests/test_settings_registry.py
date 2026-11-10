@@ -35,6 +35,7 @@ FIRST_WAVE = {
         "REVIEW_GATE_STALE_DAYS",
         "OUTPUT_MODE",
         "SIDECAR_SUFFIX",
+        "ADOPT_DUB_EN",
         "MUX_KEEP_ALL_SUBS",
         "MERGE_INTERVAL",
     ],

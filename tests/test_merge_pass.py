@@ -536,3 +536,28 @@ def test_sweep_on_still_merges_every_show(tmp_path):
     res, calls = _gated_run(tmp_path, root, extra_env={"LIBRARY_SWEEP": "true", "REQUESTS_DIR": str(rdir)})
     assert (root / "Requested" / "ep01.eng.dubtitles.ass").exists()
     assert (root / "Second" / "ep01.eng.dubtitles.ass").exists()
+
+
+# --- adopting another pipeline's .dub.en sidecar (ADOPT_DUB_EN) --------------------------
+
+
+def test_a_dub_en_sidecar_is_adopted_only_when_asked(tmp_path):
+    """Off by default the pass must never move a file it did not produce; on, the file is
+    renamed to the pipeline's artifact name and goes through repair -> signs -> mux."""
+    root = tmp_path / "library"
+    show = root / "Show"
+    show.mkdir(parents=True)
+    (tmp_path / "calls.log").write_text("")
+    (show / "ep01.mkv").write_text("")
+    dub = show / "ep01.dub.en.srt"
+    dub.write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+
+    res, calls = _gated_run(tmp_path, root)
+    assert calls == [], (calls, res.stdout, res.stderr)
+    assert dub.exists(), "default: a dubsub sidecar is left alone"
+
+    res2, calls2 = _gated_run(tmp_path, root, extra_env={"ADOPT_DUB_EN": "1"})
+    assert calls2 == ["repair ep01", "signs ep01", "mux ep01"], (calls2, res2.stdout, res2.stderr)
+    assert "### adopt ep01.dub.en.srt" in res2.stdout
+    assert not dub.exists()
+    assert (show / "ep01.eng.dubtitles.ass").exists()

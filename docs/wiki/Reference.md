@@ -345,6 +345,7 @@ Every wiki fetch is https-only. A redirect to another scheme is refused before t
 | `DUB_SUFFIX`              | `.eng.dubtitles.srt`     | Sidecar the merge step looks for                                                                  |
 | `OUTPUT_MODE`             | `mux`                    | `mux` embeds the subtitle; `sidecar` leaves it beside the video and rewrites nothing              |
 | `SIDECAR_SUFFIX`          | `.eng.dubtitles`         | Sidecar mode: text between the episode name and the extension (`.dub.en` → `Episode.dub.en.srt`)  |
+| `ADOPT_DUB_EN`            | `0`                      | `1` feeds an existing `.dub.en.srt/.ass` (dubsub) through repair and signs merge; off never moves a file the pass did not produce |
 | `MUX_KEEP_ALL_SUBS`       | `0`                      | `1` keeps every subtitle track; `0` applies the `KEEP_LANGS` whitelist, which can drop a mislabeled English track |
 | `REVIEW_GATE_SHOWS`       | _(empty)_                | Shows whose **unreviewed repairs** wait before delivery; an episode with no applied repair is not held |
 | `REVIEW_GATE_STALE_DAYS`  | `7`                      | A hold older than this is reported loudly and **stays held**. It buys a log line, never a release |

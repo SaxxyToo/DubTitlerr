@@ -102,6 +102,24 @@ has_record() {
 }
 
 before=$(find "$@" -type f -name "*.dubtitles.done" | wc -l)
+# Optional bridge (ADOPT_DUB_EN=1): a dubsub-delivered .dub.en.srt/.ass is renamed to this
+# pipeline's own artifact name so repair/signs can upgrade it and sidecar mode republishes
+# it under the house name. OFF by default: on a library that already carries hundreds of
+# dubsub sidecars, adopting them all would re-assemble every one in a single pass.
+if [ "${ADOPT_DUB_EN:-0}" = "1" ]; then
+	find "$@" -type f \( -name "*.dub.en.srt" -o -name "*.dub.en.ass" \) | while IFS= read -r f; do
+		case "$f" in
+		*.dub.en.srt) stem="${f%.dub.en.srt}"; ext="srt" ;;
+		*) stem="${f%.dub.en.ass}"; ext="ass" ;;
+		esac
+		# A stamped episode is already delivered; an existing artifact is already queued.
+		[ -f "$stem.dubtitles.done" ] && continue
+		[ -f "$stem.eng.dubtitles.srt" ] && continue
+		[ -f "$stem.eng.dubtitles.ass" ] && continue
+		echo "### adopt $(basename "$f")"
+		mv -n "$f" "$stem.eng.dubtitles.$ext" || true
+	done
+fi
 # episodes with a sidecar (srt or ass) -> dedup to the stem
 find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" \) |
 	grep -ivE "/$PATTERN/" |
