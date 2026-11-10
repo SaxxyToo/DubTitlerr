@@ -40,3 +40,25 @@ def _accounts_are_installed_by_default(request, monkeypatch, tmp_path_factory):
 
     monkeypatch.setattr(review_auth, "setup_required", lambda: False)
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path_factory.mktemp("auth_config")))  # even when the shell or CI already set one
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_word_list(monkeypatch, tmp_path_factory):
+    """The word guards must not consult the HOST's /usr/share/dict.
+
+    CI's runner has no wamerican, so glossary.is_ordinary_word()/is_english() run on the
+    bundled 228-word list. A dev box usually has a real list, and that silently changes
+    behaviour: 'government' and 'burn' become ordinary words, which blocks expansions and
+    skips LLM pairs. On this machine that alone turned 31 tests red. Pin an empty list so
+    every host runs the bundled baseline CI runs. test_common_word_guard sets its own.
+    """
+    import glossary
+
+    empty = tmp_path_factory.mktemp("wordlist") / "empty.txt"
+    empty.write_text("")
+    # Both, deliberately: the attribute covers modules already imported in this process,
+    # and the environment covers the subprocess tests (a child imports glossary fresh and
+    # reads WORDLIST_PATH from its environment).
+    monkeypatch.setenv("WORDLIST_PATH", str(empty))
+    monkeypatch.setattr(glossary, "WORDLIST_PATH", str(empty))
+    monkeypatch.setattr(glossary, "_WORDS", None)  # is_english's own cache
