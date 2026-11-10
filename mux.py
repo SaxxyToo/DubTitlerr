@@ -547,6 +547,24 @@ def finalize_sidecar(orig, stem, src, stamp, apply) -> str:
     try:
         st = os.stat(orig)
         if renamed:
+            # A file already at the destination that THIS pipeline did not write is
+            # somebody else's subtitle (the dubsub pipeline also writes .dub.en.srt).
+            # Keep it as <dest>.bak rather than silently replacing it: one backup slot,
+            # overwritten only by the next foreign file. A previous SIDECAR delivery of
+            # ours is recognised by its stamp (a stale-version stamp is still ours).
+            prev = read_stamp(stamp)
+            ours = bool(
+                prev
+                and stamp_mode(prev) == "sidecar"
+                and prev.get("size") == st.st_size
+                and prev.get("mtime") == st.st_mtime
+            )
+            if os.path.exists(dest) and not ours:
+                try:
+                    os.replace(dest, dest + ".bak")
+                    log(f"  NOTE: preserved an existing {os.path.basename(dest)} as .bak")
+                except OSError as e:
+                    log(f"  WARNING: could not preserve the existing {os.path.basename(dest)} ({e})")
             try:
                 os.chown(src, st.st_uid or MEDIA_UID, st.st_gid or MEDIA_GID)
             except OSError as e:

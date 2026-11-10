@@ -6,6 +6,7 @@ the video's bytes/mtime never move, and the idempotency stamp records the delive
 switching back to mux re-muxes instead of reading the sidecar stamp as already done.
 """
 
+import json
 import os
 
 import common
@@ -128,6 +129,50 @@ def test_build_cmd_keeps_the_mislabeled_track_when_asked(monkeypatch):
     cmd, dropped = mux.build_cmd(info, "ep.mkv", "ep.eng.dubtitles.ass", "out.mkv")
     assert dropped == []
     assert cmd[cmd.index("-s") + 1] == "2"
+
+
+def test_sidecar_preserves_a_foreign_file_at_the_destination(tmp_path, monkeypatch):
+    """The dubsub pipeline also writes .dub.en.srt. Sidecar mode must not silently replace
+    a subtitle this pipeline did not put there."""
+    monkeypatch.setattr(common, "OUTPUT_ROOT", "")
+    monkeypatch.setattr(mux, "OUTPUT_MODE", "sidecar")
+    monkeypatch.setattr(mux, "SIDECAR_SUFFIX", ".dub.en")
+    v = _video(tmp_path)
+    stem = os.path.splitext(v)[0]
+    with open(stem + mux.SRT_SUFFIX, "w", encoding="utf-8") as f:
+        f.write(SRT)
+    foreign = stem + ".dub.en.srt"
+    with open(foreign, "w", encoding="utf-8") as f:
+        f.write("somebody else's subtitle\n")
+
+    assert mux.process(v, apply=True) == "sidecar"
+
+    assert open(foreign + ".bak", encoding="utf-8").read() == "somebody else's subtitle\n"
+    assert "Hello" in open(foreign, encoding="utf-8").read()
+
+
+def test_sidecar_does_not_back_up_its_own_previous_output(tmp_path, monkeypatch):
+    """A stale-VERSION stamp (the version-bump path) is still our own file: no .bak."""
+    monkeypatch.setattr(common, "OUTPUT_ROOT", "")
+    monkeypatch.setattr(mux, "OUTPUT_MODE", "sidecar")
+    monkeypatch.setattr(mux, "SIDECAR_SUFFIX", ".dub.en")
+    v = _video(tmp_path)
+    stem = os.path.splitext(v)[0]
+    with open(stem + mux.SRT_SUFFIX, "w", encoding="utf-8") as f:
+        f.write(SRT)
+    assert mux.process(v, apply=True) == "sidecar"
+
+    # A version bump makes stamp_valid false but the stamp still describes this video.
+    stamp_path = stem + mux.STAMP_SUFFIX
+    stamp = common.read_stamp(stamp_path)
+    assert stamp is not None
+    stamp["text_version"] = 0
+    common.atomic_write(stamp_path, lambda f: json.dump(stamp, f))
+    with open(stem + mux.SRT_SUFFIX, "w", encoding="utf-8") as f:
+        f.write("second run\n")
+
+    assert mux.process(v, apply=True) == "sidecar"
+    assert not os.path.exists(stem + ".dub.en.srt.bak")
 
 
 def test_stamp_without_a_mode_reads_as_mux():

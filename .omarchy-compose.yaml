@@ -1,0 +1,84 @@
+services:
+  dubtitlerr:
+    # build: docker build -f Dockerfile.fork -t dubtitlerr:sidecar-fork ~/src/DubTitlerr
+    image: ${DUBTITLERR_IMAGE:-dubtitlerr:sidecar-fork}
+    container_name: dubtitlerr
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.create_connection((\x27127.0.0.1\x27,8842),3); s.close()\""]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    # host networking so llama-swap on 127.0.0.1:11434 counts as loopback;
+    # DubTitlerr refuses to send an API key to a non-loopback plain-http URL.
+    # (the review UI therefore binds directly to :8842 on the host)
+    network_mode: host
+    environment:
+      # --- where things are (all three must match: defaults differ) ---
+      ANIME_ROOT: ${ANIME_ROOT:-/media/anime-tv}
+      MERGE_ROOTS: ${ANIME_ROOT:-/media/anime-tv}
+      MUX_ROOTS: ${ANIME_ROOT:-/media/anime-tv}
+      ANIME_ORDER: /config/anime_order.txt
+      GLOSSARY_DIR: /config/glossaries
+      DECISIONS_DIR: /config/decisions
+      WIKI_CACHE_DIR: /config/wiki_cache
+
+      # --- ASR: the bundled CTranslate2/cuBLAS cannot run on an RTX 50-series
+      #     (Blackwell / sm_120) GPU -> CUBLAS_STATUS_NOT_SUPPORTED. Transcripts are
+      #     pre-generated with OpenRouter whisper as <stem>.eng.dubtitles.srt and
+      #     picked up via SKIP_IF_SRT, so the local ASR never has to run. cpu is the
+      #     safe fallback for anything that slips through.
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
+      COMPUTE_TYPE: int8
+      ASR_DEVICE: ${ASR_DEVICE:-cpu}
+      REQUIRE_ENG: "1"
+
+      # --- repair + glossary stages: llama-swap on the host, via loopback ---
+      REPAIR_BACKEND: openai
+      REPAIR_MODEL: ${REPAIR_MODEL:-qwen3.5:4b}
+      REPAIR_OPENAI_URL: ${REPAIR_OPENAI_URL:-http://127.0.0.1:11434/v1/chat/completions}
+      REPAIR_OPENAI_KEY_ENV: LLAMA_SWAP_KEY
+
+      VERIFY_BACKEND: openai
+      VERIFY_MODEL: ${REPAIR_MODEL:-qwen3.5:4b}
+      VERIFY_OPENAI_URL: ${REPAIR_OPENAI_URL:-http://127.0.0.1:11434/v1/chat/completions}
+      VERIFY_OPENAI_KEY_ENV: LLAMA_SWAP_KEY
+
+      ACQUIRE_BACKEND: openai
+      RESTORE_BACKEND: openai
+      RESTORE_MODEL: ${REPAIR_MODEL:-qwen3.5:4b}
+      RESTORE_OPENAI_URL: ${REPAIR_OPENAI_URL:-http://127.0.0.1:11434/v1/chat/completions}
+      RESTORE_OPENAI_KEY_ENV: LLAMA_SWAP_KEY
+
+      LLAMA_SWAP_KEY: ${LLAMA_SWAP_KEY:-sk-noauth}
+
+      # --- ownership of what it writes (server maps to Unraid nobody:users) ---
+      MEDIA_UID: ${MEDIA_UID:-99}
+      MEDIA_GID: ${MEDIA_GID:-100}
+
+      # --- no Plex here (Jellyfin); blank disables the refresh stage ---
+      PLEX_URL: ""
+      PLEX_TOKEN: ""
+      PLEX_SECTION: ""
+
+      # --- repair-review web UI auth ---
+      REVIEW_AUTH: ${REVIEW_AUTH:-on}
+      REVIEW_TOKEN: ${REVIEW_TOKEN:-}
+
+      # sidecar delivery: publish <episode>.dub.en.<ass|srt> beside the video and never
+      # rewrite the video. REVIEW_GATE_SHOWS is no longer needed as a hold-before-mux hack.
+      OUTPUT_MODE: ${OUTPUT_MODE:-sidecar}
+      SIDECAR_SUFFIX: ${SIDECAR_SUFFIX:-.dub.en}
+      # never let the KEEP_LANGS whitelist delete a subtitle track (it dropped sub:enm once)
+      MUX_KEEP_ALL_SUBS: ${MUX_KEEP_ALL_SUBS:-1}
+    volumes:
+      - ${MEDIA_ROOT:-/mnt/tdarr-media}:/media
+      - ${CONFIG_ROOT:-./config}:/config
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
