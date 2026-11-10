@@ -1,0 +1,12 @@
+# Thin overlay image: the published release plus THIS fork's pipeline scripts.
+#
+# Dockerfile.builder is the standalone build (it also bakes a Whisper model). This overlay
+# exists so a fork can be exercised on a host that already has the release image — no model
+# download, no UI rebuild — when the fork only changes the flat pipeline scripts.
+#
+#   docker build -f Dockerfile.fork -t dubtitlerr:fork .
+#
+# Keep the base tag in step with the release the fork is based on.
+FROM ghcr.io/xenarathon/dubtitlerr:v0.3.0
+
+COPY mux.py common.py settings_registry.py merge_pass.sh /app/
