@@ -70,6 +70,10 @@ services:
       # VERIFY_SKIP_COMMON_WORDS: "1" # "0": write ordinary one-word terms; needs the wamerican word list (WORDLIST_PATH)
       # VERIFY_QUEUE_NO_MATCH: "0" # "1": queue terms the model found no candidate for
       # VERIFY_QUEUE_BLOCKED_EXPANSIONS: "1" # "0": do not queue a blocked longer expansion
+      # delivery: mux (default) embeds the track; sidecar writes the subtitle beside the video and never rewrites it
+      # OUTPUT_MODE: sidecar
+      # SIDECAR_SUFFIX: .dub.en   # <episode>.dub.en.ass / .srt; default .eng.dubtitles
+      # MUX_KEEP_ALL_SUBS: "1"    # keep every embedded subtitle track instead of the KEEP_LANGS whitelist
       # on by default (repair):
       # REPAIR_KEEP_NAME_PARTS: "1" # "0": no name-part check and no prompt rule
       # REPAIR_AUTO_DISMISS_WORDS: "6" # "off": never dismiss; a whole number sets the word-change limit

@@ -25,6 +25,11 @@ signs/songs, else ``.eng.dubtitles.srt`` for an mp4 dialogue-only episode):
 DRY-RUN by default (prints the plan); pass --apply to do it. Run as root.
 Env: MUX_ROOTS (colon list), KEEP_LANGS, MIN_FREE_GB (skip threshold, default 5),
 DUR_TOL (seconds, default 2), MEDIA_UID/GID.
+  OUTPUT_MODE            mux (default) embeds the subtitle; sidecar publishes it beside
+                         the video (<stem><SIDECAR_SUFFIX>.<ass|srt>) and rewrites nothing.
+  SIDECAR_SUFFIX         sidecar-mode filename suffix, default ".eng.dubtitles".
+  MUX_KEEP_ALL_SUBS      "1" keeps every embedded subtitle track instead of applying the
+                         KEEP_LANGS whitelist (our own old Dubtitles track is still replaced).
   REVIEW_GATE_SHOWS      colon list of show DIRECTORY names (e.g. "Cowboy Bebop (1998)
                          {tvdb-76885}", not "Cowboy Bebop" -- the same identity the
                          decision store uses). EMPTY by default. [S-6]: an episode of a listed show
@@ -59,6 +64,7 @@ from common import (
     log,
     read_stages,
     read_stamp,
+    stamp_mode,
     stamp_valid,
     write_stage,
     write_stamp,
@@ -95,6 +101,24 @@ MIN_FREE_GB = float(os.environ.get("MIN_FREE_GB", "5"))  # skip a remux if the p
 SIZE_FACTOR = 1.1  # temp ~ source size (+headroom)
 ASS_SUFFIX = ".eng.dubtitles.ass"
 SRT_SUFFIX = ".eng.dubtitles.srt"
+# OUTPUT_MODE decides how a finished episode is DELIVERED.
+#   mux (default): embed the subtitle as the "Dubtitles" track; the video is rewritten.
+#   sidecar: leave the assembled subtitle beside the video and never touch the video.
+# Sidecar is for libraries that deliver subtitles as external files: Jellyfin/Plex pick
+# the file up, a bad subtitle can be replaced without a multi-GB remux, and a track the
+# mux whitelist would drop cannot be lost because nothing is rewritten.
+OUTPUT_MODE = (os.environ.get("OUTPUT_MODE", "mux") or "mux").strip().lower()
+if OUTPUT_MODE not in ("mux", "sidecar"):
+    log(f"WARNING: OUTPUT_MODE={OUTPUT_MODE!r} is not mux|sidecar — using 'mux'")
+    OUTPUT_MODE = "mux"
+# Sidecar mode filename: <stem><SIDECAR_SUFFIX>.<ass|srt>. The default is the pipeline's
+# own artifact name, so finalizing is a no-op; set ".dub.en" for the house convention the
+# players list as a "dub" subtitle.
+SIDECAR_SUFFIX = os.environ.get("SIDECAR_SUFFIX", ".eng.dubtitles") or ".eng.dubtitles"
+# Never let the KEEP_LANGS whitelist delete a subtitle track. Off by default (every
+# install that has not opted in keeps the upstream behaviour); turn it on when a
+# mislabeled English track -- a "sub:enm" Middle-English mistag, say -- must survive.
+KEEP_ALL_SUBS = os.environ.get("MUX_KEEP_ALL_SUBS", "0").strip().lower() in ("1", "true", "yes", "on")
 # subtitle track names that mark a signs/songs track worth keeping regardless of language
 SIGNS_RE = re.compile(r"sign|song|karaoke|lyric|caption|title|credit|insert", re.I)
 
@@ -112,10 +136,18 @@ def keep_sub(track: dict, keep_langs: set) -> bool:
     that check comes FIRST: the track is language=eng, so every rule below would keep it
     and the remux would end up carrying two Dubtitles tracks. Dropping it here is what
     makes a re-mux a REPLACE (build_cmd re-adds the new one in the same pass) instead of
-    a duplicate — and what retired the separate pre-strip pass."""
+    a duplicate — and what retired the separate pre-strip pass.
+
+    MUX_KEEP_ALL_SUBS skips the language whitelist entirely (our own old track is still
+    dropped). The whitelist is the only thing in the pipeline that DELETES a track, and a
+    release can label an English track with an unexpected code — "enm" is Middle English to
+    mkvmerge, not "some English" — so an operator who cannot afford the loss can turn the
+    whitelist off without losing the replace-in-place behaviour."""
     props = track.get("properties") or {}
     if is_our_track(props.get("track_name")):
         return False
+    if KEEP_ALL_SUBS:
+        return True
     lang = (props.get("language") or "").lower()
     if lang in keep_langs or lang == "mul":
         return True
@@ -478,6 +510,67 @@ def sub_source(stem):
     return None
 
 
+def already_delivered(stamp, video, mode=None) -> bool:
+    """True if this stamp is current for the file AND records the mode we are running.
+
+    stamp_valid alone is mode-blind. Without the second half, a sidecar stamp would stop a
+    later mux pass from embedding the track (the operator switched OUTPUT_MODE and the file
+    never gets its track), and a mux stamp would stop sidecar mode from writing the external
+    file. Stamps written before OUTPUT_MODE carry no mode and read as "mux" -- which is what
+    they all meant."""
+    return stamp_valid(stamp, video) and stamp_mode(stamp) == (mode or OUTPUT_MODE)
+
+
+def sidecar_target(stem: str, src: str) -> str:
+    """Where sidecar mode leaves the assembled subtitle: <stem><SIDECAR_SUFFIX>.<ext>.
+
+    The extension follows what the pipeline produced -- .ass when signs/songs were merged
+    (their positioning and override tags are the point of that merge), .srt for a
+    dialogue-only episode. Converting .ass to .srt would throw the positioning away."""
+    return stem + SIDECAR_SUFFIX + (".ass" if src.endswith(ASS_SUFFIX) else ".srt")
+
+
+def finalize_sidecar(orig, stem, src, stamp, apply) -> str:
+    """OUTPUT_MODE=sidecar: publish the assembled subtitle beside the video, touch no video.
+
+    Idempotent through the same version-aware stamp mux writes, with "mode": "sidecar"
+    recorded so a later switch to mux mode re-muxes instead of reading this stamp as done.
+    The stamp describes the VIDEO's size+mtime, which is what makes a replaced episode
+    regenerate -- exactly as in mux mode. A failed stamp write renames the artifact back:
+    a sidecar the finder can no longer see would otherwise be stranded work."""
+    dest = sidecar_target(stem, src)
+    if not apply:
+        log(f"  PLAN sidecar {os.path.basename(src)} -> {os.path.basename(dest)}")
+        return "plan"
+    stages = _stages_ran(stem, src)  # before any rename: it keys off the source suffix
+    renamed = os.path.abspath(dest) != os.path.abspath(src)
+    try:
+        st = os.stat(orig)
+        if renamed:
+            try:
+                os.chown(src, st.st_uid or MEDIA_UID, st.st_gid or MEDIA_GID)
+            except OSError as e:
+                log(f"  WARNING: could not set ownership on {os.path.basename(src)} ({e})")
+            os.replace(src, dest)  # same directory, so the swap is atomic
+        write_stamp(stamp, orig, stages=stages, mode="sidecar")
+        write_stage(stem, "mux", "ok")
+        log(f"  sidecar kept: {os.path.basename(dest)} (video untouched)")
+        return "sidecar"
+    except OSError as e:
+        if renamed:
+            try:
+                if os.path.exists(dest) and not os.path.exists(src):
+                    os.replace(dest, src)
+            except OSError:
+                pass
+        log(f"  ERROR: sidecar finalize failed ({e}); video untouched, sidecar retried next pass")
+        try:
+            write_stage(stem, "mux", "unwritable", str(e))
+        except OSError:
+            pass
+        return "sidecar-write-failed"
+
+
 def _free_bytes(path):
     try:
         s = os.statvfs(os.path.dirname(path) or ".")
@@ -602,7 +695,14 @@ def process(orig, apply):
         if signs_outcome not in (None, "ok"):
             write_stage(stem, "mux", "build-error", "signs-regression-refused")
             return "signs-regression-refused"
-    if stamp_valid(read_stamp(stamp), orig):
+    if OUTPUT_MODE == "sidecar":
+        if already_delivered(read_stamp(stamp), orig, "sidecar"):
+            return "already-sidecar"
+        # Same order as mux mode: an episode that already shipped cannot be held back.
+        if held_for_review(stem):
+            return "held-for-review"
+        return finalize_sidecar(orig, stem, src, stamp, apply)
+    if already_delivered(read_stamp(stamp), orig, "mux"):
         return "already-muxed"  # stat-only, version-aware stamp is the ONLY guard
     # AFTER the stamp check, not before it (the plan sketched the reverse). An episode that
     # already shipped cannot be held back -- reporting a hold for it would inflate the
@@ -635,7 +735,7 @@ def process(orig, apply):
                     os.remove(out)
                 except OSError:
                     pass
-            if stamp_valid(read_stamp(stamp), orig):
+            if already_delivered(read_stamp(stamp), orig, "mux"):
                 return "already-muxed"
             log(f"  ERROR: {os.path.basename(orig)} changed during mux — aborting replace")
             write_stage(stem, "mux", "refused", "source-changed")
@@ -649,7 +749,7 @@ def process(orig, apply):
             # the rename would leave no copy to roll back to; failing before it leaves the
             # original untouched. If _finalize fails, the handler below removes this stamp
             # (existence-only readers must not see "done") and keeps `out`.
-            write_stamp(stamp, out, stages=_stages_ran(stem, src))
+            write_stamp(stamp, out, stages=_stages_ran(stem, src), mode="mux")
             stamped = True
         except OSError as e:
             # The stamp is the ONLY record that a file is done (the ffprobe backstop is
@@ -676,7 +776,7 @@ def process(orig, apply):
                     os.remove(out)
                 except OSError:
                     pass
-            if stamp_valid(read_stamp(stamp), orig):
+            if already_delivered(read_stamp(stamp), orig, "mux"):
                 return "already-muxed"
             log(f"  ERROR: {os.path.basename(orig)} changed during mux — aborting replace")
             write_stage(stem, "mux", "refused", "source-changed")
@@ -770,7 +870,7 @@ def main(argv=None):
     for v in vids:
         res = process(v, a.apply)
         counts[res] = counts.get(res, 0) + 1
-        if res not in ("no-sub", "already-muxed"):
+        if res not in ("no-sub", "already-muxed", "already-sidecar"):
             log(f"{res}: {os.path.basename(v)}")
     # A listed name that matched nothing is almost always the display name where the
     # DIRECTORY BASENAME was wanted ("Cowboy Bebop" vs "Cowboy Bebop (1998) {tvdb-76885}").

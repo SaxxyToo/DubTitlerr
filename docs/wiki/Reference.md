@@ -343,11 +343,16 @@ Every wiki fetch is https-only. A redirect to another scheme is refused before t
 | `MIN_FREE_GB`             | `5`                      | Skip a mux below this free space rather than failing                                              |
 | `DUR_TOL`                 | `2`                      | Seconds of duration mismatch tolerated                                                            |
 | `DUB_SUFFIX`              | `.eng.dubtitles.srt`     | Sidecar the merge step looks for                                                                  |
-| `REVIEW_GATE_SHOWS`       | _(empty)_                | Shows whose episodes wait for review before muxing                                                |
+| `OUTPUT_MODE`             | `mux`                    | `mux` embeds the subtitle; `sidecar` leaves it beside the video and rewrites nothing              |
+| `SIDECAR_SUFFIX`          | `.eng.dubtitles`         | Sidecar mode: text between the episode name and the extension (`.dub.en` → `Episode.dub.en.srt`)  |
+| `MUX_KEEP_ALL_SUBS`       | `0`                      | `1` keeps every subtitle track; `0` applies the `KEEP_LANGS` whitelist, which can drop a mislabeled English track |
+| `REVIEW_GATE_SHOWS`       | _(empty)_                | Shows whose **unreviewed repairs** wait before delivery; an episode with no applied repair is not held |
 | `REVIEW_GATE_STALE_DAYS`  | `7`                      | A hold older than this is reported loudly and **stays held**. It buys a log line, never a release |
 | `MEDIA_UID` / `MEDIA_GID` | `1000` / `100`           | Ownership set on written files                                                                    |
 
 The muxed `Dubtitles` track is appended last and flagged default, so the relative order of the other subtitle tracks is unchanged while players pick it up through the default flag. An MP4 or M4V source is removed only after the remuxed MKV verifies and the stamp writes. If the stamp write itself fails, the new MKV is rolled back and the original file is left untouched, so a failed run always leaves something complete on disk. Plex reads `.ass` sidecars and renders styling and positioning on direct-play clients; transcoding clients burn them in.
+
+**Sidecar mode.** `OUTPUT_MODE=sidecar` ends the pipeline at the assembled subtitle instead of embedding it: the artifact is left beside the video as `<episode><SIDECAR_SUFFIX>.<ass|srt>` (`.ass` when signs and songs were merged, so their positioning survives; `.srt` for a dialogue-only episode) and the video is never opened for writing. The same version-aware `.dubtitles.done` stamp is written, with `"mode": "sidecar"` recorded, so the pass stays idempotent and a later switch back to `mux` re-muxes instead of reading the sidecar stamp as done. This is the mode for libraries that deliver external subtitles, and for anyone whose GPU cannot run the bundled ASR: `SKIP_IF_SRT=1` plus pre-generated transcripts now leads somewhere useful. Nothing is deleted, so the `KEEP_LANGS` track-loss class cannot occur.
 
 ### Review server
 
