@@ -31,5 +31,6 @@ def test_merge_pass_defaults_app_to_its_own_directory_and_fails_as_config(tmp_pa
     r = subprocess.run(["/bin/sh", str(script)], env=env, cwd=str(root), capture_output=True, text=True, timeout=60)
 
     assert r.returncode != 0
+    assert "repair.py" in (r.stdout + r.stderr)
     assert "APP_DIR" in (r.stdout + r.stderr)
     assert not os.path.exists(str(root / "ep01.dubtitles.stages.json"))

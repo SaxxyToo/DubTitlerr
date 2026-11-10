@@ -15,7 +15,7 @@ APP="${APP_DIR:-$(cd "$(dirname "$0")" 2>/dev/null && pwd)}"
 # Fail as a CONFIGURATION error before the per-stem loop, not as a "crashed" repair on the
 # first episode it touches: a missing $APP/repair.py used to record {"repair": "crashed"}
 # against that stem, which then blocked every later pass until someone cleared the stage.
-for _f in common.py repair.py dub_signs_merge.py mux.py; do
+for _f in repair.py dub_signs_merge.py mux.py; do
 	if [ ! -f "$APP/$_f" ]; then
 		echo "FATAL: $_f not found under APP=$APP — set APP_DIR to the directory holding the pipeline scripts"
 		exit 1
