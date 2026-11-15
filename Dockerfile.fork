@@ -9,4 +9,4 @@
 # Keep the base tag in step with the release the fork is based on.
 FROM ghcr.io/xenarathon/dubtitlerr:v0.3.0
 
-COPY mux.py common.py settings_registry.py merge_pass.sh /app/
+COPY mux.py common.py settings_registry.py merge_pass.sh publish_gate.py /app/
