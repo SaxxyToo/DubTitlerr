@@ -29,7 +29,10 @@ MAX_LINE = 46
 MAX_DUR = 7.5
 MIN_COVER = 0.90
 MIN_CARDS_PER_MIN = 6.0
-MIN_PUNCT_ENDED = 0.80
+# A sentence split across two cues leaves the first without a terminal mark, so a healthy
+# file sits well under 100%. Below two thirds, the file is probably raw ASR (the old NGE
+# season ran 0-5%). 0.65 is the line between "real subtitles" and "transcript".
+MIN_PUNCT_ENDED = 0.65
 MAX_ORPHAN = 0.15
 MIN_NAME_LEN = 3
 

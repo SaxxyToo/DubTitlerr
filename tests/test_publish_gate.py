@@ -111,3 +111,33 @@ def test_cli_exit_codes(tmp_path):
     assert g.main([stem, "--duration", "21"]) == 0
     (tmp_path / "ep.eng.dubtitles.srt").write_text(srt([(1, 4, "no punctuation here at all")]))
     assert g.main([stem, "--duration", "1452"]) == 1
+
+
+def test_sentence_splits_are_not_punctuation_failures():
+    """7 of 10 cards end a sentence; the other three are the first half of a split sentence.
+    That is normal subtitling and must pass the floor."""
+    cues = g.parse_srt(srt([
+        (1, 3, "The Evas were created from the"),
+        (4, 6, "angel known as Adam."),
+        (7, 9, "I hate the Evas."),
+        (10, 12, "Is our revenge worth this?"),
+        (13, 15, "Major Katsuragi said the"),
+        (16, 18, "construction is behind schedule."),
+        (19, 21, "We have lost two Evas."),
+        (22, 24, "Two more are damaged."),
+        (25, 27, "The reserve force is"),
+        (28, 30, "not ready yet."),
+    ]))
+    assert g.evaluate(cues, duration=30) == []
+
+
+def test_a_raw_transcript_fails_the_punctuation_floor():
+    """The old NGE shape: every card unpunctuated and lowercase."""
+    cues = g.parse_srt(srt([
+        (1, 4, "the direct cause you mean was the mental breakdown"),
+        (5, 8, "the result of the contact yes"),
+        (9, 12, "oscar sink ratio has dropped an entire eight points"),
+    ]))
+    fails = g.evaluate(cues, duration=13, mishears=["oscar", "sink ratio"])
+    assert any("sentence punctuation" in f for f in fails)
+    assert any("mishear" in f for f in fails)
