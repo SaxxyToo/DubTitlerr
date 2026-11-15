@@ -141,3 +141,13 @@ def test_a_raw_transcript_fails_the_punctuation_floor():
     fails = g.evaluate(cues, duration=13, mishears=["oscar", "sink ratio"])
     assert any("sentence punctuation" in f for f in fails)
     assert any("mishear" in f for f in fails)
+
+
+def test_a_published_sidecar_is_found_by_its_delivery_name(tmp_path):
+    """`stem.dub.en.ass` is what the library actually carries; the gate must audit it, not
+    only the pipeline's internal `stem.eng.dubtitles.ass`."""
+    stem = str(tmp_path / "ep")
+    (tmp_path / "ep.dub.en.ass").write_text(
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:01.00,0:00:05.80,Dubtitles,,0,0,0,,The Evas were created.\\NFrom Adam.\n")
+    assert g.main([stem, "--duration", "6"]) == 0

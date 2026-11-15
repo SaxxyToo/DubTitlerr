@@ -82,8 +82,14 @@ def parse_ass(text, style=None):
 
 
 def load_cues(stem):
-    for ext, parser in (("srt", parse_srt), ("ass", parse_ass)):
-        path = "%s.eng.dubtitles.%s" % (stem, ext)
+    """The pipeline's own artifact first, then the published sidecar.
+
+    merge_pass gates `stem.eng.dubtitles.<ext>`; auditing what is already in the library
+    means reading `stem.dub.en.<ext>`, so both names resolve here.
+    """
+    for suffix, parser in ((".eng.dubtitles.srt", parse_srt), (".eng.dubtitles.ass", parse_ass),
+                           (".dub.en.srt", parse_srt), (".dub.en.ass", parse_ass)):
+        path = stem + suffix
         if os.path.exists(path):
             return path, parser(open(path, encoding="utf-8-sig", errors="replace").read())
     return None, []
