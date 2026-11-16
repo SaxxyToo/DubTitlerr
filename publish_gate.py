@@ -90,8 +90,16 @@ def load_cues(stem):
     for suffix, parser in ((".eng.dubtitles.srt", parse_srt), (".eng.dubtitles.ass", parse_ass),
                            (".dub.en.srt", parse_srt), (".dub.en.ass", parse_ass)):
         path = stem + suffix
-        if os.path.exists(path):
-            return path, parser(open(path, encoding="utf-8-sig", errors="replace").read())
+        if not os.path.exists(path):
+            continue
+        text = open(path, encoding="utf-8-sig", errors="replace").read()
+        if parser is parse_ass:
+            # A styled sidecar also carries signs, lyrics and title cards. Those are not
+            # dialogue: they run long, they have no sentence punctuation, and counting them
+            # fails a perfectly good file.
+            styles = set(re.findall(r"^Style:\s*([^,]+)", text, re.M))
+            return path, parse_ass(text, style="Dubtitles" if "Dubtitles" in styles else None)
+        return path, parser(text)
     return None, []
 
 

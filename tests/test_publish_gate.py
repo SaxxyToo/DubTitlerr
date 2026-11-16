@@ -151,3 +151,15 @@ def test_a_published_sidecar_is_found_by_its_delivery_name(tmp_path):
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         "Dialogue: 0,0:00:01.00,0:00:05.80,Dubtitles,,0,0,0,,The Evas were created.\\NFrom Adam.\n")
     assert g.main([stem, "--duration", "6"]) == 0
+
+
+def test_signs_and_lyrics_are_not_counted_as_dialogue(tmp_path):
+    """A styled sidecar carries sign cues that run longer than any dialogue card. Counting
+    them fails a good file (and did, on E22's 8.1 s title card)."""
+    stem = str(tmp_path / "ep")
+    (tmp_path / "ep.dub.en.ass").write_text(
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Style: Dubtitles,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2.8,0,2,60,60,49,1\n"
+        "Dialogue: 0,0:00:01.00,0:00:05.80,Dubtitles,,0,0,0,,The Evas were created.\\NFrom Adam.\n"
+        "Dialogue: 0,0:00:06.00,0:00:14.00,Signs,,0,0,0,,TITLE CARD THAT RUNS LONG\n")
+    assert g.main([stem, "--duration", "6"]) == 0
