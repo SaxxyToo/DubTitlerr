@@ -8,6 +8,9 @@ that shipped since.
 
 ## [Unreleased]
 
+### Fixed
+- Signs merge: fansub dialogue that only carries a bare `\an8` or `\fad` on a dialogue-named style is no longer kept as a "sign" when the release's dialogue track is read for its signs. It used to render at the top of the screen over the dub (measured: 10 lines across Berserk (1997) and JUJUTSU KAISEN first episodes; 25 other shows unchanged). Tracks that name themselves as the signs track are unaffected.
+
 ### Removed
 - The `X-Review-Token` header alias is completely removed; send `X-Api-Key` instead. Note that the audit-log operator for callers passing a key changes from `alias:<name>` to `key:<name>`.
 

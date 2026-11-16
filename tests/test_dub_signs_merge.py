@@ -1450,3 +1450,98 @@ def test_bisect_window_gives_the_same_survivors_as_a_full_scan(tmp_path, monkeyp
         _status, _signs, _dub, out_ass = _two_track_build(sub, monkeypatch, t0, t1)
         got = sorted((e.start, e.end, e.text) for e in pysubs2.load(out_ass).events if e.style != "Dubtitles")
         assert got == expected, f"seed {seed}"
+
+
+# --- mixed dialogue+signs track: a bare \an / \fad is not sign evidence on a dialogue style ---
+#
+# Measured 2026-11-16 over the first episode of 27 shows (docs/beta-feedback/2026-09-23-sns-
+# extract-fp-inventory.md). Fansub DIALOGUE carries a bare {\an8} (moved up, clear of a sign)
+# or a bare {\fad}: Berserk (1997) and JUJUTSU KAISEN, both read as ONE mixed track, leaked
+# ten such lines into the output as "signs" -- the fansub's translation of the Japanese script
+# at the top of the screen, over the dub. The very same bare \fad is the ONLY thing that keeps
+# 239 English song-translation lines on styles like "OP English" / "ED_Eng", so the rule is
+# scoped to dialogue-named styles in a mixed track and nothing else.
+
+
+@pytest.mark.parametrize(
+    "style,text",
+    [
+        ("Default", r"{\an8}Check this out!"),  # JUJUTSU KAISEN S01E01
+        ("Default", r"{\i1\an8}Hello, Sugisawa Hospital."),  # JUJUTSU KAISEN S01E01
+        ("Default", r"{\fade(0,300)}It didn't feel like I was, though."),  # JUJUTSU KAISEN S01E01
+        ("main", r"{\an8}They're back again..."),  # Berserk (1997) S01E01
+        ("Default", r"{\an8\fad(150,150)}Long time no see."),
+    ],
+)
+def test_mixed_track_drops_dialogue_carrying_only_a_bare_alignment_or_fade(style, text):
+    assert not dsm.keep_event(ev(text=text, style=style), mixed_track=True)
+
+
+@pytest.mark.parametrize(
+    "style,text",
+    [
+        ("Default", r"{\pos(100,200)}a sign on the dialogue style"),
+        ("Default", r"{\an8\move(0,0,10,10)}a moving sign"),
+        ("Default", r"{\an8\k30}ka{\k30}ra"),
+        ("Default", r"{\an7\p1}m 0 0 l 10 0 10 10{\p0}"),
+        ("Default", r"{\an8\clip(0,0,10,10)}clipped"),
+        ("Default", r"{\an8\t(0,500,\fscx120)}growing"),
+    ],
+)
+def test_mixed_track_keeps_a_dialogue_styled_event_with_hard_sign_evidence(style, text):
+    assert dsm.keep_event(ev(text=text, style=style), mixed_track=True)
+
+
+@pytest.mark.parametrize(
+    "style,text",
+    [
+        ("OP English", r"{\be1\fad(250,0)}Day after day, I awake in a daze,"),  # Angel Beats!
+        ("ED_Eng", r"{\bord0\blur0.6\fad(250,250)}Your dreams are where your heart is"),  # Attack on Titan
+        ("op", r"{\fad(100,100)\fax-0.21}Feel no shame about shape."),  # Berserk (1997), a MIXED track
+        ("OP1", r"{\fade(220,250)\be2}Without a personality, my memories are all I have"),  # JJK, MIXED
+        ("Crybaby - TS", r"{\an7}KODA MOYURU"),  # Devilman Crybaby typeset
+        ("Sign", r"{\an8}SHOP"),
+    ],
+)
+def test_mixed_track_still_keeps_bare_tagged_events_on_non_dialogue_styles(style, text):
+    assert dsm.keep_event(ev(text=text, style=style), mixed_track=True)
+
+
+def test_outside_a_mixed_track_a_bare_alignment_on_a_dialogue_style_is_still_kept():
+    # A title-identified signs track is the release's own curated list, and groups reuse
+    # "Default" for it (MARRIAGETOXIN S01E01). Nothing measured says a bare \an8 there is
+    # dialogue, so that behaviour is deliberately unchanged.
+    assert dsm.keep_event(ev(text=r"{\an8}Top sign", style="Default"))
+    assert dsm.keep_event(ev(text=r"{\an8}Top sign", style="Default"), mixed_track=False)
+
+
+def _mixed_build(tmp_path, monkeypatch, dedicated):
+    srt = tmp_path / "ep.eng.dubtitles.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nDub one\n\n", encoding="utf-8")
+    track = pysubs2.SSAFile()
+    track.styles["Default"] = pysubs2.SSAStyle()
+    track.append(pysubs2.SSAEvent(start=1000, end=2000, text="Plain fansub dialogue.", style="Default"))
+    track.append(pysubs2.SSAEvent(start=2000, end=3000, text=r"{\an8}Top fansub dialogue.", style="Default"))
+    track.append(pysubs2.SSAEvent(start=5000, end=6000, text=r"{\pos(100,100)}a sign", style="Default"))
+
+    def fake_extract(video, idx, out_path):
+        track.save(out_path)
+        return True
+
+    monkeypatch.setattr(dsm, "signs_sub_streams", lambda video, langs: [0])
+    monkeypatch.setattr(dsm, "signs_track_dedicated", lambda video, langs: dedicated)
+    monkeypatch.setattr(dsm, "extract", fake_extract)
+    out = str(tmp_path / "out.ass")
+    status, signs, dub = dsm.build("fake.mkv", str(srt), out)
+    assert status == "ok"
+    return signs, [e.plaintext.strip() for e in pysubs2.load(out, format_="ass").events if e.style != "Dubtitles"]
+
+
+def test_build_on_a_mixed_track_does_not_ship_top_aligned_fansub_dialogue(tmp_path, monkeypatch):
+    signs, texts = _mixed_build(tmp_path, monkeypatch, dedicated=False)
+    assert (signs, texts) == (1, ["a sign"])
+
+
+def test_build_on_a_dedicated_signs_track_is_unchanged(tmp_path, monkeypatch):
+    signs, texts = _mixed_build(tmp_path, monkeypatch, dedicated=True)
+    assert signs == 2 and sorted(texts) == ["Top fansub dialogue.", "a sign"]

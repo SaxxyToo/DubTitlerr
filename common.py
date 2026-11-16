@@ -91,7 +91,7 @@ SUB_LANGS = set(os.environ.get("SUB_LANGS", "eng,en,und,").split(","))
 # dialogue_intervals -- do not tweak without checking dub_signs_merge.py's classifier too,
 # which uses a related but NOT identical KEEP_STYLE/DROP_STYLE pair for its own purpose).
 KARAOKE = re.compile(r"\\[kK][fo]?\d")
-POSITIONED = re.compile(r"\\(?:pos|move)\(|\\an[134567 89]")
+POSITIONED = re.compile(r"\\(?:pos|move)\(|\\an[13456789]")
 DROP_STYLE = re.compile(r"warning", re.I)  # junk, never a dialogue reference
 DIALOGUE_EXCLUDE_STYLE = re.compile(r"karaoke|translat|sign|song|caption|title|credit|note|lyric|romaji|kashi|insert", re.I)
 
@@ -740,6 +740,17 @@ def signs_sub_streams(video, sub_langs):
     tracks = eng_sub_tracks(video, sub_langs)
     signs = [idx for idx, title in tracks if SIGNS_TITLE.search(title or "")]
     return [signs[0]] if signs else [idx for idx, _ in tracks]
+
+
+def signs_track_dedicated(video, sub_langs) -> bool:
+    """True when signs_sub_streams() would return a track that NAMES itself as the signs
+    track, False when it falls back to scanning every track per event.
+
+    The two cases want different handling one level down: a curated signs track holds
+    signs and songs only, while the fallback reads the release's dialogue track too, where
+    a bare ``\\an8`` is far more often a line of dialogue moved clear of a sign than a sign
+    (see dub_signs_merge.keep_event). A failed probe reads as False -- the stricter side."""
+    return any(SIGNS_TITLE.search(title or "") for _idx, title in eng_sub_tracks(video, sub_langs))
 
 
 def extract_sub(video, idx, out):

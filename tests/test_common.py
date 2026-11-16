@@ -586,6 +586,24 @@ def test_signs_streams_prefers_the_dedicated_signs_track(monkeypatch):
     assert common.signs_sub_streams("fake.mkv", {"eng"}) == [3]
 
 
+def test_signs_track_dedicated_says_whether_a_track_names_itself_as_the_signs_track(monkeypatch):
+    # dub_signs_merge classifies a mixed dialogue+signs track more strictly than a curated
+    # signs track, so it has to know which of the two signs_sub_streams() handed it.
+    monkeypatch.setattr(common, "subprocess", _fake_ffprobe([_sub(2, title="Dialogue"), _sub(3, title="Signs & Songs")]))
+    assert common.signs_track_dedicated("fake.mkv", {"eng"}) is True
+    monkeypatch.setattr(common, "subprocess", _fake_ffprobe([_sub(2, title="Full Subtitles [Kaizoku]")]))
+    assert common.signs_track_dedicated("fake.mkv", {"eng"}) is False
+    monkeypatch.setattr(common, "subprocess", _fake_ffprobe([]))
+    assert common.signs_track_dedicated("fake.mkv", {"eng"}) is False
+
+
+def test_the_alignment_tag_class_has_no_stray_space():
+    # "[134567 89]" also matched a literal "\\an " -- harmless, but a typo in the one regex two modules share.
+    assert not common.POSITIONED.search(r"{\an }x")
+    assert all(common.POSITIONED.search(rf"{{\an{n}}}x") for n in (1, 3, 4, 5, 6, 7, 8, 9))
+    assert not common.POSITIONED.search(r"{\an2}x")
+
+
 def test_signs_streams_recognises_the_abbreviated_and_slashed_spellings(monkeypatch):
     for title in (
         "S&S English English",

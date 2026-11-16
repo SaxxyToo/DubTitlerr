@@ -44,7 +44,18 @@ from collections import Counter
 
 import pysubs2
 
-from common import MEDIA_GID, MEDIA_UID, find_video, log, out_for, signs_sub_streams, write_stage
+from common import (
+    KARAOKE,
+    MEDIA_GID,
+    MEDIA_UID,
+    POSITIONED,
+    find_video,
+    log,
+    out_for,
+    signs_sub_streams,
+    signs_track_dedicated,
+    write_stage,
+)
 from common import extract_sub as extract
 
 SAFE_FONTS = {
@@ -209,12 +220,19 @@ ROOTS = os.environ.get("MERGE_ROOTS", "/data/Media/Anime Library").split(":")
 SUFFIX = os.environ.get("DUB_SUFFIX", ".eng.dubtitles.srt")
 SUB_LANGS = set(os.environ.get("SUB_LANGS", "eng,en,und,").split(","))
 
-KARAOKE = re.compile(r"\\[kK][fo]?\d")
 DRAWING_TAG = re.compile(r"\\p[1-9]")
 CLIP_TAG = re.compile(r"\\i?clip\(")
 HAS_DRAWING = DRAWING_TAG
 ANIMATED = re.compile(r"\\t\(|\\fade?\(|\\move\(")
-POSITIONED = re.compile(r"\\(?:pos|move)\(|\\an[134567 89]")
+# KARAOKE and POSITIONED are common's: is_dialogue_event() applies the same two tests when it
+# picks repair references, and two copies of one regex had already drifted into carrying the
+# same typo.
+#
+# HARD_SIGN_TAG: a tag that places, draws, clips or transforms -- something a line of dialogue
+# has no use for. What is left of POSITIONED/ANIMATED once these are taken out is a bare
+# alignment (\an8) or a bare fade, and fansub DIALOGUE carries both: \an8 moves a line clear
+# of a sign, \fad softens a scene change. See keep_event()'s mixed_track rule.
+HARD_SIGN_TAG = re.compile(r"\\(?:pos|move|t)\(")
 # KEEP the Japanese romaji karaoke (top) + signs/credits + the fansub's own English song
 # TRANSLATION. Reversed 2026-09-02 (.procoder/todo/20260830-drop-transcribed-song-lyrics-
 # restore-fansub-translation.md): the translation used to be dropped on the assumption that
@@ -245,9 +263,22 @@ STRONG_DROP_STYLE = re.compile(r"warning", re.I)
 WEAK_DROP_STYLE = re.compile(r"main|dialog|default|flashback|thought|secondary|monolog|narrat|italics|^alt", re.I)
 
 
-def keep_event(ev):
+def keep_event(ev, mixed_track=False):
     """True if this is a sign / song-romaji / caption / credit (not dialogue, and not the
-    fansub English song translation — that's replaced by the transcribed Dubtitles)."""
+    fansub English song translation — that's replaced by the transcribed Dubtitles).
+
+    ``mixed_track`` says the event comes from a track that did NOT name itself as the signs
+    track, i.e. the release's dialogue track read for whatever signs it also carries. There,
+    on a dialogue-named style, a bare alignment or fade is not sign evidence: measured over
+    the first episode of 27 shows, every such event was a line of dialogue (Berserk (1997)
+    and JUJUTSU KAISEN, ten lines) and shipped as a "sign" over the dub. Only a tag that
+    places, draws, clips or transforms overrides the style guess there.
+
+    The rule stops at dialogue-named styles on purpose. The same bare \\fad is the ONLY thing
+    keeping 239 English song-translation lines in that sample ("OP English", "ED_Eng", "op",
+    "OP1"), so treating it as non-evidence everywhere would delete them. And it stops at mixed
+    tracks: a curated signs track reuses "Default" for signs (MARRIAGETOXIN S01E01), and no
+    measurement says a bare \\an8 there is dialogue."""
     if ev.is_comment:
         return False
     if not ev.plaintext.strip():
@@ -258,7 +289,8 @@ def keep_event(ev):
     if SONG_FAMILY_STYLE.search(style):  # Opening-/ED<N>- sibling, any language -> keep
         return True
     t = ev.text
-    tagged = bool(KARAOKE.search(t) or DRAWING_TAG.search(t) or CLIP_TAG.search(t) or POSITIONED.search(t) or ANIMATED.search(t))
+    hard = bool(KARAOKE.search(t) or DRAWING_TAG.search(t) or CLIP_TAG.search(t) or HARD_SIGN_TAG.search(t))
+    tagged = hard if mixed_track else bool(hard or POSITIONED.search(t) or ANIMATED.search(t))
     if WEAK_DROP_STYLE.search(style) and not tagged:  # a style-name GUESS, only when nothing else says otherwise
         return False
     if KARAOKE.search(t):  # Japanese romaji karaoke (top) -> keep
@@ -472,6 +504,9 @@ def build(video, dub_srt, out_ass):
     loaded_tracks = []
     resolutions = []
     failed_streams = 0
+    # Decided once per episode, not per track: when no track names itself as the signs track,
+    # every track read here is a dialogue track carrying signs (see keep_event).
+    mixed_track = not signs_track_dedicated(video, SUB_LANGS)
     for idx in signs_sub_streams(video, SUB_LANGS):
         with tempfile.TemporaryDirectory() as td:
             ex = os.path.join(td, "s.ass")
@@ -489,7 +524,7 @@ def build(video, dub_srt, out_ass):
         seen_intra = set()
         kept_events = []
         for ev in src_events:
-            if not keep_event(ev):
+            if not keep_event(ev, mixed_track):
                 continue
             key = (int(ev.start), int(ev.end), ev.style, ev.layer, ev.text)
             if key in seen_intra:
