@@ -181,6 +181,9 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 			exit 1
 		fi
 		if ! python3 "$APP/publish_gate.py" "$stem" </dev/null; then
+			# Record the refusal on the mux stage: without it the census counts this stem as
+			# neither done nor failed and prints COMPLETE while an episode was refused.
+			python3 -c "import common,sys; common.write_stage(sys.argv[1],'mux','refused','publish-gate')" "$stem" </dev/null >/dev/null 2>&1 || true
 			echo "skip mux: publish gate failed"
 			continue
 		fi

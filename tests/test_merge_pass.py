@@ -579,3 +579,5 @@ def test_publish_gate_blocks_mux_when_the_sidecar_cannot_be_validated(tmp_path):
     output = res.stdout + res.stderr
     assert "publish gate failed" in output, output
     assert not any(c.startswith("mux ") for c in calls), calls
+    # the refusal must be visible to the census, or it prints COMPLETE over a skipped stem
+    assert common.read_stages(stem).get("mux", {}).get("outcome") == "refused", common.read_stages(stem)
