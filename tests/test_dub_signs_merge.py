@@ -1450,3 +1450,58 @@ def test_bisect_window_gives_the_same_survivors_as_a_full_scan(tmp_path, monkeyp
         _status, _signs, _dub, out_ass = _two_track_build(sub, monkeypatch, t0, t1)
         got = sorted((e.start, e.end, e.text) for e in pysubs2.load(out_ass).events if e.style != "Dubtitles")
         assert got == expected, f"seed {seed}"
+
+
+# --- 2.2 an episode with no kept signs must stay an .srt, not become an .ass --------------
+#
+# A track that LOADS but keeps nothing is the ordinary no-signs episode: a mixed JA+EN
+# dialogue track carries the spoken lines, keep_event() rejects every one of them, and only
+# the dub dialogue is left. build() returned "no-signs" only when no stream loaded at all, so
+# this case ran on and wrote an .ass holding nothing but the Dubtitles. In sidecar mode that
+# is an external .ass with nothing positioned in it, which forces a burn-in transcode on
+# clients that would direct-play the .srt for free.
+
+
+def _dialogue_only_track():
+    """A track that parses cleanly and holds no sign: every event is plain Default dialogue."""
+    t = pysubs2.SSAFile()
+    t.styles["Default"] = pysubs2.SSAStyle()
+    t.events = [
+        pysubs2.SSAEvent(start=0, end=2000, style="Default", text="Just a spoken line."),
+        pysubs2.SSAEvent(start=2000, end=4000, style="Default", text="Another spoken line."),
+    ]
+    return t
+
+
+def test_a_loaded_track_with_no_kept_signs_builds_no_ass(tmp_path, monkeypatch):
+    dub_srt = tmp_path / "dub.srt"
+    dub_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nDub line\n\n", encoding="utf-8")
+    track = _dialogue_only_track()
+    monkeypatch.setattr(dsm, "signs_sub_streams", lambda video, langs: [0])
+    monkeypatch.setattr(dsm, "extract", lambda video, idx, out: (track.save(out), True)[1])
+
+    out_ass = str(tmp_path / "out.ass")
+    status, signs, dub = dsm.build("fake-video.mkv", str(dub_srt), out_ass)
+
+    assert (status, signs) == ("no-signs", 0), (status, signs, dub)
+    assert not os.path.exists(out_ass), "no kept sign event -> no .ass at all"
+
+
+def test_process_one_keeps_the_srt_when_the_track_had_no_kept_signs(tmp_path, monkeypatch):
+    monkeypatch.setattr(common, "OUTPUT_ROOT", "")
+    srt = tmp_path / ("ep" + dsm.SUFFIX)
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nDub one\n\n", encoding="utf-8")
+    track = _dialogue_only_track()
+    monkeypatch.setattr(dsm, "signs_sub_streams", lambda video, langs: [0])
+    monkeypatch.setattr(dsm, "extract", lambda video, idx, out: (track.save(out), True)[1])
+    monkeypatch.setattr(dsm, "find_video", lambda stem: str(tmp_path / "ep.mkv"))
+    monkeypatch.setattr(dsm.os, "chown", lambda *a, **k: None)
+
+    assert dsm.process_one(str(srt)) == "no-signs"
+
+    stem = str(srt)[: -len(dsm.SUFFIX)]
+    assert srt.exists(), "the dialogue-only .srt must survive (mux's fallback depends on it)"
+    assert not os.path.exists(stem + ".eng.dubtitles.ass")
+    assert not os.path.exists(stem + ".eng.dubtitles.ass.part")
+    rec = common.read_stages(stem)["signs"]
+    assert (rec["outcome"], rec["detail"]) == ("ok", "no-signs"), rec
