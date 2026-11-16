@@ -37,7 +37,6 @@ MAX_ORPHAN = 0.15
 MIN_NAME_LEN = 3
 
 END = (".", "!", "?", "\u2026", "\"", "'", "\u201d", "\u2019")
-FFPROBE = os.environ.get("FFPROBE", "ffprobe")
 GLOSSARY_DIR = os.environ.get("GLOSSARY_DIR", "/config/glossaries")
 
 
@@ -109,7 +108,7 @@ def video_duration(stem):
         if not os.path.exists(path):
             continue
         try:
-            out = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format=duration",
+            out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                   "-of", "default=nw=1:nk=1", path],
                                  capture_output=True, text=True, timeout=60)
             return float(out.stdout.strip())
