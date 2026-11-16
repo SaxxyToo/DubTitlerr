@@ -581,3 +581,34 @@ def test_publish_gate_blocks_mux_when_the_sidecar_cannot_be_validated(tmp_path):
     assert not any(c.startswith("mux ") for c in calls), calls
     # the refusal must be visible to the census, or it prints COMPLETE over a skipped stem
     assert common.read_stages(stem).get("mux", {}).get("outcome") == "refused", common.read_stages(stem)
+
+
+def test_a_missing_publish_gate_stops_the_pass_before_the_loop(tmp_path):
+    """1.1: with the gate enabled, an APP_DIR without publish_gate.py is a configuration error.
+    The check used to live inside the per-stem loop -- a pipe into `while`, so a subshell --
+    where its `exit 1` ended only that subshell: the pass printed "MERGE PASS COMPLETE" having
+    delivered nothing (the misbuilt standalone image)."""
+    root, _ = _episode(tmp_path)
+    app = _stub_app(tmp_path)
+    (app / "publish_gate.py").unlink()
+
+    res, calls = _gated_run(tmp_path, root, extra_env={"PUBLISH_GATE": "1"})
+    output = res.stdout + res.stderr
+
+    assert res.returncode != 0, output
+    assert "publish_gate.py" in output, output
+    assert "MERGE PASS COMPLETE" not in res.stdout, output
+    assert calls == [], "the pass must stop before touching any stem"
+
+
+def test_the_missing_publish_gate_is_tolerated_when_the_gate_is_off(tmp_path):
+    """Guard for the conditional: with PUBLISH_GATE=0 the pass must not demand a file it will
+    never run."""
+    root, _ = _episode(tmp_path)
+    app = _stub_app(tmp_path)
+    (app / "publish_gate.py").unlink()
+
+    res, calls = _gated_run(tmp_path, root, extra_env={"PUBLISH_GATE": "0"})
+
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert calls == ["repair ep01", "signs ep01", "mux ep01"], (calls, res.stdout, res.stderr)

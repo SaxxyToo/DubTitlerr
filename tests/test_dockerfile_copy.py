@@ -20,6 +20,10 @@ ENTRYPOINTS = [
     "dub_signs_merge.py",
     "plex_refresh.py",
     "watch_queue.py",
+    # [S-8/later] merge_pass.sh runs the publish gate before mux (PUBLISH_GATE defaults on), so
+    # the gate is an entrypoint the image must carry -- the shell checks it exists, but this
+    # list is what proves its imports arrived too (the qc.py failure shape).
+    "publish_gate.py",
     # [S-8]: the review server is a third container loop, so everything it imports has to
     # be in the image. qc.py passed 987 tests and ImportError'd on container start for
     # exactly this reason.
