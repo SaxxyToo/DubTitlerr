@@ -163,6 +163,9 @@ import os, sys
 sys.path.insert(0, {repo!r})
 import common
 common.OUTPUT_ROOT = ""
+if "--delivered" in sys.argv:  # the real predicate, from the module mux.py exposes it in
+    import mux as _real_mux
+    sys.exit(0 if _real_mux.delivered(sys.argv[sys.argv.index("--delivered") + 1]) else 1)
 name = {name!r}
 arg = sys.argv[-1]
 for suffix in (".dubtitles.conf.json", ".eng.dubtitles.srt", ".mkv", ".mp4"):
@@ -611,4 +614,56 @@ def test_the_missing_publish_gate_is_tolerated_when_the_gate_is_off(tmp_path):
     res, calls = _gated_run(tmp_path, root, extra_env={"PUBLISH_GATE": "0"})
 
     assert res.returncode == 0, res.stdout + res.stderr
+    assert calls == ["repair ep01", "signs ep01", "mux ep01"], (calls, res.stdout, res.stderr)
+
+
+# --- 2.1 a delivered episode is re-assembled on every pass --------------------------------
+
+
+def _delivered_episode(tmp_path, mode="sidecar"):
+    """A stem the finder still sees (a .srt beside the video) plus a stamp current for that
+    video that records how it was delivered."""
+    root, stem = _episode(tmp_path)
+    common.write_stamp(stem + common.STAMP_SUFFIX, str(root / "Show" / "ep01.mkv"), mode=mode)
+    return root, stem
+
+
+def test_a_delivered_sidecar_episode_is_not_reassembled_on_the_next_pass(tmp_path):
+    """The default SIDECAR_SUFFIX gives the published file the artifact's own name, so the .srt
+    stays in the library and the finder sees it every pass. Two passes over an already-stamped
+    episode used to run repair -> signs -> mux twice: in production, LLM calls and a rewrite of
+    a published subtitle every MERGE_INTERVAL."""
+    root, _ = _delivered_episode(tmp_path)
+    env = {"OUTPUT_MODE": "sidecar"}
+
+    res1, calls1 = _gated_run(tmp_path, root, extra_env=env)
+    res2, calls2 = _gated_run(tmp_path, root, extra_env=env)
+
+    assert calls1 == [], (calls1, res1.stdout, res1.stderr)
+    assert calls2 == [], (calls2, res2.stdout, res2.stderr)
+    assert "skip: already delivered" in res1.stdout, res1.stdout
+
+
+def test_a_stamp_for_the_other_mode_does_not_skip_the_episode(tmp_path):
+    """Half the predicate: a mux-mode stamp must not stop a sidecar pass from delivering the
+    external file (and the reverse), which is what lets OUTPUT_MODE be switched without an
+    episode reading as done forever."""
+    root, _ = _delivered_episode(tmp_path, mode="mux")
+
+    res, calls = _gated_run(tmp_path, root, extra_env={"OUTPUT_MODE": "sidecar"})
+
+    assert calls == ["repair ep01", "signs ep01", "mux ep01"], (calls, res.stdout, res.stderr)
+
+
+def test_dropping_the_stamp_reassembles_the_episode_once(tmp_path):
+    """The reopen paths work by dropping or invalidating the stamp: a review verdict drops it,
+    tools/reapply_glossary.py removes it, tools/reopen_for_signs.py removes it last. With the
+    stamp gone the episode must go back through repair -> signs -> mux."""
+    root, stem = _delivered_episode(tmp_path)
+    env = {"OUTPUT_MODE": "sidecar"}
+
+    assert _gated_run(tmp_path, root, extra_env=env)[1] == []
+    os.remove(stem + common.STAMP_SUFFIX)
+
+    res, calls = _gated_run(tmp_path, root, extra_env=env)
     assert calls == ["repair ep01", "signs ep01", "mux ep01"], (calls, res.stdout, res.stderr)
