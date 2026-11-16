@@ -372,10 +372,17 @@ def atomic_write(path, render, mode=SIDECAR_MODE, newline=None):
                 pass
 
 
-def write_stamp(path: str, video: str, stages: dict | None = None) -> None:
-    """Write the .dubtitles.done idempotency stamp recording the muxed file's size+mtime
+def write_stamp(path: str, video: str, stages: dict | None = None, mode: str | None = None) -> None:
+    """Write the .dubtitles.done idempotency stamp recording the delivered file's size+mtime
     and the tier versions that produced it (stamp_valid rejects a stamp behind either
     tier, so a version bump marks every prior-version file stale).
+
+    ``mode`` records HOW the subtitle was delivered: "mux" (embedded track) or "sidecar"
+    (external file beside the video, video untouched). Omitted entirely when the caller
+    does not name one, and a missing key reads as "mux" -- every stamp written before
+    OUTPUT_MODE existed meant an embedded track, so old stamps keep their meaning.
+    Mux mode ignores a sidecar stamp (and sidecar mode a mux stamp), which is what lets an
+    operator switch OUTPUT_MODE without either delivery reading as done forever.
 
     ``stages`` optionally records WHICH stages actually ran, e.g.
     ``{"repair": False, "signs_merge": True, "punctuation": True}``. The stamp used to say
@@ -401,6 +408,8 @@ def write_stamp(path: str, video: str, stages: dict | None = None) -> None:
         "transcribe_version": TRANSCRIBE_VERSION,
         "text_version": TEXT_VERSION,
     }
+    if mode:
+        doc["mode"] = mode
     if stages:
         doc["stages"] = stages
     atomic_write(path, lambda f: json.dump(doc, f))
@@ -462,9 +471,18 @@ def _stamp_matches_file(stamp: dict, video: str) -> bool:
 
 def stamp_valid(stamp: dict | None, video: str) -> bool:
     """True if the stamp matches the current file (size+mtime) AND is current in BOTH
-    tiers — i.e. still muxed, not replaced, and not stale output. Unchanged in meaning
+    tiers — i.e. still delivered, not replaced, and not stale output. Unchanged in meaning
     and signature, so no caller had to move when the single version became two."""
     return not stale_tiers(stamp, video)
+
+
+def stamp_mode(stamp: dict | None) -> str:
+    """How a stamped episode was delivered: "mux" (embedded track) or "sidecar".
+
+    A missing/blank key reads as "mux": every stamp written before OUTPUT_MODE existed
+    meant an embedded track. Never raises on a malformed stamp -- the value is compared,
+    not trusted."""
+    return ((stamp or {}).get("mode") or "mux").strip().lower()
 
 
 # Stage-status sidecar protocol --------------------------------------------------

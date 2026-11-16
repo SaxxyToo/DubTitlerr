@@ -3,15 +3,27 @@
 # For every episode with a dubtitle sidecar that isn't muxed yet:
 #   1. assemble: repair low-confidence lines + merge signs/songs into a .ass (mkv);
 #      mp4 episodes have no embedded signs so they stay a dialogue-only .srt,
-#   2. mux: embed the .ass (mkv) / .srt (mp4) into the video as a default "Dubtitles"
-#      track WITH the embedded fonts (mp4 is remuxed to mkv) -> signs render correctly,
-#      a .dubtitles.done stamp is written, sidecars removed.
-# Idempotent: a muxed episode has the stamp + embedded track, so it's skipped next pass.
+#   2. delivery: mux (default) embeds the .ass (mkv) / .srt (mp4) into the video as a
+#      default "Dubtitles" track WITH the embedded fonts (mp4 is remuxed to mkv) -> signs
+#      render correctly, a .dubtitles.done stamp is written, sidecars removed. With
+#      OUTPUT_MODE=sidecar the assembled subtitle is published as
+#      <episode><SIDECAR_SUFFIX>.<ass|srt> instead and the video is never rewritten.
+# Idempotent: a delivered episode has the stamp (and, in mux mode, the track), so it's
+# skipped next pass.
 # Per-episode availability; refreshes Plex when this pass muxed anything new.
 # Env: MERGE_ROOTS, OLLAMA_URL, REPAIR_MODEL, GLOSSARY_DIR, PLEX_URL, PLEX_TOKEN, PLEX_SECTION,
 #      MIN_FREE_GB, KEEP_LANGS.
 ROOT="${MERGE_ROOTS:-/media/Anime Library}"
-APP="${APP_DIR:-/scripts}"
+APP="${APP_DIR:-$(cd "$(dirname "$0")" 2>/dev/null && pwd)}"
+# Fail as a CONFIGURATION error before the per-stem loop, not as a "crashed" repair on the
+# first episode it touches: a missing $APP/repair.py used to record {"repair": "crashed"}
+# against that stem, which then blocked every later pass until someone cleared the stage.
+for _f in repair.py dub_signs_merge.py mux.py; do
+	if [ ! -f "$APP/$_f" ]; then
+		echo "FATAL: $_f not found under APP=$APP — set APP_DIR to the directory holding the pipeline scripts"
+		exit 1
+	fi
+done
 export PYTHONPATH="$APP${PYTHONPATH:+:$PYTHONPATH}" # so inline `python3 -c "import common"` snippets resolve
 # Stored settings (settings.json / secrets.json, written by the web UI): applied at the start of EVERY pass, so a change takes
 # effect at the next pass boundary and never mid-episode. NOT `source`d: review_settings_write.py parses and re-validates the
@@ -90,6 +102,24 @@ has_record() {
 }
 
 before=$(find "$@" -type f -name "*.dubtitles.done" | wc -l)
+# Optional bridge (ADOPT_DUB_EN=1): a dubsub-delivered .dub.en.srt/.ass is renamed to this
+# pipeline's own artifact name so repair/signs can upgrade it and sidecar mode republishes
+# it under the house name. OFF by default: on a library that already carries hundreds of
+# dubsub sidecars, adopting them all would re-assemble every one in a single pass.
+if [ "${ADOPT_DUB_EN:-0}" = "1" ]; then
+	find "$@" -type f \( -name "*.dub.en.srt" -o -name "*.dub.en.ass" \) | while IFS= read -r f; do
+		case "$f" in
+		*.dub.en.srt) stem="${f%.dub.en.srt}"; ext="srt" ;;
+		*) stem="${f%.dub.en.ass}"; ext="ass" ;;
+		esac
+		# A stamped episode is already delivered; an existing artifact is already queued.
+		[ -f "$stem.dubtitles.done" ] && continue
+		[ -f "$stem.eng.dubtitles.srt" ] && continue
+		[ -f "$stem.eng.dubtitles.ass" ] && continue
+		echo "### adopt $(basename "$f")"
+		mv -n "$f" "$stem.eng.dubtitles.$ext" || true
+	done
+fi
 # episodes with a sidecar (srt or ass) -> dedup to the stem
 find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" \) |
 	grep -ivE "/$PATTERN/" |
@@ -140,6 +170,23 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 	if stop_requested; then
 		echo "skip mux: soft stop (the assembled sidecar waits for the next pass)"
 		continue
+	fi
+	# Publish gate (sidecar only): refuse to publish a subtitle that is not one -- no
+	# punctuation, cards that run off the screen, a known mishear name, or a file that stops
+	# halfway through the episode. Inspects the subtitle text and the container duration;
+	# never touches the video. PUBLISH_GATE=0 is the escape hatch.
+	if [ "${PUBLISH_GATE:-1}" != "0" ]; then
+		if [ ! -f "$APP/publish_gate.py" ]; then
+			echo "FATAL: publish_gate.py missing from APP_DIR ($APP) — image is misbuilt" >&2
+			exit 1
+		fi
+		if ! python3 "$APP/publish_gate.py" "$stem" </dev/null; then
+			# Record the refusal on the mux stage: without it the census counts this stem as
+			# neither done nor failed and prints COMPLETE while an episode was refused.
+			python3 -c "import common,sys; common.write_stage(sys.argv[1],'mux','refused','publish-gate')" "$stem" </dev/null >/dev/null 2>&1 || true
+			echo "skip mux: publish gate failed"
+			continue
+		fi
 	fi
 	for ext in mkv mp4 m4v; do # mux the video (root); embeds + stamps
 		[ -f "$stem.$ext" ] && {

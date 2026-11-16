@@ -10,6 +10,10 @@ import settings_store as store
 
 SECRET = "tok-9f8e7d6c5b4a-do-not-log"
 
+# A 0555 directory does not stop uid 0 from creating a file in it, so this case cannot run
+# on a root dev box. CI's runner is non-root and still covers it.
+_NON_ROOT_ONLY = pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores file modes")
+
 
 @pytest.fixture
 def env(tmp_path):
@@ -146,6 +150,7 @@ def test_bootstrap_secrets_in_secrets_json_are_ignored(env, tmp_path):
     assert any("REVIEW_TOKEN is not editable" in note for note in state.notes)
 
 
+@_NON_ROOT_ONLY
 def test_locked_raises_if_lock_cannot_be_opened(tmp_path):
     unwritable = tmp_path / "unwritable"
     unwritable.mkdir()

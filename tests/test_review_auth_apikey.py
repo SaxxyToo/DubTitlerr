@@ -1,3 +1,4 @@
+import os
 import stat
 
 import pytest
@@ -5,6 +6,10 @@ import pytest
 import review_auth
 
 pytestmark = pytest.mark.real_accounts
+
+# chmod 000 does not make a file unreadable to uid 0, so the permission path below cannot
+# be exercised on a root dev box. CI's runner is non-root and still covers it.
+_NON_ROOT_ONLY = pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores file modes")
 
 
 @pytest.fixture
@@ -86,6 +91,7 @@ def test_an_unwritable_volume_logs_and_keeps_the_review_token_as_the_key(cfg, mo
     assert review_auth.api_key() == "old-review-token"
 
 
+@_NON_ROOT_ONLY
 def test_an_unreadable_key_file_after_a_reset_fails_closed_and_never_revives_the_old_token(cfg, capsys):
     review_auth.init_api_key()
     new = review_auth.reset_api_key()
