@@ -171,6 +171,23 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 		echo "skip mux: soft stop (the assembled sidecar waits for the next pass)"
 		continue
 	fi
+	# Publish gate (sidecar only): refuse to publish a subtitle that is not one -- no
+	# punctuation, cards that run off the screen, a known mishear name, or a file that stops
+	# halfway through the episode. Inspects the subtitle text and the container duration;
+	# never touches the video. PUBLISH_GATE=0 is the escape hatch.
+	if [ "${PUBLISH_GATE:-1}" != "0" ]; then
+		if [ ! -f "$APP/publish_gate.py" ]; then
+			echo "FATAL: publish_gate.py missing from APP_DIR ($APP) — image is misbuilt" >&2
+			exit 1
+		fi
+		if ! python3 "$APP/publish_gate.py" "$stem" </dev/null; then
+			# Record the refusal on the mux stage: without it the census counts this stem as
+			# neither done nor failed and prints COMPLETE while an episode was refused.
+			python3 -c "import common,sys; common.write_stage(sys.argv[1],'mux','refused','publish-gate')" "$stem" </dev/null >/dev/null 2>&1 || true
+			echo "skip mux: publish gate failed"
+			continue
+		fi
+	fi
 	for ext in mkv mp4 m4v; do # mux the video (root); embeds + stamps
 		[ -f "$stem.$ext" ] && {
 			python3 -c "import common,sys; common.clear_stage(sys.argv[1], 'mux')" "$stem" </dev/null >/dev/null 2>&1 || true
