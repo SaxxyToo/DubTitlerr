@@ -25,13 +25,18 @@ services:
       WIKI_CACHE_DIR: /config/wiki_cache
 
       # --- ASR: the bundled CTranslate2/cuBLAS cannot run on an RTX 50-series
-      #     (Blackwell / sm_120) GPU -> CUBLAS_STATUS_NOT_SUPPORTED. Transcripts are
-      #     pre-generated with OpenRouter whisper as <stem>.eng.dubtitles.srt and
-      #     picked up via SKIP_IF_SRT, so the local ASR never has to run. cpu is the
-      #     safe fallback for anything that slips through.
+      #     (Blackwell / sm_120) GPU -> CUBLAS_STATUS_NOT_SUPPORTED, so local stays cpu.
+      #     Transcription runs on the GPU through llama-swap's whisper-server instead.
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
       COMPUTE_TYPE: int8
       ASR_DEVICE: ${ASR_DEVICE:-cpu}
+      # GPU ASR through llama-swap (whisper.cpp on the 5060). The bundled CTranslate2/cuBLAS
+      # predates Blackwell (sm_120) so local stays cpu as a fallback; the endpoint is the
+      # real path. Host networking keeps this loopback, which the key guard requires.
+      ASR_BACKEND: ${ASR_BACKEND:-endpoint}
+      ASR_URL: ${ASR_URL:-http://127.0.0.1:11434/v1/audio/transcriptions}
+      ASR_MODEL: ${ASR_MODEL:-whisper-large-v3-turbo-subs}
+      ASR_KEY_ENV: LLAMA_SWAP_KEY
       REQUIRE_ENG: "1"
 
       # --- repair + glossary stages: llama-swap on the host, via loopback ---
