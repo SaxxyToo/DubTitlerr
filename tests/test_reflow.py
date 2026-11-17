@@ -226,19 +226,19 @@ def test_wrap_balance_single_overlong_word_returned_unwrapped():
 def test_time_cards_start_is_pinned_to_first_word_onset():
     groups = [sentence(["Hello", "world."], t0=3.2)]
     ((start, _end),), _ = reflow.time_cards(groups)
-    assert start == 3.2
+    assert start == pytest.approx(3.2 - reflow.LEAD_IN)
 
 
 def test_time_cards_extends_short_card_to_minimum_duration():
     groups = [[mkword("Oh", 0.5, 0.7)]]  # 0.2s spoken, no trailing card
     ((start, end),), _ = reflow.time_cards(groups)
-    assert end == pytest.approx(start + reflow.MIN_DUR)
+    assert end >= start + reflow.MIN_DUR  # linger may add to it, never subtract
 
 
 def test_time_cards_extends_dense_card_for_reading_speed():
     groups = [[mkword("a" * 68, 1.0, 2.0)]]  # 68 chars / 17 cps = 4.0s needed
     ((start, end),), _ = reflow.time_cards(groups)
-    assert end == pytest.approx(start + 68 / reflow.MAX_CPS)
+    assert end >= start + 68 / reflow.MAX_CPS
 
 
 def test_time_cards_never_exceeds_max_duration():
@@ -323,7 +323,8 @@ def test_reflow_clamps_word_timestamps_into_their_segment_bounds():
     segs = [{"start": 110.5, "end": 111.5, "no_speech_prob": 0.1}]
     cards = reflow.reflow(words, segs)
     assert len(cards) == 1  # not an orphaned "I must" at t=5
-    assert cards[0]["start"] >= 110.5  # clamped into the segment, no early reveal
+    # A lead-in is deliberate (LEAD_IN before the first word); nothing beyond it.
+    assert cards[0]["start"] >= 110.5 - reflow.LEAD_IN
     assert cards[0]["text"] == "I must admit."
 
 
@@ -667,7 +668,8 @@ def test_the_cascade_record_names_the_preexisting_deficit():
 def test_surplus_successor_terminates_the_cascade_in_one_hop():
     times, records = reflow.time_cards(_runt_then_long())
     assert records[0]["hops"] == 1
-    assert times[1][1] == pytest.approx(_runt_then_long()[1][-1]["end"], abs=1e-6)  # end unmoved
+    # end is the spoken end plus its linger, never displaced by the cascade
+    assert times[1][1] == pytest.approx(_runt_then_long()[1][-1]["end"] + reflow.LINGER, abs=1e-6)
     assert times[1][0] > _runt_then_long()[1][0]["start"]  # start moved
 
 
@@ -756,7 +758,7 @@ def test_a_stream_that_needs_nothing_records_no_cascades():
     groups = [[mkword("Hello there.", 0.0, 1.2, seg=0)], [mkword("General Kenobi.", 2.0, 3.4, seg=0)]]
     times, records = reflow.time_cards(groups)
     assert records == []
-    assert times == [(0.0, 1.2), (2.0, 3.4)]
+    assert times == [(0.0, 1.2 + reflow.LINGER), (2.0 - reflow.LEAD_IN, 3.4 + reflow.LINGER)]
 
 
 # --- T11: source timing vs display timing (C6) -------------------------------
@@ -950,3 +952,47 @@ def test_a_wrappable_group_is_left_alone():
     segs = [{"start": ws[0]["start"], "end": ws[-1]["end"], "text": " ".join(words)}]
     cards = reflow.reflow(ws, segs)
     assert len(cards) == 1
+
+
+# --- lead-in / linger: cards need air, borrowed only from real silence ---
+
+
+def test_a_card_appears_slightly_before_speech_and_stays_a_moment_after():
+    st, en = [1.0, 5.0], [2.0, 6.0]
+    reflow._add_lead_and_linger(st, en, None)
+    assert st[0] == pytest.approx(1.0 - reflow.LEAD_IN)
+    assert en[0] == pytest.approx(2.0 + reflow.LINGER)
+    assert st[1] == pytest.approx(5.0 - reflow.LEAD_IN)
+    assert en[1] == pytest.approx(6.0 + reflow.LINGER)
+
+
+def test_a_card_never_borrows_air_from_a_neighbour():
+    """Back-to-back dialogue leaves nothing to borrow: no lead, no linger."""
+    st, en = [1.0, 1.3], [1.2, 1.5]
+    reflow._add_lead_and_linger(st, en, None)
+    # the gap is smaller than MIN_GAP + LEAD_IN, so there is nothing spare to borrow:
+    # no linger on the first card, no lead-in on the second
+    assert en[0] == pytest.approx(1.2)
+    assert st[1] == pytest.approx(1.3)
+
+
+def test_linger_never_runs_past_the_end_of_the_media():
+    st, en = [10.0], [10.4]
+    reflow._add_lead_and_linger(st, en, 10.5)
+    assert en[0] <= 10.5 + 1e-9
+
+
+# --- a word that is one unit repeated is an ASR loop, not speech ---
+
+
+def test_a_repeated_unit_word_is_collapsed():
+    words = [{"text": "Kekekekekekekekekekekekekekekekekekeke", "start": 1.0, "end": 2.0}]
+    out = reflow._collapse_repeats(words)
+    assert out[0]["text"].rstrip("\u2026") == "KeKeKe"
+    assert out[0]["end"] == 2.0  # timing untouched
+
+
+def test_an_ordinary_laugh_is_left_alone():
+    for text in ("Hahahahaha", "Nooooo!", "Hey!"):
+        words = [{"text": text, "start": 0.0, "end": 1.0}]
+        assert reflow._collapse_repeats(words)[0]["text"] == text

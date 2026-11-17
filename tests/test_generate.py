@@ -1915,16 +1915,18 @@ def test_delayed_audio_shifts_cards_to_the_video_timeline(monkeypatch, tmp_path,
 
     assert generate.process(str(v)) == "ok"
     conf = json.loads((tmp_path / "delayed.dubtitles.conf.json").read_text())
-    assert conf[0]["start"] == pytest.approx(1.25)
-    assert conf[0]["end"] == pytest.approx(2.08)
+    assert conf[0]["start"] == pytest.approx(1.25 - reflow.LEAD_IN)
+    assert conf[0]["end"] == pytest.approx(2.08 + reflow.LINGER)
 
     zero = tmp_path / "zero.mkv"
     zero.write_bytes(b"x" * 1000)
     assert generate.process(str(zero)) == "ok"
     zero_conf = json.loads((tmp_path / "zero.dubtitles.conf.json").read_text())
     assert zero_conf[0]["start"] == pytest.approx(0.0)
-    assert zero_conf[0]["end"] == pytest.approx(0.83)
-    assert conf[0]["start"] - zero_conf[0]["start"] == pytest.approx(1.25)
+    assert zero_conf[0]["end"] == pytest.approx(0.83 + reflow.LINGER)
+    # the delayed card can spend its full lead-in; the zero-based one cannot go before
+    # t=0, so the measured gap is the offset minus that difference in lead-in
+    assert conf[0]["start"] - zero_conf[0]["start"] == pytest.approx(1.25 - reflow.LEAD_IN)
     assert conf[0]["end"] - zero_conf[0]["end"] == pytest.approx(1.25)
 
     output = capsys.readouterr().out
@@ -1975,7 +1977,7 @@ def test_subframe_audio_start_does_not_shift_or_log(monkeypatch, tmp_path, capsy
     assert generate.process(str(v)) == "ok"
     conf = json.loads((tmp_path / "preskip.dubtitles.conf.json").read_text())
     assert conf[0]["start"] == pytest.approx(0.0)
-    assert conf[0]["end"] == pytest.approx(0.83)
+    assert conf[0]["end"] == pytest.approx(0.83 + reflow.LINGER)
     assert "audio start offset" not in capsys.readouterr().out
 
 
@@ -2270,3 +2272,18 @@ def test_a_segment_without_words_takes_its_own_confidence(monkeypatch, tmp_path)
     doc = {"segments": [{"start": 0.0, "end": 2.0, "text": " Mumbled line.", "avg_logprob": -2.5}]}
     _s, words = _map(monkeypatch, tmp_path, doc)
     assert len(words) == 1 and words[0]["prob"] == pytest.approx(math.exp(-2.5))
+
+
+def test_a_run_without_show_name_still_finds_its_glossary(tmp_path, monkeypatch):
+    """The glossary file is named after the show, so a run that lost SHOW_NAME can still
+    name the show -- transcribing with no glossary silently ships wrong names."""
+    import json
+
+    import generate
+
+    gloss = tmp_path / "Chainsaw Man (2022) [tvdbid-397934].json"
+    gloss.write_text(json.dumps({"show": "", "names": {"Denji": "Denji"}}), encoding="utf-8")
+    monkeypatch.delenv("SHOW_NAME", raising=False)
+    monkeypatch.setenv("GLOSSARY_FILE", str(gloss))
+    generate.load_glossary()
+    assert generate.INITIAL_PROMPT  # a prompt was derived, so the show was identified

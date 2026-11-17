@@ -176,8 +176,16 @@ INITIAL_PROMPT = ""
 def load_glossary():
     global GLOSS, INITIAL_PROMPT
     show = os.environ.get("SHOW_NAME", "")
-    GLOSS = glossary.load(os.environ.get("GLOSSARY_FILE", ""))
+    gloss_file = os.environ.get("GLOSSARY_FILE", "")
+    GLOSS = glossary.load(gloss_file)
     show = show or GLOSS.get("show", "")
+    if not show and gloss_file:
+        # Glossaries are named <Show>.json, so the file name is the show's own name. A run
+        # that reaches here without SHOW_NAME (a hand-invoked generate.py, a request that
+        # lost the variable) used to transcribe with no glossary at all and report
+        # names=0 — the one failure mode that quietly ships wrong names, which is the
+        # defect the glossary exists to prevent.
+        show = os.path.splitext(os.path.basename(gloss_file))[0]
     # ONE derivation, in glossary.prompt_for: the text tier compares a stored prompt
     # against it to decide whether a glossary edit needs the GPU. A second copy here
     # would drift, and the drift would read as "the prompt changed" on every episode.
