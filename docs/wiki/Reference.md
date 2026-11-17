@@ -164,6 +164,12 @@ line for review, and the stage still records `ok`.
 | `WHISPER_MODEL`                      | `large-v3-turbo` | Whisper model. `large-v3` scores higher; see [Choosing an ASR model](Choosing-an-ASR-Model.md) |
 | `COMPUTE_TYPE`                       | `int8`           | Precision. On Pascal cards `float16` does not load at all — this is not a quality knob there   |
 | `WHISPER_BEAM_SIZE`                  | `7`              | Beam width                                                                                     |
+| `ASR_BACKEND`                        | `local`          | `local` runs Whisper in-process; `endpoint` posts the audio to an OpenAI-compatible URL        |
+| `ASR_URL`                            | OpenRouter       | Full `/audio/transcriptions` URL, used when `ASR_BACKEND=endpoint`                             |
+| `ASR_MODEL`                          | `openai/whisper-1` | Model name sent to the endpoint                                                              |
+| `ASR_KEY_ENV`                        | `OPENROUTER_API_KEY` | Name of the variable holding the endpoint key; empty sends no key (keyless LAN endpoint)   |
+| `ASR_TIMEOUT`                        | `900`            | Per-request timeout in seconds for the endpoint call                                           |
+| `ASR_REFERER`                        | fork repo URL    | `HTTP-Referer`, sent to OpenRouter only                                                        |
 | `REQUIRE_ENG`                        | `1`              | Skip episodes with no English audio track                                                      |
 | `SKIP_IF_SRT`                        | `1`              | Skip an episode that already has a dubtitle sidecar                                            |
 | `SHOW_NAME`                          | _(empty)_        | Override the show name derived from the path                                                   |
