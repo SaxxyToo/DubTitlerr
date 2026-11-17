@@ -41,6 +41,8 @@ NON_SETTINGS = {
     "PATTERN": "merge_pass.sh local",
     "PUSH": "sync_wiki.sh local",
     "ROOT": "merge_pass.sh local",
+    "ROOT_ABS": "merge_pass.sh local: the absolute library root every stage path starts from",
+    "PWD": "the shell's own working directory, read once by merge_pass.sh after cd",
     "SRC": "sync_wiki.sh local",
     "UTC": "review_requests.py time zone name",
     "SHOW_NAME": "set per show by the loops",

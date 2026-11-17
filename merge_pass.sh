@@ -62,6 +62,13 @@ cd "$ROOT" || {
 	echo "merge_pass: missing $ROOT"
 	exit 1
 }
+# Every path this pass hands a stage starts from here, never from ".". A relative path is only
+# as good as the working directory it was made against, and that directory can be replaced
+# under a running pass (a rename, a restore, an NFS remount): measured 2026-11-17, the stages'
+# write_stage then died in os.replace and publish_gate in os.getcwd(), and the census below
+# found nothing and printed COMPLETE. $PWD is the logical path cd just resolved; it still
+# names the library after the directory behind it has been swapped.
+ROOT_ABS=$PWD
 
 # EXTRA_DIRS single source of truth (B7/B9): data/extras.txt via shell/lib.sh, with an
 # inline fallback (the pre-consolidation regex) if the lib or data file isn't present
@@ -81,12 +88,12 @@ command -v library_sweep_enabled >/dev/null 2>&1 || library_sweep_enabled() { re
 # have a run request (pending, running, or done within the 7-day prune window), so nothing spends repair tokens unqueued.
 # A show name from a request file is a plain folder name (review_requests.py refuses path parts), and a folder that does
 # not exist is dropped. No qualifying show: the pass does nothing.
-set -- .
+set -- "$ROOT_ABS"
 if ! library_sweep_enabled; then
 	set --
 	_req_shows=$(python3 "$APP/review_requests.py" shows "${REQUESTS_DIR:-${CONFIG_DIR:-/config}/requests}" 7 </dev/null 2>/dev/null) || _req_shows=""
 	while IFS= read -r _show; do
-		[ -n "$_show" ] && [ -d "./$_show" ] && set -- "$@" "./$_show"
+		[ -n "$_show" ] && [ -d "$ROOT_ABS/$_show" ] && set -- "$@" "$ROOT_ABS/$_show"
 	done <<EOF
 $_req_shows
 EOF
@@ -129,7 +136,9 @@ if [ "${ADOPT_DUB_EN:-0}" = "1" ]; then
 fi
 # episodes with a sidecar (srt or ass) -> dedup to the stem
 find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" \) |
-	grep -ivE "/$PATTERN/" |
+	# Extras are matched BELOW the root only: the paths are absolute, and a library mounted
+	# under a folder such as ".../Other/" must not lose every episode to the "Other" extra.
+	R="$ROOT_ABS" P="/$PATTERN/" awk 'BEGIN { r = ENVIRON["R"]; p = tolower(ENVIRON["P"]) } tolower(substr($0, length(r) + 1)) !~ p' |
 	sed -E 's/\.eng\.dubtitles\.(srt|ass)$//' | sort -u | while IFS= read -r stem; do
 	# window closed (container_run.sh got SIGTERM): start no new stem. This loop is a pipe
 	# subshell, so `break`, not `exit`: the census and the COMPLETE/DONE lines below still run.
