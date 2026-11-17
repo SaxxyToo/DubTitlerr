@@ -357,16 +357,39 @@ def test_missing_wordlist_means_no_contraction_allowance(monkeypatch):
         ({"REPAIR_BACKEND": "ollama"}, "ollama"),
         ({"RESTORE_BACKEND": "llamacpp", "REPAIR_BACKEND": "openai"}, "llamacpp"),  # explicit wins
         ({"RESTORE_BACKEND": "", "REPAIR_BACKEND": "llamacpp"}, "llamacpp"),
+        ({"RESTORE_BACKEND": "openai"}, "openai"),  # this pass speaks chat-completions too
+        ({"REPAIR_BACKEND": "openai"}, "openai"),  # ... so inheriting repair's hosted backend is legal
     ],
 )
 def test_restore_backend_resolution_accepts(env, expect):
     assert punctuation.resolve_restore_backend(env) == (expect, "")
 
 
-@pytest.mark.parametrize("env", [{"REPAIR_BACKEND": "openai"}, {"REPAIR_BACKEND": "nonsense"}, {"RESTORE_BACKEND": "openai"}])
+@pytest.mark.parametrize("env", [{"REPAIR_BACKEND": "nonsense"}, {"RESTORE_BACKEND": "nonsense"}])
 def test_restore_backend_resolution_refuses_with_a_message_naming_the_fix(env):
     backend, problem = punctuation.resolve_restore_backend(env)
-    assert backend == "" and "RESTORE_BACKEND" in problem and ("openai" in problem or "nonsense" in problem)
+    assert backend == "" and "RESTORE_BACKEND" in problem and "nonsense" in problem
+
+
+def test_openai_backend_sends_the_url_and_key_variable(monkeypatch):
+    """The hosted shape needs the URL, the key variable and the model; the llamacpp shape
+    sent none of these, which is why a llama-swap restore never worked."""
+    seen = {}
+
+    def _chat(prompt, **kw):
+        seen.update(kw)
+        return ""
+
+    monkeypatch.setattr(punctuation, "llm_chat", _chat)
+    monkeypatch.setattr(punctuation, "RESTORE_BACKEND", "openai")
+    monkeypatch.setattr(punctuation, "RESTORE_OPENAI_URL", "http://127.0.0.1:11434/v1/chat/completions")
+    monkeypatch.setattr(punctuation, "RESTORE_OPENAI_KEY_ENV", "LLAMA_SWAP_KEY")
+    monkeypatch.setattr(punctuation, "RESTORE_MODEL", "qwen3.5:4b")
+    assert punctuation._ask("prompt", 10) == ""
+    assert seen["backend"] == "openai"
+    assert seen["openai_url"].endswith("/v1/chat/completions")
+    assert seen["openai_key_env"] == "LLAMA_SWAP_KEY"
+    assert seen["model"] == "qwen3.5:4b"
 
 
 def test_a_refused_backend_sends_nothing_and_says_so_once(monkeypatch, capsys):

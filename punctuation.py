@@ -63,12 +63,19 @@ def resolve_restore_backend(env=None):
     (common.inherit_repair_backend): a repair `openai` or any other value is refused instead of being handed on."""
     env = os.environ if env is None else env
     explicit = (env.get("RESTORE_BACKEND") or "").strip()
-    fix = "set RESTORE_BACKEND to llamacpp or ollama"
+    fix = "set RESTORE_BACKEND to llamacpp, ollama or openai"
     if explicit:
-        if explicit in LEGACY_BACKENDS:
+        if explicit in LEGACY_BACKENDS or explicit == "openai":
             return explicit, ""
-        return "", f"RESTORE_BACKEND={explicit!r} is not llamacpp or ollama: {fix}"
-    return inherit_repair_backend(env.get("REPAIR_BACKEND"), "punctuation restoration", fix)
+        return "", f"RESTORE_BACKEND={explicit!r} is not llamacpp, ollama or openai: {fix}"
+    inherited, problem = inherit_repair_backend(env.get("REPAIR_BACKEND"), "punctuation restoration", fix)
+    if not problem:
+        return inherited, ""
+    # Unlike the glossary stages, this pass speaks the openai chat-completions shape too
+    # (see _ask), so inheriting repair's openai backend is legitimate here.
+    if (env.get("REPAIR_BACKEND") or "").strip() == "openai":
+        return "openai", ""
+    return "", problem
 
 
 RESTORE_BACKEND, RESTORE_PROBLEM = resolve_restore_backend()
@@ -79,6 +86,8 @@ RESTORE_LLAMACPP_URL = os.environ.get(
     "RESTORE_LLAMACPP_URL", os.environ.get("REPAIR_LLAMACPP_URL", "http://127.0.0.1:8090/v1/chat/completions")
 )
 RESTORE_MAX_TOKENS = int(os.environ.get("RESTORE_MAX_TOKENS", "2048"))
+RESTORE_OPENAI_URL = os.environ.get("RESTORE_OPENAI_URL", os.environ.get("REPAIR_OPENAI_URL", ""))
+RESTORE_OPENAI_KEY_ENV = os.environ.get("RESTORE_OPENAI_KEY_ENV", os.environ.get("REPAIR_OPENAI_KEY_ENV", ""))
 MAX_REJECT_EVENTS = 20  # a systematic rejection pattern shows in the first few; the rest
 # would only crowd the shared event budget (see qc.Recorder.event)
 
@@ -232,6 +241,8 @@ def _ask(prompt: str, n_words: int) -> str:
             backend=RESTORE_BACKEND,
             ollama_url=OLLAMA,
             llamacpp_url=RESTORE_LLAMACPP_URL,
+            openai_url=RESTORE_OPENAI_URL,
+            openai_key_env=RESTORE_OPENAI_KEY_ENV,
             model=RESTORE_MODEL,
             max_tokens=_max_tokens(n_words),
             first_line=False,

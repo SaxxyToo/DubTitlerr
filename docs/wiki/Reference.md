@@ -243,7 +243,9 @@ new wording. Set `REPAIR_KEEP_NAME_PARTS=0` to restore the old prompt.
 | --------------------- | ---------------------------------- | ------------------------------------------ |
 | `RESTORE_PUNCTUATION` | `1`                                | Enable the punctuation-restore stage       |
 | `RESTORE_MODEL`       | _(falls back to `REPAIR_MODEL`)_   | Model for this stage                       |
-| `RESTORE_BACKEND`     | _(falls back to `REPAIR_BACKEND`)_ | Backend for this stage                     |
+| `RESTORE_BACKEND`     | _(falls back to `REPAIR_BACKEND`)_ | `llamacpp`, `ollama` or `openai`; `openai` needs the two vars below |
+| `RESTORE_OPENAI_URL`  | _(falls back to `REPAIR_OPENAI_URL`)_ | Chat-completions URL for the `openai` backend |
+| `RESTORE_OPENAI_KEY_ENV` | _(falls back to `REPAIR_OPENAI_KEY_ENV`)_ | Variable holding the key for that URL |
 | `RESTORE_MIN_RUN`     | `2`                                | Minimum run of unpunctuated cues to act on |
 | `RESTORE_MAX_TOKENS`  | `2048`                             | Generation cap                             |
 
