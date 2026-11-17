@@ -51,7 +51,10 @@ import sys
 import tempfile
 import time
 
-from faster_whisper import WhisperModel
+try:  # local ASR only: the lite (endpoint-backed) image ships no torch/ctranslate2
+    from faster_whisper import WhisperModel
+except ImportError:  # pragma: no cover - endpoint-only deployments
+    WhisperModel = None
 
 import common
 import glossary
@@ -109,6 +112,20 @@ COMPUTE = os.environ.get("COMPUTE_TYPE", "int8")
 # cuda is what the image ships for; cpu and auto exist so a card-less test box can run the same code (settings: ASR_DEVICE).
 ASR_DEVICE = os.environ.get("ASR_DEVICE", "cuda")
 MODEL_DIR = os.environ.get("MODEL_DIR", "/subgen/models")
+
+# --- ASR backend -------------------------------------------------------------------
+# "local"    : faster-whisper in-process; the model is baked into the full image.
+# "endpoint" : an OpenAI-compatible /audio/transcriptions endpoint (OpenRouter, a
+#              llama-swap whisper, the Nous gateway ...). No model, no torch, no GPU --
+#              this is what the lite image runs.
+ASR_BACKEND = os.environ.get("ASR_BACKEND", "local").strip().lower()
+ASR_URL = os.environ.get(
+    "ASR_URL", "https://openrouter.ai/api/v1/audio/transcriptions"
+).strip()
+ASR_MODEL = os.environ.get("ASR_MODEL", "openai/whisper-1").strip()
+ASR_KEY_ENV = os.environ.get("ASR_KEY_ENV", "OPENROUTER_API_KEY").strip()
+ASR_TIMEOUT = int(os.environ.get("ASR_TIMEOUT", "900"))
+ASR_REFERER = os.environ.get("ASR_REFERER", "https://github.com/SaxxyToo/dubtitlerr").strip()
 # V2 A8: optional pre-transcription audio cleanup (default highpass + dynamic-range
 # compand, tuned for noisy/quiet anime dub tracks). Empty string ("") disables it
 # entirely (the old, pre-A8 ffmpeg command) -- set WHISPER_AUDIO_FILTER="" to opt out.
@@ -154,7 +171,15 @@ def load_glossary():
 
 def decoder_identity() -> dict:
     """What today's process would use to transcribe."""
+    if ASR_BACKEND == "endpoint":
+        return {
+            "backend": "endpoint",
+            "model": ASR_MODEL,
+            "url": ASR_URL,
+            "initial_prompt": INITIAL_PROMPT,
+        }
     return {
+        "backend": "local",
         "model": MODEL,
         "initial_prompt": INITIAL_PROMPT,
         "compute_type": COMPUTE,
@@ -951,6 +976,125 @@ def process_text(video):
     )
 
 
+def _asr_key():
+    """Key for the endpoint backend: $ASR_KEY_ENV first, then the usual names."""
+    for name in (ASR_KEY_ENV, "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ASR_API_KEY"):
+        if not name:
+            continue
+        v = os.environ.get(name, "").strip()
+        if v:
+            return v
+    return ""
+
+
+def _mp3_for_upload(wav, path):
+    """Endpoints cap the upload (OpenRouter 25 MB); a 24-min 16 kHz wav is ~46 MB."""
+    r = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", wav, "-ac", "1", "-ar", "16000",
+         "-c:a", "libmp3lame", "-b:a", "32k", path],
+        capture_output=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
+    )
+    if r.returncode != 0:
+        return False
+    return os.path.exists(path) and os.path.getsize(path) > 1024
+
+
+def _post_multipart(url, fields, filename, payload, content_type, headers, timeout):
+    import urllib.request
+
+    boundary = "----dubtitlerr" + os.urandom(8).hex()
+    chunks = []
+    for name, value in fields:
+        chunks.append(
+            ('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n'
+             % (boundary, name, value)).encode()
+        )
+    chunks.append(
+        ('--%s\r\nContent-Disposition: form-data; name="file"; filename="%s"\r\n'
+         'Content-Type: %s\r\n\r\n' % (boundary, filename, content_type)).encode()
+    )
+    chunks.append(payload)
+    chunks.append(("\r\n--%s--\r\n" % boundary).encode())
+    body = b"".join(chunks)
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "multipart/form-data; boundary=%s" % boundary)
+    req.add_header("Content-Length", str(len(body)))
+    for k, v in headers.items():
+        req.add_header(k, v)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.status, resp.read().decode("utf-8", "replace")
+
+
+def endpoint_transcribe(wav):
+    """Transcribe via an OpenAI-compatible endpoint; return the local decoder's shapes.
+
+    (segments: [{start,end,no_speech_prob}], words: [{text,start,end,prob,seg}])
+    """
+    key = _asr_key()
+    if not key:
+        # Keyless endpoints exist (a llama-swap whisper on the LAN). Don't refuse here:
+        # an endpoint that wants a key answers 401 and the error carries that.
+        log("warning: ASR_BACKEND=endpoint with no key in $%s — sending none" % ASR_KEY_ENV)
+    mp3 = wav + ".mp3"
+    if not _mp3_for_upload(wav, mp3):
+        raise RuntimeError("could not build the upload mp3 from the extracted wav")
+    fields = [
+        ("model", ASR_MODEL),
+        ("language", "en"),
+        ("response_format", "verbose_json"),
+        ("timestamp_granularities[]", "word"),
+    ]
+    if INITIAL_PROMPT:
+        fields.append(("prompt", INITIAL_PROMPT))
+    headers = {"Authorization": "Bearer " + key} if key else {}
+    if key and "openrouter.ai" in ASR_URL:
+        headers["HTTP-Referer"] = ASR_REFERER
+        headers["X-Title"] = "DubTitlerr"
+    try:
+        with open(mp3, "rb") as fh:
+            payload = fh.read()
+        _status, raw = _post_multipart(ASR_URL, fields, os.path.basename(mp3), payload,
+                                       "audio/mpeg", headers, ASR_TIMEOUT)
+        doc = json.loads(raw)
+    finally:
+        try:
+            os.remove(mp3)
+        except OSError:
+            pass
+    segs = doc.get("segments") or []
+    if not segs and doc.get("text"):
+        segs = [{"start": 0.0, "end": float(doc.get("duration") or 0.0), "text": doc["text"]}]
+    if not segs:
+        raise RuntimeError("endpoint returned no segments: %s" % raw[:300])
+    segments, words = [], []
+    for si, s in enumerate(segs):
+        start, end = float(s.get("start") or 0.0), float(s.get("end") or 0.0)
+        segments.append({
+            "start": start,
+            "end": end,
+            "no_speech_prob": float(s.get("no_speech_prob") or 0.0),
+        })
+        sw = s.get("words") or []
+        if sw:
+            for w in sw:
+                words.append({
+                    "text": w.get("word") or w.get("text") or "",
+                    "start": float(w.get("start", start)),
+                    "end": float(w.get("end", end)),
+                    "prob": float(w.get("probability", 1.0) or 1.0),
+                    "seg": si,
+                })
+        else:
+            words.append({
+                "text": s.get("text") or "",
+                "start": start,
+                "end": end,
+                "prob": 1.0,
+                "seg": si,
+            })
+    return segments, words
+
+
 def process(video):
     stem = os.path.splitext(video)[0]
     # The version-aware stamp (common.stamp_valid) is the ONLY "already muxed" guard.
@@ -986,55 +1130,63 @@ def process(video):
             open(fail, "w").close()  # mark in-flight (a segfault here leaves the
         except OSError:
             pass  # marker, so a resume skips this poison file)
-        beam_size = int(os.environ.get("WHISPER_BEAM_SIZE", "7"))
-        segs, _info = WMODEL.transcribe(
-            wav,
-            language="en",
-            task="transcribe",
-            beam_size=beam_size,
-            best_of=beam_size,
-            word_timestamps=True,
-            vad_filter=False,
-            condition_on_previous_text=False,
-            no_speech_threshold=0.9,
-            log_prob_threshold=-2.0,  # max coverage: VAD was removing
-            initial_prompt=INITIAL_PROMPT,
-        )  # music-masked dialogue (the 18-20min
-        # Buster Call scene) before whisper saw it -> big gaps. VAD off + loose thresholds keep it;
-        # B1 + the LLM repair clean the resulting silence/music hallucinations (tuning deferred).
-        # condition_on_previous_text=False is now also FORCED BY VRAM, not only by the
-        # collapse below. Measured 2026-08-20 on this box (1060, 6GB, large-v3, beam 7):
-        # True OOMs -- "CUDA failed with error out of memory" -- in a fresh process with the
-        # GPU otherwise idle at 121MiB. True grows the decoder prompt with the previous
-        # segment's text, and there is no headroom for it here. Fitting it would mean
-        # beam_size=1 or large-v3-turbo, both of which cost accuracy elsewhere.
-        # Consequence: Whisper decodes each segment cold, so segments that begin mid-sentence
-        # come back lowercase and unpunctuated -- 73% punctuated / 14% lowercase-start at the
-        # segment level on S30E06. punctuation.restore() puts that back BEFORE reflow splits
-        # the words (it sees the whole run in both directions -- more context than this flag
-        # would have given whisper); repair.py is too late, the cards are cut by then.
-        # condition_on_previous_text=False: with True, hard/music-masked stretches collapse into
-        # one mega-segment (e.g. a 139s "segment" over the 18-20min mark of One Pace S19E16) that
-        # reflow then renders as a long gap — real dialogue lost. False keeps segments discrete and
-        # recovers that dialogue (faster-whisper's recommended anti-collapse setting). The glossary
-        # initial_prompt still biases names; C1 correction + the LLM repair restore cross-line context.
-        # (hallucination_silence_threshold also removed — it skipped real speech.)
-        # Consume the (lazy) generator while the wav still exists, adapting whisper's
-        # objects to the plain dicts reflow expects: one word dict per word (with its
-        # source segment index), plus a per-segment record for no_speech_prob.
-        words, segments = [], []
-        for si, s in enumerate(segs):
-            segments.append({"start": s.start, "end": s.end, "no_speech_prob": s.no_speech_prob})
-            sw = s.words or []
-            if sw:
-                for w in sw:
-                    words.append(
-                        {"text": w.word, "start": w.start, "end": w.end, "prob": getattr(w, "probability", 1.0) or 1.0, "seg": si}
-                    )
-            else:  # no word timestamps -> whole segment as one "word"
-                words.append(
-                    {"text": s.text, "start": s.start, "end": s.end, "prob": min(1.0, math.exp(s.avg_logprob)), "seg": si}
+        if ASR_BACKEND == "endpoint":
+            segments, words = endpoint_transcribe(wav)
+        else:
+            if WMODEL is None:
+                raise RuntimeError(
+                    "ASR_BACKEND=local but faster_whisper is not installed "
+                    "(use the full image, or set ASR_BACKEND=endpoint)"
                 )
+            beam_size = int(os.environ.get("WHISPER_BEAM_SIZE", "7"))
+            segs, _info = WMODEL.transcribe(
+                wav,
+                language="en",
+                task="transcribe",
+                beam_size=beam_size,
+                best_of=beam_size,
+                word_timestamps=True,
+                vad_filter=False,
+                condition_on_previous_text=False,
+                no_speech_threshold=0.9,
+                log_prob_threshold=-2.0,  # max coverage: VAD was removing
+                initial_prompt=INITIAL_PROMPT,
+            )  # music-masked dialogue (the 18-20min
+            # Buster Call scene) before whisper saw it -> big gaps. VAD off + loose thresholds keep it;
+            # B1 + the LLM repair clean the resulting silence/music hallucinations (tuning deferred).
+            # condition_on_previous_text=False is now also FORCED BY VRAM, not only by the
+            # collapse below. Measured 2026-08-20 on this box (1060, 6GB, large-v3, beam 7):
+            # True OOMs -- "CUDA failed with error out of memory" -- in a fresh process with the
+            # GPU otherwise idle at 121MiB. True grows the decoder prompt with the previous
+            # segment's text, and there is no headroom for it here. Fitting it would mean
+            # beam_size=1 or large-v3-turbo, both of which cost accuracy elsewhere.
+            # Consequence: Whisper decodes each segment cold, so segments that begin mid-sentence
+            # come back lowercase and unpunctuated -- 73% punctuated / 14% lowercase-start at the
+            # segment level on S30E06. punctuation.restore() puts that back BEFORE reflow splits
+            # the words (it sees the whole run in both directions -- more context than this flag
+            # would have given whisper); repair.py is too late, the cards are cut by then.
+            # condition_on_previous_text=False: with True, hard/music-masked stretches collapse into
+            # one mega-segment (e.g. a 139s "segment" over the 18-20min mark of One Pace S19E16) that
+            # reflow then renders as a long gap — real dialogue lost. False keeps segments discrete and
+            # recovers that dialogue (faster-whisper's recommended anti-collapse setting). The glossary
+            # initial_prompt still biases names; C1 correction + the LLM repair restore cross-line context.
+            # (hallucination_silence_threshold also removed — it skipped real speech.)
+            # Consume the (lazy) generator while the wav still exists, adapting whisper's
+            # objects to the plain dicts reflow expects: one word dict per word (with its
+            # source segment index), plus a per-segment record for no_speech_prob.
+            words, segments = [], []
+            for si, s in enumerate(segs):
+                segments.append({"start": s.start, "end": s.end, "no_speech_prob": s.no_speech_prob})
+                sw = s.words or []
+                if sw:
+                    for w in sw:
+                        words.append(
+                            {"text": w.word, "start": w.start, "end": w.end, "prob": getattr(w, "probability", 1.0) or 1.0, "seg": si}
+                        )
+                else:  # no word timestamps -> whole segment as one "word"
+                    words.append(
+                        {"text": s.text, "start": s.start, "end": s.end, "prob": min(1.0, math.exp(s.avg_logprob)), "seg": si}
+                    )
         audio_duration = _apply_audio_start_offset(words, segments, audio_duration, audio_start_time(video, idx))
     try:
         os.remove(fail)  # transcription finished -> clear in-flight mark
@@ -1190,6 +1342,8 @@ def main():
     if transcribe_todo and common.stop_requested():
         # the loops below break on their first check; do not pay the load for nothing
         log("stop requested: not loading the model")
+    elif transcribe_todo and ASR_BACKEND == "endpoint":
+        log(f"ASR backend=endpoint model={ASR_MODEL} url={ASR_URL} — no local model load")
     elif transcribe_todo:
         globals()["WMODEL"] = WhisperModel(MODEL, device=ASR_DEVICE, compute_type=COMPUTE, download_root=MODEL_DIR)
     else:

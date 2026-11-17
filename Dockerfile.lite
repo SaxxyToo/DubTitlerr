@@ -1,0 +1,24 @@
+# Lite image: the fork's pipeline scripts only, ASR via an OpenAI-compatible
+# /audio/transcriptions endpoint (OpenRouter, llama-swap whisper, Nous gateway...).
+#
+# No torch, no ctranslate2, no baked Whisper model -- ~300 MB instead of ~13 GB.
+# Requires ASR_BACKEND=endpoint plus ASR_URL / ASR_MODEL / ASR_KEY_ENV at runtime.
+#
+#   docker build -f Dockerfile.lite -t dubtitlerr:lite .
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    APP_DIR=/app
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg mkvtoolnix ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir pysubs2
+
+WORKDIR /app
+COPY . /app/
+RUN chmod +x /app/*.sh 2>/dev/null || true
+
+ENTRYPOINT ["/app/container_run.sh"]
