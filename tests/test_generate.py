@@ -540,6 +540,36 @@ def test_endpoint_error_does_not_poison_the_episode(monkeypatch, tmp_path):
     assert crash["exc_type"] == "EndpointAsrError"
 
 
+def test_endpoint_error_gives_up_after_three_attempts(monkeypatch, tmp_path):
+    """Three consecutive endpoint failures retire the episode with a marker instead of
+    retrying forever. No empty sidecar is written, so it stays visible as a gap."""
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 1000)
+    monkeypatch.setattr(generate, "WhisperModel", lambda *a, **kw: object())
+    monkeypatch.setattr(generate, "GLOSS_DIR", str(tmp_path))
+    monkeypatch.setattr(common, "OUTPUT_ROOT", "")
+    monkeypatch.setattr(generate, "ENDPOINT_MAX_ATTEMPTS", 3)
+    (tmp_path / "ep.dubtitles.crash.json").write_text(json.dumps({"attempts": 2}))
+
+    def _boom(video):
+        open(_fail_marker(video), "w").close()
+        raise generate.EndpointAsrError("endpoint returned no segments")
+
+    real_process = generate.process
+    monkeypatch.setattr(generate, "process", _boom)
+    monkeypatch.setattr(sys, "argv", ["generate.py", str(v)])
+
+    generate.main()
+
+    marker = json.loads((tmp_path / "ep.dubtitles.no-speech").read_text())
+    assert marker["attempts"] == 3
+    assert marker["exc_type"] == "EndpointAsrError"
+    assert not os.path.exists(_fail_marker(str(v)))
+
+    # and a marked episode is skipped, not retried
+    assert real_process(str(v)) == "no-speech"
+
+
 # --- a version bump must not be defeated by a leftover sidecar ----------------
 #
 # mux removes sidecars only AFTER stamping, so a crash/kill in that window (or a

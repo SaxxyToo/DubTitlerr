@@ -125,6 +125,8 @@ ASR_URL = os.environ.get(
 ASR_MODEL = os.environ.get("ASR_MODEL", "openai/whisper-1").strip()
 ASR_KEY_ENV = os.environ.get("ASR_KEY_ENV", "OPENROUTER_API_KEY").strip()
 ASR_TIMEOUT = int(os.environ.get("ASR_TIMEOUT", "900"))
+ENDPOINT_MAX_ATTEMPTS = int(os.environ.get("ENDPOINT_MAX_ATTEMPTS", "3"))
+NO_SPEECH_SUFFIX = ".dubtitles.no-speech"
 ASR_REFERER = os.environ.get("ASR_REFERER", "https://github.com/SaxxyToo/dubtitlerr").strip()
 
 
@@ -1132,6 +1134,8 @@ def process(video):
         return "already-srt"  # generated, awaiting (a retry of) assemble
     if os.path.exists(fail):  # a previous attempt hard-crashed on this
         return "skip-prior-crash"  # file -> skip it (rm the .fail to retry)
+    if os.path.exists(stem + NO_SPEECH_SUFFIX):  # gave up: the endpoint reported no speech
+        return "no-speech"  # rm the marker to retry
     idx = eng_audio_index(video)
     if idx is None:
         return "no-eng-dub"  # sub-only release (or no audio) -> skip
@@ -1412,15 +1416,36 @@ def main():
             # marker so the next sweep retries it, and persist a small JSON record of what
             # happened (V2 C15's retry log) for later triage.
             stem = os.path.splitext(v)[0]
+            crash_path = out_for(stem + ".dubtitles.crash.json")
+            attempts = 1
+            if isinstance(e, EndpointAsrError):
+                try:
+                    with open(crash_path) as fh:
+                        attempts = int(json.load(fh).get("attempts", 0)) + 1
+                except (OSError, ValueError):
+                    attempts = 1
             try:
                 os.remove(stem + ".dubtitles.fail")
             except OSError:
                 pass
-            try:
-                with open(out_for(stem + ".dubtitles.crash.json"), "w") as f:
-                    json.dump({"path": v, "exc_type": type(e).__name__, "msg": str(e), "time": time.time()}, f)
-            except OSError:
-                pass
+            if isinstance(e, EndpointAsrError) and attempts >= ENDPOINT_MAX_ATTEMPTS:
+                # Consecutive endpoint failures: stop retrying and record a terminal state
+                # for this episode. No empty sidecar is written -- the census keeps showing
+                # it as a gap, which is the truth.
+                try:
+                    with open(out_for(stem + NO_SPEECH_SUFFIX), "w") as fh:
+                        json.dump({"path": v, "attempts": attempts, "exc_type": type(e).__name__,
+                                   "msg": str(e), "time": time.time()}, fh)
+                except OSError:
+                    pass
+                log(f"  endpoint failed {attempts}x -> marked no-speech, no further retries: {os.path.basename(v)}")
+            else:
+                try:
+                    with open(crash_path, "w") as f:
+                        json.dump({"path": v, "exc_type": type(e).__name__, "msg": str(e),
+                                   "time": time.time(), "attempts": attempts}, f)
+                except OSError:
+                    pass
     # V2 C1: per-show run summary (glossaries/<show>.lastrun.json) -- one file per --root
     # invocation, since SHOW_NAME/GLOSSARY_FILE are per-run env (see load_glossary()).
     show = os.environ.get("SHOW_NAME", "") or GLOSS.get("show", "") or "unknown_show"

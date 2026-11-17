@@ -169,6 +169,7 @@ line for review, and the stage still records `ok`.
 | `ASR_MODEL`                          | `openai/whisper-1` | Model name sent to the endpoint                                                              |
 | `ASR_KEY_ENV`                        | `OPENROUTER_API_KEY` | Name of the variable holding the endpoint key; empty sends no key (keyless LAN endpoint)   |
 | `ASR_TIMEOUT`                        | `900`            | Per-request timeout in seconds for the endpoint call                                           |
+| `ENDPOINT_MAX_ATTEMPTS`              | `3`              | Consecutive endpoint failures before the episode is marked no-speech and stops retrying        |
 | `ASR_REFERER`                        | fork repo URL    | `HTTP-Referer`, sent to OpenRouter only                                                        |
 | `REQUIRE_ENG`                        | `1`              | Skip episodes with no English audio track                                                      |
 | `SKIP_IF_SRT`                        | `1`              | Skip an episode that already has a dubtitle sidecar                                            |
