@@ -483,6 +483,63 @@ def test_non_runtimeerror_mentioning_cuda_does_not_poison(monkeypatch, tmp_path)
     assert "cuda" in crash["msg"].lower()
 
 
+# --- A2: an endpoint failure is a retry, not a GPU crash ------------------------------
+
+
+def _stub_endpoint(monkeypatch, tmp_path, body):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"\0" * 2048)
+
+    def _mk(w, out):
+        open(out, "wb").write(b"fake-mp3")
+        return True
+
+    monkeypatch.setattr(generate, "_mp3_for_upload", _mk)
+    monkeypatch.setattr(generate, "_asr_key", lambda: "k")
+    monkeypatch.setattr(generate, "_post_multipart", lambda *a, **k: (200, body))
+    return str(wav)
+
+
+def test_endpoint_error_body_raises_endpoint_error(monkeypatch, tmp_path):
+    """A 200 response carrying an error object has no segments. That is an endpoint
+    failure, not an empty transcript, and must not be mistaken for a CUDA crash."""
+    wav = _stub_endpoint(monkeypatch, tmp_path, '{"error": {"message": "no such model"}}')
+    with pytest.raises(generate.EndpointAsrError):
+        generate.endpoint_transcribe(wav)
+
+
+def test_endpoint_no_speech_raises_endpoint_error(monkeypatch, tmp_path):
+    wav = _stub_endpoint(monkeypatch, tmp_path, '{"text": "", "segments": []}')
+    with pytest.raises(generate.EndpointAsrError):
+        generate.endpoint_transcribe(wav)
+
+
+def test_endpoint_error_is_not_a_runtime_error():
+    """The poison decision is isinstance(e, RuntimeError), so this must never be one."""
+    assert not issubclass(generate.EndpointAsrError, RuntimeError)
+
+
+def test_endpoint_error_does_not_poison_the_episode(monkeypatch, tmp_path):
+    """Marker cleared, crash record written, no exit: the episode retries next sweep."""
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 1000)
+    monkeypatch.setattr(generate, "WhisperModel", lambda *a, **kw: object())
+    monkeypatch.setattr(generate, "GLOSS_DIR", str(tmp_path))
+
+    def _boom(video):
+        open(_fail_marker(video), "w").close()
+        raise generate.EndpointAsrError("endpoint returned no segments")
+
+    monkeypatch.setattr(generate, "process", _boom)
+    monkeypatch.setattr(sys, "argv", ["generate.py", str(v)])
+
+    generate.main()  # must NOT sys.exit
+
+    assert not os.path.exists(_fail_marker(str(v)))
+    crash = json.loads((tmp_path / "ep.dubtitles.crash.json").read_text())
+    assert crash["exc_type"] == "EndpointAsrError"
+
+
 # --- a version bump must not be defeated by a leftover sidecar ----------------
 #
 # mux removes sidecars only AFTER stamping, so a crash/kill in that window (or a

@@ -126,6 +126,18 @@ ASR_MODEL = os.environ.get("ASR_MODEL", "openai/whisper-1").strip()
 ASR_KEY_ENV = os.environ.get("ASR_KEY_ENV", "OPENROUTER_API_KEY").strip()
 ASR_TIMEOUT = int(os.environ.get("ASR_TIMEOUT", "900"))
 ASR_REFERER = os.environ.get("ASR_REFERER", "https://github.com/SaxxyToo/dubtitlerr").strip()
+
+
+class EndpointAsrError(Exception):
+    """An endpoint transcription failed in a way that must not poison the episode.
+
+    Deliberately NOT a RuntimeError: the caller treats RuntimeError as a CUDA-context
+    failure -- it keeps the .dubtitles.fail marker (skip-prior-crash on every later
+    sweep) and exits the process. An endpoint answering 200 with an error body, a
+    truncated upload or a stretch with no speech is a per-episode retry, not a broken
+    GPU context. Raising this takes the non-poison path: marker cleared, crash.json
+    written, episode retried on the next sweep.
+    """
 # V2 A8: optional pre-transcription audio cleanup (default highpass + dynamic-range
 # compand, tuned for noisy/quiet anime dub tracks). Empty string ("") disables it
 # entirely (the old, pre-A8 ffmpeg command) -- set WHISPER_AUDIO_FILTER="" to opt out.
@@ -1040,7 +1052,7 @@ def endpoint_transcribe(wav):
         log(f"warning: ASR_BACKEND=endpoint with no key in ${ASR_KEY_ENV} — sending none")
     mp3 = wav + ".mp3"
     if not _mp3_for_upload(wav, mp3):
-        raise RuntimeError("could not build the upload mp3 from the extracted wav")
+        raise EndpointAsrError("could not build the upload mp3 from the extracted wav")
     fields = [
         ("model", ASR_MODEL),
         ("language", "en"),
@@ -1068,7 +1080,7 @@ def endpoint_transcribe(wav):
     if not segs and doc.get("text"):
         segs = [{"start": 0.0, "end": float(doc.get("duration") or 0.0), "text": doc["text"]}]
     if not segs:
-        raise RuntimeError(f"endpoint returned no segments: {raw[:300]}")
+        raise EndpointAsrError(f"endpoint returned no segments: {raw[:300]}")
     segments, words = [], []
     for si, s in enumerate(segs):
         start, end = float(s.get("start") or 0.0), float(s.get("end") or 0.0)
