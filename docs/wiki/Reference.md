@@ -347,6 +347,7 @@ Every wiki fetch is https-only. A redirect to another scheme is refused before t
 | `SIDECAR_SUFFIX`          | `.eng.dubtitles`         | Sidecar mode: text between the episode name and the extension (`.dub.en` → `Episode.dub.en.srt`)  |
 | `ADOPT_DUB_EN`            | `0`                      | `1` feeds an existing `.dub.en.srt/.ass` (dubsub) through repair and signs merge; off never moves a file the pass did not produce |
 | `MUX_KEEP_ALL_SUBS`       | `0`                      | `1` keeps every subtitle track; `0` applies the `KEEP_LANGS` whitelist, which can drop a mislabeled English track |
+| `PUBLISH_GATE`            | `1`                      | `1` refuses to deliver an uncovered, unpunctuated, off-screen or misheard subtitle; `0` publishes whatever was assembled |
 | `REVIEW_GATE_SHOWS`       | _(empty)_                | Shows whose **unreviewed repairs** wait before delivery; an episode with no applied repair is not held |
 | `REVIEW_GATE_STALE_DAYS`  | `7`                      | A hold older than this is reported loudly and **stays held**. It buys a log line, never a release |
 | `MEDIA_UID` / `MEDIA_GID` | `1000` / `100`           | Ownership set on written files                                                                    |
@@ -354,6 +355,15 @@ Every wiki fetch is https-only. A redirect to another scheme is refused before t
 The muxed `Dubtitles` track is appended last and flagged default, so the relative order of the other subtitle tracks is unchanged while players pick it up through the default flag. An MP4 or M4V source is removed only after the remuxed MKV verifies and the stamp writes. If the stamp write itself fails, the new MKV is rolled back and the original file is left untouched, so a failed run always leaves something complete on disk. Plex reads `.ass` sidecars and renders styling and positioning on direct-play clients; transcoding clients burn them in.
 
 **Sidecar mode.** `OUTPUT_MODE=sidecar` ends the pipeline at the assembled subtitle instead of embedding it: the artifact is left beside the video as `<episode><SIDECAR_SUFFIX>.<ass|srt>` (`.ass` when signs and songs were merged, so their positioning survives; `.srt` for a dialogue-only episode) and the video is never opened for writing. The same version-aware `.dubtitles.done` stamp is written, with `"mode": "sidecar"` recorded, so the pass stays idempotent and a later switch back to `mux` re-muxes instead of reading the sidecar stamp as done. This is the mode for libraries that deliver external subtitles, and for anyone whose GPU cannot run the bundled ASR: `SKIP_IF_SRT=1` plus pre-generated transcripts now leads somewhere useful. Nothing is deleted, so the `KEEP_LANGS` track-loss class cannot occur.
+
+**Publish gate.** With `PUBLISH_GATE` on (the default), the merge pass runs `publish_gate.py` on the assembled subtitle before mux and refuses to deliver one a reviewer would reject in ten seconds. It reads the subtitle text and the container duration and never opens the video. It refuses when:
+
+- **the caption does not cover the episode** — the last cue ends before 90% of the container duration, or there are fewer than 6 cards per minute of runtime;
+- **it is not read as text** — under 65% of cards carry terminal punctuation, more than 15% are lowercase orphans (a lowercase start right after a card that ended a sentence), or the first cue starts after 290 s, which is a missing cold open;
+- **it does not fit the screen** — a line over 46 characters, a card over 88 characters, or a card on screen longer than 7.5 s;
+- **it uses a wrong name** — the text carries a `hard_fixes` key from the show glossary (or a glossary `token_fixes` / `phrase_fixes` key) of three characters or more whose replacement is a different word. A fix that only changes case (`ikari` → `Ikari`) or expands a name (`asuka langley` → `Asuka Langley Soryu`) is not a mishear and does not fire this check.
+
+The gate runs on the pipeline's own `stem.eng.dubtitles.<srt|ass>` (auditing a library reads `stem.dub.en.<srt|ass>` as well), and for a styled `.ass` it counts only the `Dubtitles` style, so signs, lyrics and title cards are not mistaken for dialogue. A refusal is recorded on the mux stage as `refused` (detail `publish-gate`) so the census reports the episode as incomplete rather than done, and mux is skipped. `PUBLISH_GATE=0` is the escape hatch, for a library whose subtitles this gate does not describe.
 
 ### Review server
 

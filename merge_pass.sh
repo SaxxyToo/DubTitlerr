@@ -18,7 +18,14 @@ APP="${APP_DIR:-$(cd "$(dirname "$0")" 2>/dev/null && pwd)}"
 # Fail as a CONFIGURATION error before the per-stem loop, not as a "crashed" repair on the
 # first episode it touches: a missing $APP/repair.py used to record {"repair": "crashed"}
 # against that stem, which then blocked every later pass until someone cleared the stage.
-for _f in repair.py dub_signs_merge.py mux.py; do
+_preflight="repair.py dub_signs_merge.py mux.py"
+# publish_gate.py too, when the gate will run. The old check lived INSIDE the per-stem loop,
+# which is a pipe into `while` (a subshell): a missing file made that subshell exit 1 while
+# the pass carried on and printed "MERGE PASS COMPLETE" without delivering a single episode.
+if [ "${PUBLISH_GATE:-1}" != "0" ]; then
+	_preflight="$_preflight publish_gate.py"
+fi
+for _f in $_preflight; do
 	if [ ! -f "$APP/$_f" ]; then
 		echo "FATAL: $_f not found under APP=$APP — set APP_DIR to the directory holding the pipeline scripts"
 		exit 1
@@ -176,10 +183,6 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 	# halfway through the episode. Inspects the subtitle text and the container duration;
 	# never touches the video. PUBLISH_GATE=0 is the escape hatch.
 	if [ "${PUBLISH_GATE:-1}" != "0" ]; then
-		if [ ! -f "$APP/publish_gate.py" ]; then
-			echo "FATAL: publish_gate.py missing from APP_DIR ($APP) — image is misbuilt" >&2
-			exit 1
-		fi
 		if ! python3 "$APP/publish_gate.py" "$stem" </dev/null; then
 			# Record the refusal on the mux stage: without it the census counts this stem as
 			# neither done nor failed and prints COMPLETE while an episode was refused.

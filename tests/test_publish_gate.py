@@ -8,8 +8,6 @@ import json
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import publish_gate as g
@@ -18,7 +16,7 @@ import publish_gate as g
 def srt(cues):
     out = []
     for i, (a, b, text) in enumerate(cues, 1):
-        out.append("%d\n00:00:%02d,000 --> 00:00:%02d,000\n%s\n" % (i, int(a), int(b), text))
+        out.append(f"{i}\n00:00:{int(a):02d},000 --> 00:00:{int(b):02d},000\n{text}\n")
     return "\n".join(out)
 
 
@@ -32,7 +30,7 @@ GOOD = [
 
 
 def test_a_clean_sidecar_passes():
-    path, cues = "x", g.parse_srt(srt(GOOD))
+    cues = g.parse_srt(srt(GOOD))
     assert g.evaluate(cues, duration=21) == []
 
 
@@ -58,7 +56,9 @@ def test_a_known_mishear_fails_even_when_readable():
 
 
 def test_a_long_line_fails():
-    cues = g.parse_srt(srt([(1, 6, "All the Evas were created from the angel known as Adam and we are employing the same forces")]))
+    cues = g.parse_srt(
+        srt([(1, 6, "All the Evas were created from the angel known as Adam and we are employing the same forces")])
+    )
     fails = g.evaluate(cues, duration=7)
     assert any("chars" in f for f in fails)
 

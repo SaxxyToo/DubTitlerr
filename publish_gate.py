@@ -37,7 +37,6 @@ MAX_ORPHAN = 0.15
 MIN_NAME_LEN = 3
 
 END = (".", "!", "?", "\u2026", "\"", "'", "\u201d", "\u2019")
-FFPROBE = os.environ.get("FFPROBE", "ffprobe")
 GLOSSARY_DIR = os.environ.get("GLOSSARY_DIR", "/config/glossaries")
 
 
@@ -66,7 +65,7 @@ def parse_srt(text):
 def parse_ass(text, style=None):
     cues = []
     head, _, ev = text.partition("[Events]")
-    fmt = next((l for l in ev.splitlines() if l.startswith("Format:")), "")
+    fmt = next((ln for ln in ev.splitlines() if ln.startswith("Format:")), "")
     nf = max(1, len(fmt.split(",")))
     for line in ev.splitlines():
         if not line.startswith("Dialogue:"):
@@ -105,11 +104,11 @@ def load_cues(stem):
 
 def video_duration(stem):
     for ext in ("mkv", "mp4", "m4v"):
-        path = "%s.%s" % (stem, ext)
+        path = f"{stem}.{ext}"
         if not os.path.exists(path):
             continue
         try:
-            out = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format=duration",
+            out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                   "-of", "default=nw=1:nk=1", path],
                                  capture_output=True, text=True, timeout=60)
             return float(out.stdout.strip())
@@ -152,37 +151,35 @@ def evaluate(cues, duration=None, mishears=(), max_chars=MAX_CHARS, max_line=MAX
     if duration:
         cover = cues[-1][1] / duration
         if cover < MIN_COVER:
-            fails.append("coverage %.0f%% (last cue %.1fs of %.1fs)"
-                         % (cover * 100, cues[-1][1], duration))
+            fails.append(f"coverage {cover * 100:.0f}% (last cue {cues[-1][1]:.1f}s of {duration:.1f}s)")
         per_min = len(cues) / (duration / 60.0)
         if per_min < MIN_CARDS_PER_MIN:
-            fails.append("%.1f cards per minute" % per_min)
+            fails.append(f"{per_min:.1f} cards per minute")
     lines = [t.split("\n") for _, _, t in cues]
     longest_line = max((len(x) for ls in lines for x in ls), default=0)
     if longest_line > max_line:
-        fails.append("line of %d chars (max %d)" % (longest_line, max_line))
+        fails.append(f"line of {longest_line} chars (max {max_line})")
     over = sum(1 for _, _, t in cues if len(t.replace("\n", " ")) > max_chars)
     if over:
-        fails.append("%d card(s) over %d chars" % (over, max_chars))
+        fails.append(f"{over} card(s) over {max_chars} chars")
     longdur = [b - a for a, b, _ in cues if b - a > MAX_DUR]
     if longdur:
-        fails.append("%d card(s) over %.1fs (max %.1fs)" % (len(longdur), MAX_DUR, max(longdur)))
+        fails.append(f"{len(longdur)} card(s) over {MAX_DUR:.1f}s (max {max(longdur):.1f}s)")
     ended = sum(1 for _, _, t in cues if t.rstrip().endswith(END))
     if ended / len(cues) < MIN_PUNCT_ENDED:
-        fails.append("%.0f%% of cards carry sentence punctuation"
-                     % (100 * ended / len(cues)))
+        fails.append(f"{100 * ended / len(cues):.0f}% of cards carry sentence punctuation")
     # Lowercase start AFTER a sentence ended = cold-start ASR cut. A lowercase start after an
     # unpunctuated card is a sentence split across two cues, which is normal subtitling.
     if cues[0][0] > 290:
-        fails.append("first cue at %.0fs (cold open missing?)" % cues[0][0])
+        fails.append(f"first cue at {cues[0][0]:.0f}s (cold open missing?)")
     orphan = sum(1 for i in range(1, len(cues))
                  if cues[i][2][:1].islower() and cues[i - 1][2].rstrip().endswith((".", "!", "?", "\u2026")))
     if orphan / len(cues) > MAX_ORPHAN:
-        fails.append("%.0f%% lowercase orphan cards" % (100 * orphan / len(cues)))
+        fails.append(f"{100 * orphan / len(cues):.0f}% lowercase orphan cards")
     text = " ".join(t.replace("\n", " ") for _, _, t in cues)
-    hits = [w for w in mishears if re.search(r"(?<!\w)%s(?!\w)" % re.escape(w), text, re.I)]
+    hits = [w for w in mishears if re.search(rf"(?<!\w){re.escape(w)}(?!\w)", text, re.I)]
     if hits:
-        fails.append("known mishear(s): %s" % ", ".join(sorted(set(hits))[:6]))
+        fails.append(f"known mishear(s): {', '.join(sorted(set(hits))[:6])}")
     return fails
 
 
@@ -210,7 +207,7 @@ def main(argv=None):
 
     path, cues = load_cues(a.stem)
     if not path:
-        print("gate: no .eng.dubtitles.srt/.ass for %s" % a.stem)
+        print(f"gate: no .eng.dubtitles.srt/.ass for {a.stem}")
         return 2
     duration = a.duration or video_duration(a.stem)
     gloss_path = a.glossary or glossary_for(a.stem, a.glossary_dir)
@@ -220,10 +217,10 @@ def main(argv=None):
         print(json.dumps({"artifact": path, "cues": len(cues), "duration": duration,
                           "fails": fails}, indent=1))
     elif fails:
-        print("gate: FAIL %s — %s" % (os.path.basename(path), "; ".join(fails)))
+        print(f"gate: FAIL {os.path.basename(path)} — {'; '.join(fails)}")
     else:
-        print("gate: ok %s (%d cues%s)" % (os.path.basename(path), len(cues),
-                                           ", %.0f%% covered" % (100 * cues[-1][1] / duration) if duration else ""))
+        covered = f", {100 * cues[-1][1] / duration:.0f}% covered" if duration else ""
+        print(f"gate: ok {os.path.basename(path)} ({len(cues)} cues{covered})")
     return 1 if fails else 0
 
 
