@@ -236,8 +236,42 @@ def segment_span(span: list[dict]) -> list[list[dict]]:
     largest internal pause -> clause delimiter near the midpoint -> word-wrap."""
     groups: list[list[dict]] = []
     for piece in _split_sentences(span):
-        groups.extend(_split_overflow(piece))
+        for g in _split_overflow(piece):
+            groups.extend(_split_unwrappable_one(g, []))
     return groups
+
+
+def _wrappable(text: str) -> bool:
+    """True when wrap_balance() can lay ``text`` out within MAX_LINES x MAX_LINE.
+
+    A card whose TOTAL fits MAX_CHARS can still be displayable only as an over-long
+    line, because whether a legal split exists depends on where the word boundaries
+    fall: 82 visible chars needs a 39-42 char prefix to wrap into two 42-char lines,
+    and a 13-char word straddling that window leaves none. Such a card is split into
+    two cards instead of shipping a line the publish gate rejects.
+    """
+    return all(len(ln) <= MAX_LINE for ln in wrap_balance(text).split("\n"))
+
+
+def _split_unwrappable_one(group: list[dict], log: list[dict]) -> list[list[dict]]:
+    if _wrappable(_text(group)) or len(group) < 2:
+        return [group]
+    i = _best_split_index(group)
+    if i <= 0 or i >= len(group):
+        i = max(1, len(group) // 2)
+    log.append({"reason": "unwrappable_split", "text": _text(group)})
+    return _split_unwrappable_one(group[:i], log) + _split_unwrappable_one(group[i:], log)
+
+
+def _split_unwrappable(groups: list[list[dict]]) -> tuple[list[list[dict]], list[dict]]:
+    """Split any group that cannot be wrapped legally. merge_runts() joins short
+    neighbours, and two runts that each wrapped fine can join into text whose only
+    split is over MAX_LINE -- that join is what this undoes."""
+    out: list[list[dict]] = []
+    log: list[dict] = []
+    for g in groups:
+        out.extend(_split_unwrappable_one(g, log))
+    return out, log
 
 
 def wrap_balance(text: str) -> str:
@@ -518,6 +552,7 @@ def _merge_fits(p: list[dict], g: list[dict]) -> bool:
     return (
         g[0]["start"] - p[-1]["end"] <= GAP_MAX + EPS
         and len(merged_text) <= MAX_CHARS
+        and _wrappable(merged_text)  # a merge must not produce an unshippable card
         and span <= MAX_DUR + EPS
         and card_cps(merged_text, span) <= MAX_CPS + EPS
     )

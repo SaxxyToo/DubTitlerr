@@ -914,3 +914,39 @@ def test_text_only_welds_a_separator_onto_a_number():
     assert reflow._text(_w(" Chapter", " ,000")) == "Chapter ,000"
     # ...and the legitimate case still welds: the previous token ends in a digit.
     assert reflow._text(_w(" version", " 2", ".5")) == "version 2.5"
+
+
+# --- a card whose words cannot be wrapped legally is split, not shipped over-long ---
+
+FRIEREN_OVERLONG = "I imagine that this will cause many difficulties and disagreements on your journey."
+
+
+def test_wrappable_rejects_text_with_no_legal_two_line_split():
+    """82 visible chars fit the total, but the long word straddles the only window a
+    39-42 char prefix could occupy, so every wrap leaves a 43+ char line."""
+    assert len(FRIEREN_OVERLONG) <= reflow.MAX_CHARS
+    assert max(len(ln) for ln in reflow.wrap_balance(FRIEREN_OVERLONG).split("\n")) > reflow.MAX_LINE
+    assert not reflow._wrappable(FRIEREN_OVERLONG)
+
+
+def test_wrappable_accepts_ordinary_text():
+    assert reflow._wrappable("I imagine that this will cause many difficulties.")
+
+
+def test_an_unwrappable_group_becomes_two_cards():
+    words = FRIEREN_OVERLONG.rstrip(".").split()
+    ws = sentence(words)
+    segs = [{"start": ws[0]["start"], "end": ws[-1]["end"], "text": FRIEREN_OVERLONG}]
+    cards = reflow.reflow(ws, segs)
+    assert len(cards) >= 2
+    for c in cards:
+        for line in c["text"].split("\n"):
+            assert len(line) <= reflow.MAX_LINE, c["text"]
+
+
+def test_a_wrappable_group_is_left_alone():
+    words = "we have to go it is dangerous".split()
+    ws = sentence(words)
+    segs = [{"start": ws[0]["start"], "end": ws[-1]["end"], "text": " ".join(words)}]
+    cards = reflow.reflow(ws, segs)
+    assert len(cards) == 1
