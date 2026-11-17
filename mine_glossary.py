@@ -11,10 +11,12 @@ MINE_MIN_COUNT (a name must recur >= this across the new episodes, default 3).
 Built with help of Claude (Anthropic).
 """
 
+import contextlib
 import json
 import math
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -79,6 +81,40 @@ def _extract_timeout() -> float:
         return float(os.environ.get("MINE_EXTRACT_TIMEOUT", EXTRACT_TIMEOUT))
     except ValueError:
         return EXTRACT_TIMEOUT
+
+
+def _episode_timeout() -> float:
+    """MINE_EPISODE_TIMEOUT (default 180s): how long one episode may take before it is skipped."""
+    try:
+        return float(os.environ.get("MINE_EPISODE_TIMEOUT", "180"))
+    except ValueError:
+        return 180.0
+
+
+@contextlib.contextmanager
+def _deadline(seconds: float, what: str):
+    """Hard-abort one episode's work after ``seconds``.
+
+    SIGALRM interrupts blocking syscalls, so a wedged ffmpeg, a stalled media mount or a
+    wait on a lock cannot stop the sweep. Observed 2026-11-17: a mine run sat 17 minutes
+    at 0% CPU holding the glossary lock, the queued run never reached generation, and
+    nothing in the log said which episode it was on. A skip is a per-episode loss; a
+    wedge is the whole queue.
+    """
+    if seconds <= 0 or not hasattr(signal, "SIGALRM"):
+        yield
+        return
+
+    def _boom(_signum, _frame):
+        raise TimeoutError(f"{what} exceeded {seconds:.0f}s")
+
+    previous = signal.signal(signal.SIGALRM, _boom)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def eng_sub_text(video):
@@ -377,7 +413,13 @@ def _mine(show_dir, show, gpath):
                 print(f"stop requested: leaving mine after {read_eps} episodes")
                 return
             read_eps += 1
-            txt = eng_sub_text(os.path.join(dp, fn))
+            print(f"mine[{show}]: {read_eps} {fn}", flush=True)
+            try:
+                with _deadline(_episode_timeout(), f"mining {fn}"):
+                    txt = eng_sub_text(os.path.join(dp, fn))
+            except TimeoutError as exc:
+                print(f"mine[{show}]: skipped {fn}: {exc}", flush=True)
+                continue
             if txt:
                 mine_text(txt, counter, poss, mid, lower=lower)
                 mined_eps += 1

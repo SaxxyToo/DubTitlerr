@@ -671,3 +671,34 @@ def test_main_passes_lowercase_counts_through_and_reports_the_drop(tmp_path, mon
     out = _run_main(tmp_path, text, monkeypatch)
     assert out["names"] == ["Brownbeard"]
     assert "Charm" in capsys.readouterr().out, "the maintainer must be able to see what the gate removed"
+
+
+# --- a wedged episode must not wedge the sweep ---------------------------------
+
+
+def test_the_deadline_aborts_a_stuck_episode(monkeypatch):
+    import time
+
+    import mine_glossary
+
+    with pytest.raises(TimeoutError):
+        with mine_glossary._deadline(0.05, "mining stuck.mkv"):
+            time.sleep(2)
+
+
+def test_a_deadline_of_zero_disables_the_alarm():
+    import mine_glossary
+
+    with mine_glossary._deadline(0, "mining anything"):
+        pass
+
+
+def test_the_episode_budget_is_configurable(monkeypatch):
+    import mine_glossary
+
+    monkeypatch.delenv("MINE_EPISODE_TIMEOUT", raising=False)
+    assert mine_glossary._episode_timeout() == 180.0
+    monkeypatch.setenv("MINE_EPISODE_TIMEOUT", "5")
+    assert mine_glossary._episode_timeout() == 5.0
+    monkeypatch.setenv("MINE_EPISODE_TIMEOUT", "nonsense")
+    assert mine_glossary._episode_timeout() == 180.0

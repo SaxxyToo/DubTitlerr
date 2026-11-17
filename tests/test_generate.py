@@ -2287,3 +2287,49 @@ def test_a_run_without_show_name_still_finds_its_glossary(tmp_path, monkeypatch)
     monkeypatch.setenv("GLOSSARY_FILE", str(gloss))
     generate.load_glossary()
     assert generate.INITIAL_PROMPT  # a prompt was derived, so the show was identified
+
+
+# --- long files: the endpoint has an upload cap and a request timeout -------------
+
+
+def test_plan_chunks_leaves_a_short_file_whole():
+    assert generate.plan_chunks(600.0, []) == [(0.0, 600.0)]
+
+
+def test_plan_chunks_cuts_at_targets_when_there_is_no_silence():
+    pieces = generate.plan_chunks(1500.0, [])
+    assert [round(a) for a, _b in pieces] == [0, 600, 1200]
+    assert pieces[-1][1] == 1500.0
+
+
+def test_plan_chunks_prefers_a_nearby_silence():
+    pieces = generate.plan_chunks(1500.0, [(590.0, 600.0), (1210.0, 1220.0)])
+    assert [round(a) for a, _b in pieces] == [0, 595, 1215]
+
+
+def test_plan_chunks_covers_a_three_hour_film():
+    pieces = generate.plan_chunks(3 * 3600.0, [])
+    assert pieces[0][0] == 0.0 and pieces[-1][1] == 3 * 3600.0
+    for a, b in pieces:
+        assert b - a >= generate.CHUNK_MIN
+
+
+def test_a_long_file_is_transcribed_in_pieces_with_times_offset(monkeypatch):
+    monkeypatch.setattr(generate, "_wav_duration", lambda _p: 2000.0)
+    monkeypatch.setattr(generate, "_detect_silences", lambda _p: [(590.0, 600.0), (1190.0, 1200.0), (1790.0, 1800.0)])
+    monkeypatch.setattr(generate, "endpoint_key_problem", lambda: None)
+    monkeypatch.setattr(generate, "_asr_key", lambda: "")
+    monkeypatch.setattr(generate, "_cut_chunk", lambda _w, _a, _b, _out: True)
+    seen = []
+
+    def fake(wav, _fields, _headers):
+        seen.append(wav)
+        return ([{"start": 0.0, "end": 1.0, "no_speech_prob": 0.0}],
+                [{"text": " hi", "start": 0.0, "end": 1.0, "prob": 0.9, "seg": 0}])
+
+    monkeypatch.setattr(generate, "_endpoint_request", fake)
+    segments, words = generate.endpoint_transcribe("/tmp/episode.wav")
+    assert len(seen) == 4
+    assert [round(w["start"], 1) for w in words] == [0.0, 595.0, 1195.0, 1795.0]
+    assert [w["seg"] for w in words] == [0, 1, 2, 3]
+    assert [round(s["start"], 1) for s in segments] == [0.0, 595.0, 1195.0, 1795.0]

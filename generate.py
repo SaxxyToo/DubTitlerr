@@ -1066,34 +1066,84 @@ def _post_multipart(url, fields, filename, payload, content_type, headers, timeo
         return resp.status, resp.read().decode("utf-8", "replace")
 
 
-def endpoint_transcribe(wav):
-    """Transcribe via an OpenAI-compatible endpoint; return the local decoder's shapes.
+CHUNK_TARGET = 600.0  # seconds of audio per request when the file is long
+CHUNK_SLACK = 90.0  # how far from a target a silence may sit and still be preferred
+CHUNK_MIN = 30.0  # never emit a piece shorter than this
 
-    (segments: [{start,end,no_speech_prob}], words: [{text,start,end,prob,seg}])
+
+def _wav_duration(path):
+    """Seconds of audio in a file, or 0.0 when ffprobe cannot say."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", path],
+            capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+        )
+        return float(r.stdout.strip())
+    except (ValueError, subprocess.SubprocessError, OSError):
+        return 0.0
+
+
+def _detect_silences(path):
+    """(start, end) of every silent stretch in a file, from ffmpeg's own detector."""
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "info", "-i", path, "-af",
+             "silencedetect=noise=-35dB:d=0.35", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT * 4, stdin=subprocess.DEVNULL,
+        )
+        out = r.stderr
+    except (subprocess.SubprocessError, OSError):
+        return []
+    starts = [float(m) for m in re.findall(r"silence_start:\s*(-?[0-9.]+)", out)]
+    ends = [float(m) for m in re.findall(r"silence_end:\s*([0-9.]+)", out)]
+    return [(s, e) for s, e in zip(starts, ends) if e > s]
+
+
+def plan_chunks(duration, silences, target=CHUNK_TARGET, slack=CHUNK_SLACK, minimum=CHUNK_MIN):
+    """Where to cut a long file into request-sized pieces. Pure, so the policy is testable.
+
+    Cuts land in real silence whenever one sits within ``slack`` of the target: cutting
+    mid-word makes the model invent an ending for the left piece and a beginning for the
+    right one, and both survive into the subtitle. A film of any length is covered — the
+    targets keep stepping by ``target`` until the end, so three hours is the same problem
+    as two.
     """
-    problem = endpoint_key_problem()
-    if problem:
-        raise EndpointConfigError(f"refusing to send the endpoint key: {problem}")
-    key = _asr_key()
-    if not key:
-        # Keyless endpoints exist (a llama-swap whisper on the LAN). Don't refuse here:
-        # an endpoint that wants a key answers 401 and the error carries that.
-        log(f"warning: ASR_BACKEND=endpoint with no key in ${ASR_KEY_ENV} — sending none")
+    if duration <= 0:
+        return []
+    if duration <= target + slack:
+        return [(0.0, duration)]
+    cuts = []
+    t = target
+    while t < duration - minimum:
+        chosen = None
+        for start, end in silences:
+            mid = (start + end) / 2.0
+            if abs(mid - t) <= slack and (chosen is None or abs(mid - t) < abs(chosen - t)):
+                chosen = mid
+        cut = t if chosen is None else chosen
+        if not cuts or cut - cuts[-1] >= minimum:
+            cuts.append(cut)
+        t += target
+    bounds = [0.0, *cuts, duration]
+    return [(a, b) for a, b in zip(bounds, bounds[1:]) if b - a > 0]
+
+
+def _cut_chunk(wav, start, end, out_path):
+    """Write [start, end) of ``wav`` to ``out_path`` without re-encoding."""
+    r = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.3f}",
+         "-t", f"{end - start:.3f}", "-i", wav, "-c", "copy", out_path],
+        capture_output=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
+    )
+    return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 1024
+
+
+def _endpoint_request(wav, fields, headers):
+    """One POST: the mapped (segments, words) for a single piece of audio."""
     mp3 = wav + ".mp3"
     if not _mp3_for_upload(wav, mp3):
         raise EndpointAsrError("could not build the upload mp3 from the extracted wav")
-    fields = [
-        ("model", ASR_MODEL),
-        ("language", "en"),
-        ("response_format", "verbose_json"),
-        ("timestamp_granularities[]", "word"),
-    ]
-    if INITIAL_PROMPT:
-        fields.append(("prompt", INITIAL_PROMPT))
-    headers = {"Authorization": "Bearer " + key} if key else {}
-    if key and "openrouter.ai" in ASR_URL:
-        headers["HTTP-Referer"] = ASR_REFERER
-        headers["X-Title"] = "DubTitlerr"
     try:
         with open(mp3, "rb") as fh:
             payload = fh.read()
@@ -1111,6 +1161,71 @@ def endpoint_transcribe(wav):
     if not segs:
         raise EndpointAsrError(f"endpoint returned no segments: {raw[:300]}")
     return _map_endpoint_doc(segs, doc.get("words") or [])
+
+
+def endpoint_transcribe(wav):
+    """Transcribe via an OpenAI-compatible endpoint; return the local decoder's shapes.
+
+    (segments: [{start,end,no_speech_prob}], words: [{text,start,end,prob,seg}])
+
+    A long file is cut into request-sized pieces at silence (see plan_chunks) and the
+    times are offset back onto the whole file. Two reasons, both hard limits rather than
+    preferences: the upload cap (32 kbps mp3 puts a two-hour film at ~29 MB, past
+    OpenRouter's 25 MB) and the endpoint's own request timeout on hours of audio.
+    """
+    problem = endpoint_key_problem()
+    if problem:
+        raise EndpointConfigError(f"refusing to send the endpoint key: {problem}")
+    key = _asr_key()
+    if not key:
+        # Keyless endpoints exist (a llama-swap whisper on the LAN). Don't refuse here:
+        # an endpoint that wants a key answers 401 and the error carries that.
+        log(f"warning: ASR_BACKEND=endpoint with no key in ${ASR_KEY_ENV} — sending none")
+    fields = [
+        ("model", ASR_MODEL),
+        ("language", "en"),
+        ("response_format", "verbose_json"),
+        ("timestamp_granularities[]", "word"),
+    ]
+    if INITIAL_PROMPT:
+        fields.append(("prompt", INITIAL_PROMPT))
+    headers = {"Authorization": "Bearer " + key} if key else {}
+    if key and "openrouter.ai" in ASR_URL:
+        headers["HTTP-Referer"] = ASR_REFERER
+        headers["X-Title"] = "DubTitlerr"
+
+    duration = _wav_duration(wav)
+    silences = _detect_silences(wav) if duration > CHUNK_TARGET + CHUNK_SLACK else []
+    pieces = plan_chunks(duration, silences)
+    if not pieces:
+        pieces = [(0.0, duration)]
+    if len(pieces) == 1:
+        return _endpoint_request(wav, fields, headers)
+
+    log(f"asr: {duration / 60.0:.1f} min file -> {len(pieces)} pieces")
+    segments, words = [], []
+    for i, (start, end) in enumerate(pieces):
+        chunk = f"{wav}.part{i:02d}.wav"
+        if not _cut_chunk(wav, start, end, chunk):
+            raise EndpointAsrError(f"could not cut piece {i} ({start:.0f}-{end:.0f}s) for the endpoint")
+        try:
+            segs, ws = _endpoint_request(chunk, fields, headers)
+        finally:
+            try:
+                os.remove(chunk)
+            except OSError:
+                pass
+        base = len(segments)
+        for s in segs:
+            s["start"] += start
+            s["end"] += start
+        for w in ws:
+            w["start"] += start
+            w["end"] += start
+            w["seg"] += base
+        segments.extend(segs)
+        words.extend(ws)
+    return segments, words
 
 
 # whisper.cpp's control tokens, if a server is built to emit them ("[_BEG_]", "[_TT_150]").
