@@ -41,6 +41,7 @@ Env:
 Built with help of Claude (Anthropic).
 """
 
+import bisect
 import hashlib
 import json
 import math
@@ -1101,32 +1102,70 @@ def endpoint_transcribe(wav):
         segs = [{"start": 0.0, "end": float(doc.get("duration") or 0.0), "text": doc["text"]}]
     if not segs:
         raise EndpointAsrError(f"endpoint returned no segments: {raw[:300]}")
+    return _map_endpoint_doc(segs, doc.get("words") or [])
+
+
+# whisper.cpp's control tokens, if a server is built to emit them ("[_BEG_]", "[_TT_150]").
+_SPECIAL_TOKEN = re.compile(r"^\s*(?:\[_[A-Z]+_?\d*\]|<\|[^|]*\|>)\s*$")
+
+
+def _seg_conf(seg):
+    """A segment's own confidence as a word probability: exp(avg_logprob), the local path's
+    fallback for a segment without word timestamps. None when the endpoint sends no avg_logprob."""
+    lp = seg.get("avg_logprob")
+    try:
+        return min(1.0, math.exp(float(lp))) if lp is not None else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _map_endpoint_doc(segs, top_words):
+    """Map a verbose_json document onto the local decoder's shapes.
+
+    Three shapes are in the wild:
+      * words nested in each segment, already whole (faster-whisper-compatible servers);
+      * words nested in each segment as TOKENS (whisper.cpp's server: " Tree","cut","ting"),
+        where a leading space marks a word start -- merged back into words here, because
+        reflow strips and space-joins each word and would ship "Tree cut ting";
+      * whole words at the TOP level of the document (OpenAI's documented shape), assigned to
+        the segment whose span holds their start.
+    A word with no probability takes its segment's exp(avg_logprob), as the local path does,
+    never a flat 1.0: card confidence is what selects repair targets and drives the
+    hallucination gate."""
+    nested = [s.get("words") or [] for s in segs]
+    if not any(nested) and top_words:
+        nested = [[] for _ in segs]
+        starts = [float(s.get("start") or 0.0) for s in segs]
+        for w in top_words:
+            t = float(w.get("start") or 0.0)
+            i = max(0, bisect.bisect_right(starts, t) - 1)
+            nested[i].append(w)
+    every = [str(w.get("word") or w.get("text") or "") for ws in nested for w in ws]
+    token_mode = any(t[:1].isspace() for t in every) and any(t and not t[:1].isspace() for t in every[1:])
     segments, words = [], []
     for si, s in enumerate(segs):
         start, end = float(s.get("start") or 0.0), float(s.get("end") or 0.0)
-        segments.append({
-            "start": start,
-            "end": end,
-            "no_speech_prob": float(s.get("no_speech_prob") or 0.0),
-        })
-        sw = s.get("words") or []
-        if sw:
-            for w in sw:
-                words.append({
-                    "text": w.get("word") or w.get("text") or "",
-                    "start": float(w.get("start", start)),
-                    "end": float(w.get("end", end)),
-                    "prob": float(w.get("probability", 1.0) or 1.0),
-                    "seg": si,
-                })
-        else:
-            words.append({
-                "text": s.get("text") or "",
-                "start": start,
-                "end": end,
-                "prob": 1.0,
-                "seg": si,
-            })
+        segments.append({"start": start, "end": end, "no_speech_prob": float(s.get("no_speech_prob") or 0.0)})
+        conf = _seg_conf(s)
+        fallback = conf if conf is not None else 1.0
+        mine = []
+        for w in nested[si]:
+            text = str(w.get("word") or w.get("text") or "")
+            if not text or _SPECIAL_TOKEN.match(text):
+                continue
+            p = w.get("probability")
+            prob = float(p) if isinstance(p, (int, float)) and p > 0 else fallback
+            ws, we = float(w.get("start", start)), float(w.get("end", end))
+            if token_mode and mine and not text[:1].isspace():
+                prev = mine[-1]
+                prev["text"] += text
+                prev["end"] = max(prev["end"], we)
+                prev["prob"] = min(prev["prob"], prob)
+                continue
+            mine.append({"text": text, "start": ws, "end": we, "prob": prob, "seg": si})
+        if not mine:
+            mine = [{"text": s.get("text") or "", "start": start, "end": end, "prob": fallback, "seg": si}]
+        words.extend(mine)
     return segments, words
 
 

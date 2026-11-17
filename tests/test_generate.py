@@ -16,6 +16,7 @@ test_process_no_longer_skips_on_an_embedded_dubtitles_track.
 """
 
 import json
+import math
 import os
 import sys
 import types
@@ -2205,3 +2206,67 @@ def test_an_endpoint_config_error_is_not_retried_as_an_endpoint_failure():
     # misconfiguration must never retire an episode. Neither may it poison one (RuntimeError).
     assert not issubclass(generate.EndpointConfigError, generate.EndpointAsrError)
     assert not issubclass(generate.EndpointConfigError, RuntimeError)
+
+
+# --- the endpoint mapper turns every response shape into the local decoder's words -----------
+#
+# Measured 2026-11-17 against llama-swap's whisper-server (whisper.cpp) on a full episode: its
+# verbose_json "words" are TOKENS ("po","ch","ita"; " 60",",","000"), a leading space marking a
+# word start, the shape faster-whisper's words already have. reflow strips each word and joins
+# with spaces, so unmerged tokens shipped as "po ch ita". OpenAI's documented shape instead puts
+# whole words at the TOP level with no probability. Both must reach reflow as whole words, with a
+# confidence taken from the segment rather than a flat 1.0 that hides every card from repair.
+
+
+def _map(monkeypatch, tmp_path, doc):
+    wav = _stub_endpoint(monkeypatch, tmp_path, json.dumps(doc))
+    return generate.endpoint_transcribe(wav)
+
+
+def test_whisper_cpp_tokens_are_merged_into_words(monkeypatch, tmp_path):
+    toks = [(" Tree", 0.84), ("cut", 0.99), ("ting", 1.0), (" nets", 1.0), (" 60", 0.92), (",", 1.0), ("000", 1.0)]
+    toks += [(" yen", 1.0), (".", 1.0)]
+    seg = {
+        "start": 76.0,
+        "end": 79.7,
+        "avg_logprob": -0.2,
+        "no_speech_prob": 0.01,
+        "text": " Treecutting nets 60,000 yen.",
+        "words": [{"word": w, "start": 76.0 + i * 0.3, "end": 76.3 + i * 0.3, "probability": p} for i, (w, p) in enumerate(toks)],
+    }
+    _segments, words = _map(monkeypatch, tmp_path, {"segments": [seg]})
+    assert [w["text"] for w in words] == [" Treecutting", " nets", " 60,000", " yen."]
+    first = words[0]
+    assert (first["start"], first["end"], first["prob"]) == (76.0, 76.0 + 2 * 0.3 + 0.3, 0.84)  # span and weakest token
+    assert {w["seg"] for w in words} == {0}
+
+
+def test_word_level_responses_are_not_merged(monkeypatch, tmp_path):
+    # faster-whisper-compatible servers send whole words with a leading space; OpenAI-style
+    # servers send whole words with none. Neither may be glued together.
+    for ws in ([" Hello", " there."], ["Hello", "there."]):
+        tokens = [{"word": w, "start": i * 0.5, "end": i * 0.5 + 0.5, "probability": 0.9} for i, w in enumerate(ws)]
+        seg = {"start": 0.0, "end": 1.0, "words": tokens}
+        _s, words = _map(monkeypatch, tmp_path, {"segments": [seg]})
+        assert [w["text"].strip() for w in words] == ["Hello", "there."], ws
+
+
+def test_top_level_words_are_assigned_to_their_segments(monkeypatch, tmp_path):
+    doc = {
+        "segments": [
+            {"start": 0.0, "end": 2.0, "text": "Hello there.", "avg_logprob": -0.1},
+            {"start": 2.0, "end": 4.0, "text": "General Kenobi.", "avg_logprob": -1.2},
+        ],
+        "words": [{"word": "Hello", "start": 0.1, "end": 0.5}, {"word": "there.", "start": 0.6, "end": 1.0},
+                  {"word": "General", "start": 2.1, "end": 2.6}, {"word": "Kenobi.", "start": 2.7, "end": 3.4}],
+    }
+    _s, words = _map(monkeypatch, tmp_path, doc)
+    assert [(w["text"], w["seg"]) for w in words] == [("Hello", 0), ("there.", 0), ("General", 1), ("Kenobi.", 1)]
+    # no word probability: the segment's own confidence, not 1.0
+    assert words[0]["prob"] == pytest.approx(math.exp(-0.1)) and words[2]["prob"] == pytest.approx(math.exp(-1.2))
+
+
+def test_a_segment_without_words_takes_its_own_confidence(monkeypatch, tmp_path):
+    doc = {"segments": [{"start": 0.0, "end": 2.0, "text": " Mumbled line.", "avg_logprob": -2.5}]}
+    _s, words = _map(monkeypatch, tmp_path, doc)
+    assert len(words) == 1 and words[0]["prob"] == pytest.approx(math.exp(-2.5))
