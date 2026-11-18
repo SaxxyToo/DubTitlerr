@@ -23,6 +23,16 @@ work, and three additions are the fork's alone — the README leads with them:
 
 ## [Unreleased]
 
+### Added
+
+- `repair.nsp_is_alive()` — detects an episode whose `no_speech_prob` carries no signal
+  (turbo collapses it to 0.0 on both CT2 and whisper.cpp; large-v3 measures a 0.54 median).
+  When collapsed, repair logs it once per episode and records `nsp_live` in
+  `repair-summary.json`, because `is_target`'s music guard is a `> NSP_MAX` test that then
+  passes every card: the guard is inert, and a repair summary that does not say so is
+  misleading. Targeting is unchanged.
+
+
 ### Fixed
 - Signs merge recognises openings and endings by an OP/ED token in the style name (`OP`, `ED`, `OP-E`, `ED_ENG`, `OP - English`, `EDTL`, `Death Note OP`, …); the old prefix rule recognised them in one release of 27. Whisper's transcriptions of the songs ("Light it up baby", "I love you!" loops, a stray "Thank" over Frieren's title card) are dropped, the fansub's own lyrics are kept, and a dub card inside a song is kept when the release's dialogue track has a line under it, so dialogue spoken over an ending survives (Angel Beats!, Frieren S01E28). Lyric lines no longer count as dialogue for repair references.
 - The lite image installs what the full image does at runtime (`jellyfish`, `wamerican`, `tzdata`), serves the review UI and has the same health check. Without them the phonetic name tier and the full common-word guard were silently off on endpoint nodes. A test now fails when the two Dockerfiles drift.

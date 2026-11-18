@@ -3947,3 +3947,29 @@ def test_glossary_terms_episode_and_arc_order():
     # Expected order: episode tags first, then arc tags (including untagged names like Luffy), then rest (Robin from A2)
     # Order inside groups is preserved from original list: "Zoro, Nami, Luffy, Usopp, Sanji, Robin"
     assert result == "Zoro, Nami, Luffy, Usopp, Sanji, Robin"
+
+
+def test_nsp_is_alive_distinguishes_turbo_from_large_v3():
+    """Measured 2026-11-18 from the repo's own stored bakeoff artifacts (two physical
+    cards): large-v3-turbo int8 reports no_speech_prob 0.0 for EVERY segment
+    (nsp_alive_frac 0.0), while large-v3 int8 reports a 0.54 median (frac 1.0). The same
+    collapse shows on whisper.cpp's turbo (2.2e-10 .. 1.5e-08)."""
+    assert repair.nsp_is_alive([{"no_speech_prob": 0.0}, {"no_speech_prob": 2.2e-10}]) is False
+    assert repair.nsp_is_alive([{"no_speech_prob": 0.0}, {"no_speech_prob": 1.5e-08}]) is False
+    assert repair.nsp_is_alive([{"no_speech_prob": 0.54}, {"no_speech_prob": 0.0}]) is True
+
+
+def test_nsp_is_alive_is_false_for_no_cards():
+    assert repair.nsp_is_alive([]) is False
+
+
+def test_the_music_guard_cannot_exclude_anything_when_nsp_is_collapsed():
+    """Pinned as a fact, not a wish. is_target's guard is a `no_speech_prob > NSP_MAX`
+    test, so on a collapsed series it passes every card -- including a music card that
+    would be excluded on a live signal. That is exactly why nsp_is_alive exists: the run
+    must be able to say the guard did not apply, rather than appear to have applied it."""
+    music_card = {"no_speech_prob": 2.2e-10, "avg_logprob": -1.5}
+    assert repair.is_target(music_card, None) is True
+
+    same_card_live_nsp = {"no_speech_prob": 0.8, "avg_logprob": -1.5}
+    assert repair.is_target(same_card_live_nsp, None) is False

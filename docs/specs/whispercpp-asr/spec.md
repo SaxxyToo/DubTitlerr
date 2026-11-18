@@ -122,35 +122,54 @@ gated in this project (see Out of scope).
   no Vulkan backend.** It cannot serve the Intel iGPU hosts.
 - `--flash-attn` defaults **true** in the llama-swap build.
 
-## Live finding: `no_speech_prob` is present but degenerate on the endpoint
+## Finding: the music guard is inert for turbo — on BOTH backends (not an endpoint issue)
 
-Measured 2026-11-18 against the live `whisper-large-v3-turbo-subs` entry (a 30 s dub clip,
-JUJUTSU KAISEN S01E13):
+Measured 2026-11-18 from the repo's own stored bakeoff artifacts (`docs/asr-bakeoff/*.json`,
+two physical cards) and from the live omarchy endpoint:
 
-| Field | whisper.cpp (live) | faster-whisper (production) |
-|---|---|---|
-| `no_speech_prob` | `2.2e-10`, `0.0`, `4.6e-12` — present, but ~10 orders of magnitude below anything usable | typically `0.0`–`0.9` |
-| `avg_logprob` | `-0.041` | the repair threshold is `-0.8` |
+| Model / backend | `nsp_alive_frac` | nsp median | nsp max |
+|---|---|---|---|
+| **large-v3-turbo (int8, CT2 — production default)** | **0.0** | **0.0** | **0.0** |
+| large-v3 (int8, CT2) | 1.0 | 0.542 | 0.961 |
+| whisper.cpp turbo (live endpoint) | — | ~1e-10 | 1.5e-08 |
 
-Two consequences, both live **today** on omarchy (which already runs endpoint mode):
+`no_speech_prob` is present on the endpoint (`2.2e-10`, `4.6e-12`, `1.5e-08`) — present and
+meaningless, not missing. But the same collapse holds for CT2's turbo, which is the model the
+local path ships: **the guard has been inert since turbo became the default**, not since
+endpoint mode arrived. The knowledge was already in the repo (`NSP_ALIVE_FLOOR`'s comment:
+"Turbo's known nsp collapse, verified across two CT2 conversions") but only in the bakeoff
+tool, never in the stage that depends on the signal.
 
-1. The low-confidence gate at `generate.py:934` is
-   `avg_logprob < -0.8 or no_speech_prob > 0.6`. With `no_speech_prob ~1e-10`, **that half can
-   essentially never fire on endpoint runs** — only the logprob half is doing any work.
-2. In the judge, `NSP_ALIVE_FLOOR` is `1e-6`; every one of these segments counts as *dead*.
-   So `nsp_alive_frac`, `nsp_over_0_5`, `maybe_silence_would_fire` and `music_rule_would_fire`
-   are all inert for an endpoint entrant. (The floor exists precisely because turbo is known to
-   collapse nsp — whisper.cpp's turbo collapses it further than CT2's.)
+What that means concretely at `repair.py:323`:
 
-**This revises acceptance criterion 5.** Comparing `no_speech_prob` distributions between the
-two families will show "not close" — but that is a *scale/regime* difference, not evidence that
-whisper.cpp is worse, and it must be reported as such rather than read as a gate failure. The
-handoff anticipated exactly this risk ("confidence values come out on a different scale… stop and
-escalate rather than retune"). Criterion 5 is therefore evaluated on **word `probability`
-distributions** (both families produce those) with `no_speech_prob` reported for context only.
+```
+if c.get("no_speech_prob", 1.0) > NSP_MAX:   # NSP_MAX = 0.5
+    return False                             # "not speech" -> do not repair
+```
 
-Whether to adapt the production gate to a second confidence regime is an admission-policy
-decision for the maintainer — **not** something this project should do unilaterally.
+On a collapsed series this passes every card, so `is_target` sends music cards to the repair
+LLM. The direction of the defect is opposite to "repairs are being skipped": it is that the
+one guard which screens out music **does not screen anything out**. `generate.py:934`'s
+`low_conf` has the same dead half, but that one is only a counter.
+
+**Landed (safe half):** `repair.nsp_is_alive()` detects a collapsed series, logs it once per
+episode, and records `nsp_live` in the repair summary, so "targets: 144" can be read for what
+it is. Targeting is deliberately unchanged — which way to fail is policy, and it is coupled to
+the model decision below.
+
+**Open decision (maintainer):** the two coherent options are
+1. **keep turbo** — accept that music is not screened, and let the downstream protections
+   (blocklist, the Japanese-script drop, the review queue) carry it; or
+2. **move the sidecar to large-v3** — restores a live nsp (median 0.54) *and* measured better
+   WER than turbo in `docs/wiki/Choosing-an-ASR-Model.md` (18.93% vs 20.76% on the 1060,
+   18.25% vs 21.71% on the 2070S), at the cost of speed and a ~3 GB model download.
+
+Option 2 also answers spec Open question 7. It is a model choice, so it is the maintainer's.
+
+**This revises acceptance criterion 5**: comparing `no_speech_prob` distributions across
+models measures whether the signal is alive, not whether transcription is accurate. The
+criterion is evaluated on word `probability` (which both families produce reliably) with nsp
+reported for context only.
 
 ## Config gaps (existing endpoint vs production faster-whisper)
 
