@@ -1,4 +1,4 @@
-/** Pure helpers for the category settings pages (specs/webui-full-settings, S-9 to S-13). No DOM, no fetch. */
+/** Pure helpers for the category settings pages . No DOM, no fetch. */
 
 // --- Rows (S-9, S-13) -------------------------------------------------------------------------------------------------------
 

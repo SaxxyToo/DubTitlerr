@@ -1,5 +1,5 @@
 <script module lang="ts">
-  /** The one status vocabulary shared by the dashboard, the runs page and the inbox (specs/servarr-restyle, Step 3). */
+  /** The one status vocabulary shared by the dashboard, the runs page and the inbox . */
   export type Status = 'pending' | 'running' | 'done' | 'failed' | 'stale';
 
   /** Pipeline stages (review_status.STAGES) folded onto the shared vocabulary; the stage stays the visible label. */

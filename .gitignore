@@ -15,7 +15,7 @@ web/test-results/
 web/playwright-report/
 
 # Pipeline artifacts (per-episode sidecars/stamps written into the media tree, never
-# meant to be committed to this repo -- see specs/v2-models-ops/spec.md, Phase B).
+# meant to be committed to this repo).
 *.eng.dubtitles.srt
 *.eng.dubtitles.ass
 *.dubtitles.conf.json

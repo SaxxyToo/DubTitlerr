@@ -1,4 +1,4 @@
-/** Pure helpers for the status dashboard page (specs/webui-status-dashboard, Data contracts). */
+/** Pure helpers for the status dashboard page . */
 
 /** @typedef {'transcribed' | 'repaired' | 'muxed' | 'failed' | 'stale' | 'pending-review'} EpisodeStage */
 /** @typedef {'info' | 'ok' | 'warn' | 'bad' | 'muted'} StatusToken */

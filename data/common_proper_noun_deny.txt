@@ -1,7 +1,6 @@
 # Words capitalized for position/grammar, not proper nouns -- never mine these as
 # glossary name candidates (see mine_glossary.py::COMMON). One word per line,
-# case-insensitive; # comments allowed. Falls back to the inline set if missing
-# (see specs/v2-models-ops/spec.md, V2 C8).
+# case-insensitive; # comments allowed. Falls back to the inline set if missing.
 a
 ah
 all

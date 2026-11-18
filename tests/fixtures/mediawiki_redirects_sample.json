@@ -1,5 +1,5 @@
 {
-  "_captured": "2026-09-01, live GET against https://swordartonline.fandom.com/api.php?action=query&redirects=1&prop=redirects&rdlimit=500&format=json&titles=Kirito -- see .procoder/todo/20260901-glossary-verify-resolve-redirects-both-direction-redirect.md and Luna review F5 (docs/Adversarial Reviews/LUNA-2026-09-01-per-episode-glossary-acquisition.md) for why this is required, not a synthetic mock.",
+  "_captured": "2026-09-01, live GET against https://swordartonline.fandom.com/api.php?action=query&redirects=1&prop=redirects&rdlimit=500&format=json&titles=Kirito -- a real capture, kept because a synthetic mock would not exercise the redirect shapes this fixture exists for.",
   "_note": "Identical response shape returned when queried by either 'Kirito' (an input redirect, resolved via query.redirects) or 'Kirigaya Kazuto' (the direct target, whose own incoming redirects are listed on the page). Confirms glossary_verify.resolve_redirects' assumption that BOTH directions are answerable from ONE combined redirects=1&prop=redirects call.",
   "batchcomplete": "",
   "query": {

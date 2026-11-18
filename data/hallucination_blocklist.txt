@@ -2,7 +2,7 @@
 # hallucination.py::BLOCKLIST. One regex alternative per line, case-insensitive
 # (re.I applied by the loader); joined with "|" and compiled as a single regex, so
 # this file must reproduce the original inline pattern EXACTLY. # comments allowed.
-# Falls back to the inline pattern if missing (specs/v2-models-ops/spec.md, V2 C8).
+# Falls back to the inline pattern if missing.
 amara\.org
 thank you for watching
 thanks for watching

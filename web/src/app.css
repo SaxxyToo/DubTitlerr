@@ -14,7 +14,7 @@
   background: var(--bg);
   font-synthesis: none;
   color-scheme: dark;
-  /* Servarr token table (specs/servarr-restyle, Data contracts). Every colour below derives from these. */
+  /* Servarr token table. Every colour below derives from these. */
   --bg: #202020;
   --panel: #2a2a2a;
   --surface: #333333;
@@ -1369,7 +1369,7 @@ textarea {
     max-width: 580px;
   }
 }
-/* The sidebar collapses to a slide-in drawer below 768px (specs/servarr-restyle); the phone-sized
+/* The sidebar collapses to a slide-in drawer below 768px; the phone-sized
    tweaks below stay at 650px. Sidebar.svelte marks the closed drawer inert so Tab cannot reach it. */
 @media (max-width: 768px) {
   .sidebar {

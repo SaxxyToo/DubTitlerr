@@ -1,4 +1,4 @@
-/** Pure helpers for the glossary editor page (specs/webui-glossary-editor, Data contracts). */
+/** Pure helpers for the glossary editor page . */
 
 /** @typedef {'names' | 'phrases' | 'hard_fixes'} GlossaryKey */
 /** @typedef {'add' | 'update' | 'delete'} GlossaryOp */

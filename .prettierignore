@@ -1,24 +1,5 @@
-# prettier 3.9.6 destroys fenced code blocks in these two: a ```toml fence indented
-# six spaces inside a "- [ ]" task item comes back out as an inline `toml span, and
-# the block's contents are dumped into the paragraph (10 and 14 fences -> 0).
-# --check calls the originals clean, so only --write is dangerous. Verified against
-# a scratch copy, not guessed. Drop these lines once prettier handles indented fences.
-specs/v1-polish/tasks.md
-specs/v2-models-ops/tasks.md
-
-# prettier oscillates on this one: the continuation line of a multi-line inline code
-# span inside a list item flips between 2- and 4-space indent on every run, so it is
-# never "formatted". Same class of bug as the two above.
-specs/c1-glossary-precision/tasks.md
-
-# Same class again, worse: repeated ```python fences nested inside "- [ ] ..."
-# checklist items across a 1300+ line file. --write does not oscillate between two
-# states here, it compounds -- each pass adds MORE leading indent to already-valid,
-# consistently-indented Python inside the fence, verified over 4 consecutive --write
-# runs (4 different md5sums). --check never reaches a state it calls clean, including
-# on hand-verified, correctly-indented source content. Verified against a scratch
-# copy, not guessed. Drop once prettier handles deeply nested fenced code in lists.
-.procoder/plans/per-episode-glossary-acquisition.md
+# Entries here name files prettier must not rewrite. Every one of them is a live file:
+# a stale entry for a deleted path is invisible, which is how a real one gets lost.
 
 # NOT ignored on purpose, though the gate reports it as "NOT checked":
 #   glossaries/Frieren Beyond Journey's End (2023) {tvdb-424536}.json

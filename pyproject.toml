@@ -16,7 +16,7 @@ analysis = ["webrtcvad>=2.0"]
 # not an importable library — tests reach them via conftest.py's sys.path insert, not
 # a package import. Tell setuptools there's nothing to package so `pip install -e
 # ".[dev]"` (used purely to pull in the runtime + dev dependencies) doesn't choke on
-# auto-discovering specs/, glossaries/, tests/, tools/ as spurious top-level packages.
+# auto-discovering glossaries/, tests/, tools/ as spurious top-level packages.
 [tool.setuptools]
 py-modules = []
 

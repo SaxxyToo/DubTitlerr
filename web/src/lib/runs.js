@@ -1,4 +1,4 @@
-/** Pure helpers for the run-requests page (specs/webui-run-control, Data contracts). */
+/** Pure helpers for the run-requests page . */
 
 /** @typedef {'info' | 'ok' | 'warn' | 'bad' | 'muted'} StatusToken */
 
