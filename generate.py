@@ -137,6 +137,14 @@ class EndpointConfigError(Exception):
     episode or count toward retiring one as no-speech."""
 
 
+class EndpointNoSpeech(Exception):
+    """A well-formed transcription with nothing in it: the piece of audio held no speech.
+
+    Raised only for a response that IS a transcription document (it carries "text" or
+    "segments") and is empty -- never for an error body, which stays an EndpointAsrError.
+    A chunked file skips such a piece; a whole file still fails (see endpoint_transcribe)."""
+
+
 class EndpointAsrError(Exception):
     """An endpoint transcription failed in a way that must not poison the episode.
 
@@ -1346,6 +1354,8 @@ def _endpoint_request(wav, fields, headers):
     if not segs and doc.get("text"):
         segs = [{"start": 0.0, "end": float(doc.get("duration") or 0.0), "text": doc["text"]}]
     if not segs:
+        if isinstance(doc, dict) and "error" not in doc and ("segments" in doc or "text" in doc):
+            raise EndpointNoSpeech(f"no speech in {os.path.basename(wav)}")
         raise EndpointAsrError(f"endpoint returned no segments: {raw[:300]}")
     return _map_endpoint_doc(segs, doc.get("words") or [])
 
@@ -1387,7 +1397,10 @@ def endpoint_transcribe(wav):
     if not pieces:
         pieces = [(0.0, duration)]
     if len(pieces) == 1:
-        return _endpoint_request(wav, fields, headers)
+        try:
+            return _endpoint_request(wav, fields, headers)
+        except EndpointNoSpeech as e:
+            raise EndpointAsrError(f"endpoint returned no segments: {e}") from e
 
     log(f"asr: {duration / 60.0:.1f} min file -> {len(pieces)} pieces")
     segments, words = [], []
@@ -1397,6 +1410,12 @@ def endpoint_transcribe(wav):
             raise EndpointAsrError(f"could not cut piece {i} ({start:.0f}-{end:.0f}s) for the endpoint")
         try:
             segs, ws = _endpoint_request(chunk, fields, headers)
+        except EndpointNoSpeech:
+            # A ~10-minute piece with nothing said in it (silence, an instrumental stretch) is
+            # an empty piece, not a failed episode. Failing here retried the whole episode and
+            # retired it as no-speech after three attempts.
+            log(f"asr: piece {i} ({start:.0f}-{end:.0f}s) holds no speech")
+            continue
         finally:
             try:
                 os.remove(chunk)
@@ -1412,6 +1431,8 @@ def endpoint_transcribe(wav):
             w["seg"] += base
         segments.extend(segs)
         words.extend(ws)
+    if not segments:
+        raise EndpointAsrError(f"endpoint returned no speech in any of {len(pieces)} pieces")
     return segments, words
 
 

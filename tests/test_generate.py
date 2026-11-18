@@ -2427,3 +2427,59 @@ def test_force_redo_parks_the_delivery_markers_not_just_the_files(tmp_path, monk
     for name in ("ep.dub.en.ass", "ep.dubtitles.done", "ep.dubtitles.stages.json"):
         assert not (tmp_path / name).exists(), f"{name} still marks the episode delivered"
         assert (tmp_path / (name + ".stale")).exists()
+
+
+# --- a long file cut into pieces: one silent piece must not fail the episode ------------------
+#
+# Every episode over ~11.5 minutes is now sent in ~10-minute pieces. A piece the endpoint answers
+# with a valid transcription holding no speech (a long silence, an instrumental stretch) used to
+# raise "endpoint returned no segments", failing the whole episode -- three times, after which it
+# was retired as no-speech. That piece is simply empty. An error body is still a failure.
+
+
+def _chunked(monkeypatch, tmp_path, bodies):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"\0" * 4096)
+    monkeypatch.setattr(generate, "_asr_key", lambda: "")
+    monkeypatch.setattr(generate, "endpoint_key_problem", lambda: "")
+    monkeypatch.setattr(generate, "_wav_duration", lambda p: 1500.0)
+    monkeypatch.setattr(generate, "_detect_silences", lambda p: [])
+
+    def cut(src, a, b, out):
+        open(out, "wb").write(b"\0" * 2048)
+        return True
+
+    def mp3(src, out):
+        open(out, "wb").write(b"mp3")
+        return True
+
+    monkeypatch.setattr(generate, "_cut_chunk", cut)
+    monkeypatch.setattr(generate, "_mp3_for_upload", mp3)
+    it = iter(bodies)
+    monkeypatch.setattr(generate, "_post_multipart", lambda *a, **k: (200, json.dumps(next(it))))
+    return str(wav)
+
+
+def _speech(text):
+    return {"text": text, "segments": [{"start": 1.0, "end": 2.0, "avg_logprob": -0.1, "text": text,
+                                        "words": [{"word": " " + text, "start": 1.0, "end": 2.0, "probability": 0.9}]}]}
+
+
+def test_a_piece_with_no_speech_is_skipped_not_fatal(monkeypatch, tmp_path):
+    wav = _chunked(monkeypatch, tmp_path, [_speech("one"), {"text": "", "segments": []}, _speech("three")])
+    segments, words = generate.endpoint_transcribe(wav)
+    assert [w["text"].strip() for w in words] == ["one", "three"]
+    assert words[1]["start"] == pytest.approx(1201.0)  # the third piece keeps its offset
+    assert [w["seg"] for w in words] == [0, 1] and len(segments) == 2
+
+
+def test_an_error_body_in_one_piece_still_fails_the_episode(monkeypatch, tmp_path):
+    wav = _chunked(monkeypatch, tmp_path, [_speech("one"), {"error": {"message": "rate limited"}}, _speech("three")])
+    with pytest.raises(generate.EndpointAsrError):
+        generate.endpoint_transcribe(wav)
+
+
+def test_a_file_with_no_speech_in_any_piece_still_fails(monkeypatch, tmp_path):
+    wav = _chunked(monkeypatch, tmp_path, [{"text": "", "segments": []}] * 3)
+    with pytest.raises(generate.EndpointAsrError):
+        generate.endpoint_transcribe(wav)
