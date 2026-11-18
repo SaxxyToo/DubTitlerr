@@ -171,6 +171,34 @@ models measures whether the signal is alive, not whether transcription is accura
 criterion is evaluated on word `probability` (which both families produce reliably) with nsp
 reported for context only.
 
+## Measured on the RTX 5060 (2026-11-18) — the actual target hardware
+
+Ran through the real endpoint path (`tools/asr_bakeoff.py`, EdgeRunners S01E01, a 25.6-min
+episode, against that episode's embedded **`Dub`** track — a genuine dub script: 329 cues,
+2246 words):
+
+| Entrant | wall | segments | words | WER vs dub script | nsp alive | nsp max | segs nsp>0.5 |
+|---|---|---|---|---|---|---|---|
+| `whisper-large-v3-turbo-subs` | **42.3 s** | 393 | 2309 | 16.66% | **0.25%** | 1.9e-05 | **0** |
+| `whisper-large-v3-subs` | **63.1 s** | 337 | 2243 | **16.21%** | **19.6%** | **0.925** | **10** |
+
+Agreement between the two: 12.71%.
+
+**Speed: 1.49× — +20.8 s per 26-minute episode.** (The 1060/2070S figures elsewhere in this
+spec are CT2 on hardware nobody owns any more; these two rows are the measured ones.)
+
+**The music guard:** turbo produces **zero** segments above 0.5 — the guard provably cannot
+fire. large-v3 produces 10, and its `maybe_silence_would_fire` counter moves off zero for the
+first time. That is the change's real payoff, and it is measured, not inferred.
+
+**Accuracy:** large-v3 is better, but only by **0.45 pp** on this episode — far narrower than
+the 1.83 pp gap the CT2-era table shows (18.93 vs 20.76). Worth stating plainly: the case for
+large-v3 here is mostly **the guard**, with accuracy a secondary gain.
+
+**Residual:** one episode is one episode. The gate wants ≥4 covering the AGENTS.md spread
+(with/without a fansub track; glossary acquired vs mined only), so these rows open the gate
+rather than close it.
+
 ## Config gaps (existing endpoint vs production faster-whisper)
 
 | Parameter | Production faster-whisper (`generate.py:1587`) | Live llama-swap entry | Action |
@@ -194,7 +222,9 @@ reported for context only.
    re-transcribes every endpoint-made episode once?
 6. **Fallback** — if a future fallback (OpenRouter) is used, re-do those episodes locally later,
    or keep them?
-7. **Model default** — `large-v3-turbo` (current) or `large-v3` for the sidecar?
+7. **Model default** — ANSWERED 2026-11-18: move to `large-v3` (maintainer). Measured on
+   the 5060: +1.49× wall, +0.45 pp WER, and the only one of the two whose `no_speech_prob`
+   the music guard can use.
 8. **Upstream** — PR to `XenaRathon/DubTitlerr`, or fork-only?
 9. **Intel iGPU hosts** — is a Vulkan/CPU ASR image ever wanted for saxserver/minisax, or do they
    stay on OpenRouter endpoints permanently?
