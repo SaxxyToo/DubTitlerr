@@ -2541,3 +2541,29 @@ def test_retries_run_out_and_the_original_error_stands(monkeypatch, tmp_path):
     with pytest.raises(urllib.error.HTTPError):
         generate.endpoint_transcribe(wav)
     assert len(calls) == 1 + generate.ENDPOINT_RETRIES
+
+
+def test_whispercpp_verbose_json_fixture_maps_to_whole_words():
+    """Contract test for the wire shape a whisper.cpp server emits.
+
+    tests/fixtures/whispercpp_verbose_json.json is shaped like a real
+    examples/server/server.cpp verbose_json response (its text is invented). The server
+    returns "words" as TOKEN PIECES -- " Tree", "cut", "ting" -- where a leading space
+    marks a word start. Mapping those without merging would ship "Tree cut ting", so the
+    merge, the min-probability collapse and the per-segment fields are pinned here against
+    the real shape rather than a hand-built dict: a whisper.cpp change that moves a field
+    then fails a test instead of quietly degrading every transcript.
+    """
+    doc = json.load(open("tests/fixtures/whispercpp_verbose_json.json"))
+
+    segments, words = generate._map_endpoint_doc(doc["segments"], doc.get("words") or [])
+
+    assert [w["text"] for w in words] == [" Treecutting", " aviary", " Beacon"]
+    assert words[0]["prob"] == pytest.approx(0.55)  # min() across the merged pieces
+    assert words[0]["end"] == pytest.approx(0.8)  # max() across them
+    assert words[0]["seg"] == 0 and words[2]["seg"] == 1
+    assert [s["no_speech_prob"] for s in segments] == [pytest.approx(0.02), pytest.approx(0.41)]
+    assert segments[1]["start"] == pytest.approx(120.0)
+    # the segment shape carries no text and no logprob: production rebuilds cards from
+    # words, and the judge derives its logprob from word probs (see asr_bakeoff.endpoint_run_shape)
+    assert "text" not in segments[0] and "avg_logprob" not in segments[0]

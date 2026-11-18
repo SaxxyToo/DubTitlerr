@@ -1,0 +1,43 @@
+{
+  "_note": "Synthetic whisper.cpp verbose_json, shaped exactly as examples/server/server.cpp emits it at v1.9.5 (segments[].words[] with the token-pieces the server produces, plus avg_logprob / no_speech_prob per segment and t_dtw per token). The TEXT IS INVENTED -- it is not dialogue from any episode, and must not be replaced with one. Its job is to pin the wire shape so a whisper.cpp change that moves a field fails a test instead of silently degrading a transcript.",
+  "_source": "whisper.cpp v1.9.5 examples/server/server.cpp, verbose_json builder",
+  "task": "transcribe",
+  "language": "en",
+  "duration": 1.2,
+  "text": " Treecutting aviary",
+  "segments": [
+    {
+      "id": 0,
+      "seek": 0,
+      "start": 0.0,
+      "end": 1.2,
+      "text": " Treecutting aviary",
+      "tokens": [50364, 4709, 288, 77, 4492, 50414],
+      "temperature": 0.0,
+      "avg_logprob": -0.31,
+      "no_speech_prob": 0.02,
+      "compression_ratio": 0.0,
+      "words": [
+        {"word": " Tree", "start": 0.1, "end": 0.4, "t_dtw": -1, "probability": 0.91},
+        {"word": "cut", "start": 0.4, "end": 0.6, "t_dtw": -1, "probability": 0.55},
+        {"word": "ting", "start": 0.6, "end": 0.8, "t_dtw": -1, "probability": 0.7},
+        {"word": " aviary", "start": 0.8, "end": 1.2, "t_dtw": -1, "probability": 0.88}
+      ]
+    },
+    {
+      "id": 1,
+      "seek": 120,
+      "start": 120.0,
+      "end": 121.5,
+      "text": " Beacon",
+      "tokens": [50364, 35690, 50414],
+      "temperature": 0.0,
+      "avg_logprob": -0.62,
+      "no_speech_prob": 0.41,
+      "compression_ratio": 0.0,
+      "words": [
+        {"word": " Beacon", "start": 120.2, "end": 121.5, "t_dtw": -1, "probability": 0.77}
+      ]
+    }
+  ]
+}

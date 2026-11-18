@@ -827,6 +827,9 @@ def run_endpoint(url: str, label: str, videos: list[str]) -> WhisperRun:
     the duration of the run and restored afterwards -- this tool must not leave the
     process pointed at a bakeoff URL.
 
+    ``label`` becomes ``ASR_MODEL`` and travels as the request's ``model`` field, which is
+    how a llama-swap router picks the entry (see ``parse_endpoint_spec``).
+
     No VRAM is recorded: the model lives on the host that serves the endpoint, and
     ``vram_used_mib`` measures this process's card only. Reporting a number here would
     invent a measurement."""
@@ -878,6 +881,13 @@ def is_endpoint_name(name: str) -> bool:
 def parse_endpoint_spec(spec: str) -> tuple[str, str]:
     """``endpoint:URL[@label]`` -> ``(url, label)``; an unlabelled entry is labelled by its
     host:port so two endpoints differing only by port cannot collide as one entrant.
+
+    **The label is sent as the request's ``model`` field.** For a router that selects the
+    backend by model name -- llama-swap does -- the label must therefore be the ROUTER's
+    entry name, e.g. ``@whisper-large-v3-turbo-subs``, not a free-form tag: llama-swap
+    refuses a model it does not know rather than falling back. A bare whisper-server
+    ignores the field, so a descriptive label is fine there. Either way the label is what
+    names the entrant in the report, which is why it doubles as both.
 
     The label separator is the last ``@`` in the URL's PATH, never one in its authority:
     ``http://user@host/path`` is userinfo, while ``http://host/path@tag`` is a label."""

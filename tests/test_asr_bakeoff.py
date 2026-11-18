@@ -6,6 +6,7 @@ is built from: WER math, the whisper/nemo router, the judge summary, and the
 defensive NeMo transcript parser whose return shapes move between nemo versions.
 """
 
+import json
 import math
 import wave
 
@@ -531,3 +532,95 @@ def test_strip_transcripts_leaves_the_metrics_untouched():
     assert stripped["logprob_p05"] == -1.5
     assert stripped["music_rule_would_fire"] == 3
     assert stripped["word_count"] == 10
+
+
+def _tiny_wav(path, seconds=1.0, rate=16000):
+    """A real (silent) wav, so the entrant's ffprobe duration step runs for real."""
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\x00\x00" * int(rate * seconds))
+    return str(path)
+
+
+def test_run_endpoint_transcribes_through_the_real_http_path(tmp_path, monkeypatch):
+    """The entrant must go end to end: extract -> mp3 re-encode -> multipart POST ->
+    verbose_json -> the tool's shapes. Nothing here is stubbed except the ffmpeg step the
+    production path shares with every other test, so a break in the request shape (the
+    thing a whisper.cpp server has to accept) fails here."""
+    import fake_servers
+
+    import generate
+
+    doc = json.load(open("tests/fixtures/whispercpp_verbose_json.json"))
+    server = fake_servers.FakeServer(fake_servers.asr_reply(doc))
+    try:
+        wav = _tiny_wav(tmp_path / "a.wav")
+        monkeypatch.setattr(ab, "_extract_dub_wav", lambda video, td: wav)
+        # The mp3 encode is the one shared production step that needs a real ffmpeg; the
+        # POST is exercised over a REAL socket, which is the point of this test.
+        def _fake_mp3(w, path):
+            open(path, "wb").write(b"x" * 4096)  # a real POST goes out; only the encode is stubbed
+            return True
+
+        monkeypatch.setattr(generate, "_mp3_for_upload", _fake_mp3)
+        monkeypatch.setattr(generate, "ASR_KEY_ENV", "")
+        monkeypatch.setattr(generate, "ASR_URL", "http://127.0.0.1:1/never-used")
+        monkeypatch.setattr(generate, "ASR_MODEL", "never-used")
+
+        run = ab.run_endpoint(server.base + "/v1/audio/transcriptions", "fake-whispercpp", ["ep.mkv"])
+
+        # the request really was a multipart upload carrying the fields the server needs
+        assert server.requests, "no request reached the endpoint"
+        body = server.requests[0]["body"]
+        assert isinstance(body, bytes) and b"response_format" in body and b"verbose_json" in body
+        assert server.requests[0]["path"] == "/v1/audio/transcriptions"
+
+        # shapes: sub-word tokens rejoined, per-word prob kept, segment text rebuilt
+        assert [w["text"] for w in run.words] == [" Treecutting", " aviary", " Beacon"]
+        assert run.words[0]["prob"] == pytest.approx(0.55)  # min of the merged pieces
+        assert run.segments[0]["text"] == "Treecutting aviary"
+        assert run.segments[0]["no_speech_prob"] == pytest.approx(0.02)
+        assert run.segments[0]["avg_logprob"] < 0  # derived, never left absent
+        assert run.episodes[0]["segments"] == 2 and "error" not in run.episodes[0]
+        assert run.ok and run.family == "whisper.cpp-endpoint"
+    finally:
+        server.close()
+
+
+def test_run_endpoint_restores_the_endpoint_globals_even_on_failure(tmp_path, monkeypatch):
+    """A bakeoff URL must not survive the run: a later production call in the same process
+    would otherwise be pointed at a bakeoff server."""
+    import generate
+
+    monkeypatch.setattr(ab, "_extract_dub_wav", lambda video, td: None)  # -> per-episode error
+    monkeypatch.setattr(generate, "ASR_KEY_ENV", "")
+    monkeypatch.setattr(generate, "ASR_URL", "http://127.0.0.1:1/original")
+    monkeypatch.setattr(generate, "ASR_MODEL", "original-model")
+
+    run = ab.run_endpoint("http://127.0.0.1:9/bakeoff", "bakeoff", ["ep.mkv"])
+
+    assert generate.ASR_URL == "http://127.0.0.1:1/original"
+    assert generate.ASR_MODEL == "original-model"
+    assert run.episodes[0]["error"] == "no-eng-dub-or-extract-failed"
+
+
+def test_run_endpoint_records_an_episode_error_instead_of_aborting(tmp_path, monkeypatch):
+    """One unreadable mkv must not throw away the other episodes' work."""
+    import generate
+
+    calls = {"n": 0}
+
+    def fake_extract(video, td):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("bad mkv")
+        return None
+
+    monkeypatch.setattr(ab, "_extract_dub_wav", fake_extract)
+    monkeypatch.setattr(generate, "ASR_KEY_ENV", "")
+    run = ab.run_endpoint("http://127.0.0.1:9/x", "l", ["a.mkv", "b.mkv"])
+    assert len(run.episodes) == 2
+    assert run.episodes[0]["error"].startswith("RuntimeError")
+    assert run.episodes[1]["error"] == "no-eng-dub-or-extract-failed"
