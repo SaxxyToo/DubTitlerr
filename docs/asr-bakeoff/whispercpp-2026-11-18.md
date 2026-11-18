@@ -110,10 +110,26 @@ outside tolerance.
 regression — the two configs are not measuring the same thing any more. That is the finding
 from the bakeoff showing up again downstream.
 
-`dropped_hallucination` (+61%) and `orphan_candidates` (+200%) are not explained that way.
-Together with the bakeoff's blocklist rise (9 → 15) they form a consistent picture: **large-v3
-either hallucinates more, or trips the hallucination filters more, on the same audio.** Three
-independent counters agree, which makes this more than noise.
+**A correction to how these counters were first grouped here.** Reading the code rather
+than trusting the names:
+
+- `flagged` comes from `hallucination.flag_reason`, whose only trigger is
+  `avg_logprob < LP_FLAG`. The nsp-gated variant was **deleted** (ADR 0002). So `flagged` is a
+  **confidence-threshold count on the derived logprob**, not hallucination evidence — and it
+  is the same measurement as `low_conf`, not an independent witness.
+- `low_conf` likewise thresholds the derived logprob (plus nsp, which only large-v3 has).
+- `orphan_candidates` is a **layout** counter (quarantined structural orphans), unrelated to
+  hallucination. `over_cps`, `violations` and `merged_backward` are layout too — and those all
+  improve.
+
+So there is **one** hallucination signal here, not three: `dropped_hallucination`, which comes
+from `hallucination.BLOCKLIST` matching known hallucination patterns. It rises 28 → 45 (+61%),
+and the bakeoff's `blocklist_hits` independently rises 9 → 15 on the same episodes. **Two
+instruments, one signal, same direction.**
+
+What remains genuinely open is whether that is large-v3 hallucinating more, or large-v3's
+output tripping patterns turbo's does not — a confidence-calibration difference would not
+explain it, because the blocklist matches *text*, not confidence.
 
 One episode drives a lot of it: **Death Note S01E01 has `flagged` 11 → 27 (+145%)** — and it
 is also the one episode where large-v3's WER was marginally *worse* (+0.12 pp). It is the
@@ -131,8 +147,8 @@ instrumented directly, remain the reliable speed figure: **1.46×**.
 
 ## Open item worth naming
 
-The blocklist delta (9 → 15 across the same episodes) is the one result that argues *against*
-large-v3, and it is unexplained. The pipeline pass above strengthens it: `dropped_hallucination`
-+61% and `orphan_candidates` +200% point the same way. It could be more segments in the 10–30% WER band carrying
+The blocklist delta is the one result that argues *against* large-v3 and it is unexplained: 9 → 15
+in the bakeoff, 28 → 45 in the pipeline pass — two instruments, one signal, the same direction.
+Note this is a *text* match, so a confidence-calibration story does not account for it. It could be more segments in the 10–30% WER band carrying
 recognisable hallucination patterns, or a real regression. It should be understood before a
 rollout, and it is the strongest argument for running T1.5's pipeline QC pass.
