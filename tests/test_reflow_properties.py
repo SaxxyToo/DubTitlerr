@@ -219,7 +219,10 @@ def test_whole_list_invariants(seed):
 
     # --- 4. causality: never reveal a line before it is spoken ---
     for c, g in zip(cards, groups):
-        assert c["start"] >= g[0]["start"] - reflow.EPS
+        # A card's display start is its spoken onset, or up to LEAD_IN before it: the
+        # lead-in is deliberate (a caption that appears on the first phoneme reads as
+        # late), bounded by real silence, and never overlaps the previous card.
+        assert c["start"] >= g[0]["start"] - reflow.LEAD_IN - reflow.EPS
 
 
 @pytest.mark.parametrize("seed", SEEDS)
@@ -312,5 +315,6 @@ def test_single_zero_length_word_still_yields_a_readable_card():
     words = [{"text": "Hi.", "start": 4.0, "end": 4.0, "prob": 0.9, "seg": 0}]
     cards = reflow.reflow(words, [{"start": 4.0, "end": 4.0, "no_speech_prob": 0.0}])
     assert len(cards) == 1
-    assert cards[0]["start"] == 4.0
+    # the card may appear a hair early (lead-in) but never later than the word
+    assert 4.0 - reflow.LEAD_IN - reflow.EPS <= cards[0]["start"] <= 4.0 + reflow.EPS
     assert cards[0]["end"] - cards[0]["start"] >= reflow.MIN_DUR - reflow.EPS

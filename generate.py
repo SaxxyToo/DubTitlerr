@@ -137,6 +137,14 @@ class EndpointConfigError(Exception):
     episode or count toward retiring one as no-speech."""
 
 
+class EndpointNoSpeech(Exception):
+    """A well-formed transcription with nothing in it: the piece of audio held no speech.
+
+    Raised only for a response that IS a transcription document (it carries "text" or
+    "segments") and is empty -- never for an error body, which stays an EndpointAsrError.
+    A chunked file skips such a piece; a whole file still fails (see endpoint_transcribe)."""
+
+
 class EndpointAsrError(Exception):
     """An endpoint transcription failed in a way that must not poison the episode.
 
@@ -176,8 +184,16 @@ INITIAL_PROMPT = ""
 def load_glossary():
     global GLOSS, INITIAL_PROMPT
     show = os.environ.get("SHOW_NAME", "")
-    GLOSS = glossary.load(os.environ.get("GLOSSARY_FILE", ""))
+    gloss_file = os.environ.get("GLOSSARY_FILE", "")
+    GLOSS = glossary.load(gloss_file)
     show = show or GLOSS.get("show", "")
+    if not show and gloss_file:
+        # Glossaries are named <Show>.json, so the file name is the show's own name. A run
+        # that reaches here without SHOW_NAME (a hand-invoked generate.py, a request that
+        # lost the variable) used to transcribe with no glossary at all and report
+        # names=0 — the one failure mode that quietly ships wrong names, which is the
+        # defect the glossary exists to prevent.
+        show = os.path.splitext(os.path.basename(gloss_file))[0]
     # ONE derivation, in glossary.prompt_for: the text tier compares a stored prompt
     # against it to decide whether a glossary edit needs the GPU. A second copy here
     # would drift, and the drift would read as "the prompt changed" on every episode.
@@ -839,7 +855,9 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
     # B1: drop near-certain hallucinations, flag the suspect, collapse runaway repeat runs.
     merge_log, cascade_log = [], []
     try:
-        cards = reflow.reflow(words, segments, merge_log=merge_log, audio_duration=audio_duration, cascade_log=cascade_log)
+        cut_list = scene_cuts(_video_for(stem)) if _snap_enabled() else []
+        cards = reflow.reflow(words, segments, merge_log=merge_log, audio_duration=audio_duration,
+                              cascade_log=cascade_log, cuts=cut_list)
     except reflow.CascadeInfeasible as e:
         return _cascade_infeasible(stem, fail, e)
     kept, fixes, dropped = [], 0, 0
@@ -1058,34 +1076,269 @@ def _post_multipart(url, fields, filename, payload, content_type, headers, timeo
         return resp.status, resp.read().decode("utf-8", "replace")
 
 
-def endpoint_transcribe(wav):
-    """Transcribe via an OpenAI-compatible endpoint; return the local decoder's shapes.
+CHUNK_TARGET = 600.0  # seconds of audio per request when the file is long
+CHUNK_SLACK = 90.0  # how far from a target a silence may sit and still be preferred
+CHUNK_MIN = 30.0  # never emit a piece shorter than this
 
-    (segments: [{start,end,no_speech_prob}], words: [{text,start,end,prob,seg}])
+
+SCENE_THRESHOLD = 0.30
+CUTS_VERSION = 1
+
+
+def _force_redo():
+    return os.environ.get("FORCE_REDO", "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def _request_since():
+    """REQUEST_SINCE: epoch seconds when the request being served started (gen_loop sets it
+    once per request, so it is the same across the resume passes after a crash). None when
+    generate runs outside a request."""
+    raw = os.environ.get("REQUEST_SINCE", "").strip()
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def _rebuilt_since(stem, since):
+    """True when this episode's transcript record was written at or after ``since``.
+
+    Both tiers write <stem>.dubtitles.conf.json on success and nothing else does, so its
+    mtime is the on-disk evidence that THIS request rebuilt the episode -- across resume
+    passes, and whatever the in-process counters of any one pass say."""
+    if since is None:
+        return False
+    try:
+        return os.path.getmtime(out_for(stem + ".dubtitles.conf.json")) >= since
+    except OSError:
+        return False
+
+
+def scope_report(files, since, statuses):
+    """What a request's scope looks like on disk after this pass.
+
+    Every in-scope episode lands in exactly one bucket: rebuilt by this request, delivered
+    (a current stamp, untouched), awaiting the merge pass (a transcript from an earlier run
+    that the merge loop has not published yet), or not done -- counted by reason. The
+    request's done/failed decision is made from this (review_requests.verdict), never from
+    generate's exit code alone: measured 2026-11-18, a forced request finished "done" in nine
+    minutes having produced nothing."""
+    rep = {"scope": len(files), "forced": _force_redo(), "since": since, "rebuilt": 0, "delivered": 0, "awaiting_merge": 0}
+    not_done = {}
+    for v in files:
+        stem = os.path.splitext(v)[0]
+        if _rebuilt_since(stem, since):
+            rep["rebuilt"] += 1
+            continue
+        if stamp_valid(read_stamp(stem + STAMP_SUFFIX), v):
+            key = "delivered"
+        elif os.path.exists(stem + ".eng.dubtitles.ass") or os.path.exists(stem + ".eng.dubtitles.srt"):
+            key = "awaiting_merge"
+        else:
+            key = None
+        if key and not (rep["forced"] and key == "delivered"):
+            rep[key] += 1
+            continue
+        if key == "delivered":
+            reason = "still delivered from an earlier run"
+        elif os.path.exists(stem + ".dubtitles.fail"):
+            reason = "prior crash (.dubtitles.fail)"
+        elif os.path.exists(stem + NO_SPEECH_SUFFIX):
+            reason = "endpoint gave up (.dubtitles.no-speech)"
+        else:
+            reason = statuses.get(v) or "not attempted"
+        not_done[reason] = not_done.get(reason, 0) + 1
+    rep["not_done"] = not_done
+    return rep
+
+
+def _write_run_report(rep):
+    """RUN_REPORT: where gen_loop wants the scope report for the request it is serving."""
+    path = os.environ.get("RUN_REPORT", "").strip()
+    if not path:
+        return
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(rep, f, indent=2)
+        os.replace(tmp, path)
+    except OSError as e:
+        log("  run report write failed:", e)
+
+
+def force_park_sidecars(stem):
+    """FORCE_REDO: park an episode's delivered and intermediate sidecars so this run
+    rebuilds them.
+
+    The same ``.stale`` rename park_stale_sidecars uses, for the same reason: a failed
+    rebuild is one rename away from being undone, and drop_parked_sidecars() clears the
+    parked copy once the replacement is written. This is the scoped alternative to
+    bumping TEXT_VERSION -- regenerate one show from a request instead of re-running the
+    library, and without an operator moving files aside by hand.
     """
-    problem = endpoint_key_problem()
-    if problem:
-        raise EndpointConfigError(f"refusing to send the endpoint key: {problem}")
-    key = _asr_key()
-    if not key:
-        # Keyless endpoints exist (a llama-swap whisper on the LAN). Don't refuse here:
-        # an endpoint that wants a key answers 401 and the error carries that.
-        log(f"warning: ASR_BACKEND=endpoint with no key in ${ASR_KEY_ENV} — sending none")
+    prefix = os.environ.get("SIDECAR_SUFFIX", ".dub.en")
+    paths = [stem + s for s in SIDECAR_SUFFIXES]
+    paths += [stem + prefix + ext for ext in (".ass", ".srt")]
+    # The delivery MARKERS matter more than the artefacts: process() decides "already-muxed"
+    # from the .dubtitles.done stamp and the merge pass decides from the stage record, so
+    # parking only the files leaves the episode delivered and the run reports success with
+    # nothing to do -- measured 2026-11-18: a forced season request finished "done" in nine
+    # minutes having produced zero subtitles.
+    paths += [stem + STAMP_SUFFIX, stem + ".dubtitles.stages.json"]
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        try:
+            os.replace(path, path + STALE_SUFFIX)
+        except OSError:
+            pass
+
+
+def _clear_failure_markers(stem):
+    """A successful episode supersedes its failure markers.
+
+    Without this, a crash.json from an earlier attempt (or a no-speech marker from
+    before the endpoint key was fixed) survives the episode that fixed it: the retry
+    counter never resets, and anyone triaging sees a failure on an episode that
+    delivered.
+    """
+    for suffix in (".dubtitles.crash.json", NO_SPEECH_SUFFIX):
+        try:
+            os.remove(out_for(stem + suffix))
+        except OSError:
+            pass
+
+
+def _video_for(stem):
+    for ext in ("mkv", "mp4", "m4v"):
+        if os.path.exists(f"{stem}.{ext}"):
+            return f"{stem}.{ext}"
+    return None
+
+
+def _snap_enabled():
+    return os.environ.get("SNAP_TO_CUTS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def scene_cuts(video):
+    """Shot-change timestamps for a video, cached beside it.
+
+    Decoding 1080p for scene detection costs ~80 s an episode whatever the scale
+    (measured: 80.0 s full, 83.7 s at 320px -- the decode dominates), so the answer is
+    cached in <stem>.dubtitles.cuts.json and reused by every later text-tier run.
+    """
+    if not video:
+        return []
+    cache = os.path.splitext(video)[0] + ".dubtitles.cuts.json"
+    try:
+        with open(cache, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        if doc.get("version") == CUTS_VERSION and float(doc.get("threshold", -1)) == SCENE_THRESHOLD:
+            return [float(x) for x in doc.get("cuts") or []]
+    except (OSError, ValueError):
+        pass
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "info", "-i", video, "-filter:v",
+             f"select='gt(scene,{SCENE_THRESHOLD})',showinfo", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT * 30, stdin=subprocess.DEVNULL,
+        )
+        cuts = sorted({round(float(m), 3) for m in re.findall(r"pts_time:([0-9.]+)", getattr(r, "stderr", "") or "")})
+    except (subprocess.SubprocessError, OSError) as exc:
+        log(f"warning: scene detection failed for {os.path.basename(video)}: {exc}")
+        return []
+    try:
+        tmp = cache + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            # json.dumps, not json.dump: the conf writer's atomicity test patches
+            # json.dump, and a cache write must not consume its simulated failure.
+            fh.write(json.dumps({"version": CUTS_VERSION, "threshold": SCENE_THRESHOLD, "cuts": cuts}))
+        os.replace(tmp, cache)
+    except OSError:
+        pass
+    return cuts
+
+
+def _wav_duration(path):
+    """Seconds of audio in a file, or 0.0 when ffprobe cannot say."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", path],
+            capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+        )
+        return float(r.stdout.strip())
+    except (ValueError, subprocess.SubprocessError, OSError):
+        return 0.0
+
+
+def _detect_silences(path):
+    """(start, end) of every silent stretch in a file, from ffmpeg's own detector."""
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "info", "-i", path, "-af",
+             "silencedetect=noise=-35dB:d=0.35", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT * 4, stdin=subprocess.DEVNULL,
+        )
+        out = r.stderr
+    except (subprocess.SubprocessError, OSError):
+        return []
+    starts = [float(m) for m in re.findall(r"silence_start:\s*(-?[0-9.]+)", out)]
+    ends = [float(m) for m in re.findall(r"silence_end:\s*([0-9.]+)", out)]
+    return [(s, e) for s, e in zip(starts, ends) if e > s]
+
+
+def plan_chunks(duration, silences, target=CHUNK_TARGET, slack=CHUNK_SLACK, minimum=CHUNK_MIN):
+    """Where to cut a long file into request-sized pieces. Pure, so the policy is testable.
+
+    Cuts land in real silence whenever one sits within ``slack`` of the target: cutting
+    mid-word makes the model invent an ending for the left piece and a beginning for the
+    right one, and both survive into the subtitle. A film of any length is covered — the
+    targets keep stepping by ``target`` until the end, so three hours is the same problem
+    as two.
+    """
+    if duration <= 0:
+        return []
+    if duration <= target + slack:
+        return [(0.0, duration)]
+    cuts = []
+    t = target
+    while t < duration - minimum:
+        chosen = None
+        for start, end in silences:
+            mid = (start + end) / 2.0
+            if abs(mid - t) <= slack and (chosen is None or abs(mid - t) < abs(chosen - t)):
+                chosen = mid
+        cut = t if chosen is None else chosen
+        if not cuts or cut - cuts[-1] >= minimum:
+            cuts.append(cut)
+        t += target
+    bounds = [0.0, *cuts, duration]
+    return [(a, b) for a, b in zip(bounds, bounds[1:]) if b - a > 0]
+
+
+def _cut_chunk(wav, start, end, out_path):
+    """Write [start, end) of ``wav`` to ``out_path`` without re-encoding."""
+    # Re-encode to PCM rather than stream-copy. Measured on a real episode: `-c copy`
+    # on a 16 kHz wav exits 0 and writes a 138-byte header with no audio at all, so the
+    # chunk is silently empty and the endpoint gets nothing to transcribe.
+    r = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.3f}",
+         "-t", f"{end - start:.3f}", "-i", wav, "-ac", "1", "-ar", "16000",
+         "-c:a", "pcm_s16le", out_path],
+        capture_output=True, text=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
+    )
+    if r.returncode != 0:
+        log(f"warning: cutting {start:.0f}-{end:.0f}s failed: {(r.stderr or '').strip()[:200]}")
+        return False
+    return os.path.exists(out_path) and os.path.getsize(out_path) > 1024
+
+
+def _endpoint_request(wav, fields, headers):
+    """One POST: the mapped (segments, words) for a single piece of audio."""
     mp3 = wav + ".mp3"
     if not _mp3_for_upload(wav, mp3):
         raise EndpointAsrError("could not build the upload mp3 from the extracted wav")
-    fields = [
-        ("model", ASR_MODEL),
-        ("language", "en"),
-        ("response_format", "verbose_json"),
-        ("timestamp_granularities[]", "word"),
-    ]
-    if INITIAL_PROMPT:
-        fields.append(("prompt", INITIAL_PROMPT))
-    headers = {"Authorization": "Bearer " + key} if key else {}
-    if key and "openrouter.ai" in ASR_URL:
-        headers["HTTP-Referer"] = ASR_REFERER
-        headers["X-Title"] = "DubTitlerr"
     try:
         with open(mp3, "rb") as fh:
             payload = fh.read()
@@ -1101,8 +1354,86 @@ def endpoint_transcribe(wav):
     if not segs and doc.get("text"):
         segs = [{"start": 0.0, "end": float(doc.get("duration") or 0.0), "text": doc["text"]}]
     if not segs:
+        if isinstance(doc, dict) and "error" not in doc and ("segments" in doc or "text" in doc):
+            raise EndpointNoSpeech(f"no speech in {os.path.basename(wav)}")
         raise EndpointAsrError(f"endpoint returned no segments: {raw[:300]}")
     return _map_endpoint_doc(segs, doc.get("words") or [])
+
+
+def endpoint_transcribe(wav):
+    """Transcribe via an OpenAI-compatible endpoint; return the local decoder's shapes.
+
+    (segments: [{start,end,no_speech_prob}], words: [{text,start,end,prob,seg}])
+
+    A long file is cut into request-sized pieces at silence (see plan_chunks) and the
+    times are offset back onto the whole file. Two reasons, both hard limits rather than
+    preferences: the upload cap (32 kbps mp3 puts a two-hour film at ~29 MB, past
+    OpenRouter's 25 MB) and the endpoint's own request timeout on hours of audio.
+    """
+    problem = endpoint_key_problem()
+    if problem:
+        raise EndpointConfigError(f"refusing to send the endpoint key: {problem}")
+    key = _asr_key()
+    if not key:
+        # Keyless endpoints exist (a llama-swap whisper on the LAN). Don't refuse here:
+        # an endpoint that wants a key answers 401 and the error carries that.
+        log(f"warning: ASR_BACKEND=endpoint with no key in ${ASR_KEY_ENV} — sending none")
+    fields = [
+        ("model", ASR_MODEL),
+        ("language", "en"),
+        ("response_format", "verbose_json"),
+        ("timestamp_granularities[]", "word"),
+    ]
+    if INITIAL_PROMPT:
+        fields.append(("prompt", INITIAL_PROMPT))
+    headers = {"Authorization": "Bearer " + key} if key else {}
+    if key and "openrouter.ai" in ASR_URL:
+        headers["HTTP-Referer"] = ASR_REFERER
+        headers["X-Title"] = "DubTitlerr"
+
+    duration = _wav_duration(wav)
+    silences = _detect_silences(wav) if duration > CHUNK_TARGET + CHUNK_SLACK else []
+    pieces = plan_chunks(duration, silences)
+    if not pieces:
+        pieces = [(0.0, duration)]
+    if len(pieces) == 1:
+        try:
+            return _endpoint_request(wav, fields, headers)
+        except EndpointNoSpeech as e:
+            raise EndpointAsrError(f"endpoint returned no segments: {e}") from e
+
+    log(f"asr: {duration / 60.0:.1f} min file -> {len(pieces)} pieces")
+    segments, words = [], []
+    for i, (start, end) in enumerate(pieces):
+        chunk = f"{wav}.part{i:02d}.wav"
+        if not _cut_chunk(wav, start, end, chunk):
+            raise EndpointAsrError(f"could not cut piece {i} ({start:.0f}-{end:.0f}s) for the endpoint")
+        try:
+            segs, ws = _endpoint_request(chunk, fields, headers)
+        except EndpointNoSpeech:
+            # A ~10-minute piece with nothing said in it (silence, an instrumental stretch) is
+            # an empty piece, not a failed episode. Failing here retried the whole episode and
+            # retired it as no-speech after three attempts.
+            log(f"asr: piece {i} ({start:.0f}-{end:.0f}s) holds no speech")
+            continue
+        finally:
+            try:
+                os.remove(chunk)
+            except OSError:
+                pass
+        base = len(segments)
+        for s in segs:
+            s["start"] += start
+            s["end"] += start
+        for w in ws:
+            w["start"] += start
+            w["end"] += start
+            w["seg"] += base
+        segments.extend(segs)
+        words.extend(ws)
+    if not segments:
+        raise EndpointAsrError(f"endpoint returned no speech in any of {len(pieces)} pieces")
+    return segments, words
 
 
 # whisper.cpp's control tokens, if a server is built to emit them ("[_BEG_]", "[_TT_150]").
@@ -1381,8 +1712,18 @@ def main():
 
     # Cheap pre-filter (stat only, no ffprobe/model): drop files already done so a perpetual
     # re-scan doesn't pay the ~40s model load when there's nothing new to transcribe.
+    since = _request_since()
+    forced = _force_redo()
+
     def needs_work(v):
         stem = os.path.splitext(v)[0]
+        # Read here, not closed over: tests extract this function from main() and call it alone.
+        if _force_redo():
+            # A forced request reaches delivered episodes too -- the stamp check below is
+            # exactly what it overrides -- but only once: an episode this request already
+            # rebuilt (in an earlier resume pass) is not parked and rebuilt again. A poison
+            # marker still wins; it is reported, not silently skipped.
+            return not os.path.exists(stem + ".dubtitles.fail") and not _rebuilt_since(stem, _request_since())
         stamp = read_stamp(stem + STAMP_SUFFIX)
         if stamp_valid(stamp, v):
             return False  # muxed at the current version -> done
@@ -1402,7 +1743,10 @@ def main():
     # Split what needs doing by TIER. needs_work() stays the gate (it also honours the
     # pending-sidecar and poison-marker skips); this only decides which queue the
     # survivors land in.
-    transcribe_todo, text_todo = partition_todo(todo)
+    # Forced: a full rebuild. partition_todo would drop a delivered episode (its stamp is current
+    # in both tiers until force_park_sidecars moves it aside, just before process()).
+    transcribe_todo, text_todo = (list(todo), []) if forced else partition_todo(todo)
+    statuses = {}
     # Counted over EVERY file, not just todo: the question this answers is "how far
     # behind is the part of the library I am not watching", and that is invisible if it
     # only counts what is already queued.
@@ -1415,6 +1759,7 @@ def main():
     )
     if not todo:
         log("nothing to transcribe (all done) — skipping model load")
+        _write_run_report(scope_report(files, since, statuses))
         return
     # The model is loaded ONLY when something actually needs the decoder. A text-only
     # sweep otherwise paid a ~40s GPU model load to perform zero transcription, which
@@ -1445,22 +1790,29 @@ def main():
             break
         log("→", os.path.basename(v), "(text)")
         try:
-            log("  ", process_text(v))
+            statuses[v] = process_text(v)
+            log("  ", statuses[v])
         except Exception as e:
+            statuses[v] = f"error: {type(e).__name__}"
             log("  ERROR", type(e).__name__, e)  # one bad sidecar must not abort the show
     for v in transcribe_todo:
         if common.stop_requested():
             log("stop requested: not starting", os.path.basename(v))
             break
         log("→", os.path.basename(v))
+        if _force_redo():
+            force_park_sidecars(os.path.splitext(v)[0])
         try:
             status = process(v)  # one bad episode must not abort the show
+            statuses[v] = status
             log("  ", status)
             if status == "ok":
                 transcribed += 1
+                _clear_failure_markers(os.path.splitext(v)[0])
                 for k in totals:
                     totals[k] += _LAST_STATS.get(k, 0)
         except Exception as e:
+            statuses[v] = f"error: {type(e).__name__}"
             log("  ERROR", type(e).__name__, e)
             # V2 C15: gate on the exception TYPE, not a substring match on "cuda" in the
             # message/stacktrace. faster-whisper/ctranslate2 raise RuntimeError for real
@@ -1513,6 +1865,10 @@ def main():
     # invocation, since SHOW_NAME/GLOSSARY_FILE are per-run env (see load_glossary()).
     show = os.environ.get("SHOW_NAME", "") or GLOSS.get("show", "") or "unknown_show"
     lastrun = build_lastrun(show, round(time.monotonic() - t0, 1), len(todo), transcribed, totals, census)
+    report = scope_report(files, since, statuses)
+    _write_run_report(report)
+    if isinstance(lastrun, dict):
+        lastrun["scope"] = report  # "done" carries its evidence: what was asked for vs what exists
     try:
         os.makedirs(GLOSS_DIR, exist_ok=True)
         with open(os.path.join(GLOSS_DIR, show + ".lastrun.json"), "w") as f:

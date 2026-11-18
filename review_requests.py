@@ -16,7 +16,7 @@ from typing import Any
 REQUESTS_DIR = os.environ.get("REQUESTS_DIR", "/config/requests")
 ANIME_ROOT = os.environ.get("ANIME_ROOT", "/media/Anime Library")
 
-ALLOWED_BODY_KEYS = frozenset(("show", "season", "episode_re", "require_eng", "webhook"))
+ALLOWED_BODY_KEYS = frozenset(("show", "season", "episode_re", "require_eng", "webhook", "force"))
 
 
 class Refused(Exception):
@@ -328,12 +328,17 @@ def validate(body: dict, anime_root: str | None = None) -> dict:
     if webhook is not None and not isinstance(webhook, dict):
         raise Refused(400, "webhook must be an object or null")
 
+    force = body.get("force", False)
+    if not isinstance(force, bool):
+        raise Refused(400, "force must be a boolean")
+
     return {
         "show": show,
         "season": season,
         "episode_re": episode_re,
         "require_eng": require_eng,
         "webhook": webhook,
+        "force": force,
     }
 
 
@@ -459,6 +464,7 @@ def create(
             "episode_re": clean["episode_re"],
             "generate_only_re": gen_re,
             "require_eng": clean["require_eng"],
+            "force": clean["force"],
             "status": "pending",
             "error": None,
             "finished_at": None,
@@ -712,14 +718,46 @@ def requeue(path: str, requests_dir: str | None = None) -> str:
     return pending_path
 
 
+def verdict(report: dict | None, rc: int) -> tuple[bool, str | None]:
+    """(ok, reason) for a served request, from generate's scope report (generate.scope_report).
+
+    Fails closed. A zero exit code says the process ran, not that anything was built:
+    measured 2026-11-18, a forced season request finished "done" in nine minutes having
+    produced nothing. So the request is done only when every in-scope episode is rebuilt by
+    this request, delivered (unforced) or waiting for the merge pass -- and a forced request
+    must have rebuilt something."""
+    if rc != 0:
+        return False, f"generate failed (rc={rc})" + (f"; {_report_line(report)}" if report else "")
+    if not isinstance(report, dict):
+        return False, "generate wrote no run report, so nothing shows the request was served"
+    scope = int(report.get("scope") or 0)
+    if scope == 0:
+        return False, "no episode matched this request"
+    not_done = report.get("not_done") or {}
+    if report.get("forced") and not report.get("rebuilt"):
+        return False, f"forced run rebuilt nothing ({_report_line(report)})"
+    missing = sum(not_done.values())
+    if missing:
+        return False, f"{missing} of {scope} episodes not done ({_report_line(report)})"
+    return True, None
+
+
+def _report_line(report: dict) -> str:
+    parts = [f"{report.get(k, 0)} {k.replace('_', ' ')}" for k in ("rebuilt", "delivered", "awaiting_merge") if report.get(k)]
+    parts += [f"{n} {why}" for why, n in sorted((report.get("not_done") or {}).items(), key=lambda kv: -kv[1])]
+    return f"{report.get('scope', 0)} in scope: " + (", ".join(parts) or "nothing")
+
+
 def finish(
     path: str,
     ok: bool,
     error: str | None = None,
     now: datetime.datetime | float | None = None,
     requests_dir: str | None = None,
+    report: dict | None = None,
 ) -> str:
-    """Move a running/pending request to done/ or failed/ with finished_at and error filled."""
+    """Move a running/pending request to done/ or failed/ with finished_at and error filled,
+    and the scope report attached when there is one (the evidence behind the status)."""
     actual_path = path
     if not os.path.exists(actual_path):
         if actual_path.endswith(".json") and os.path.exists(actual_path[:-5] + ".running"):
@@ -743,6 +781,8 @@ def finish(
     data["status"] = "done" if ok else "failed"
     data["error"] = None if ok else (error or "failed")
     data["finished_at"] = dt.isoformat()
+    if report is not None:
+        data["report"] = report
 
     parent_dir = os.path.dirname(os.path.abspath(actual_path))
     target_dir = os.path.join(parent_dir, "done" if ok else "failed")
@@ -1152,6 +1192,7 @@ def main() -> None:
         print(f"SHOW={data.get('show', '')}")
         print(f"GENERATE_ONLY_RE={data.get('generate_only_re', '')}")
         print(f"REQUIRE_ENG={data.get('require_eng', '')}")
+        print(f"FORCE_REDO={'1' if data.get('force') else ''}")
 
     elif cmd == "start":
         if len(args) < 2:
@@ -1186,6 +1227,29 @@ def main() -> None:
         except Exception as e:
             print(f"error finishing request: {e}", file=sys.stderr)
             sys.exit(1)
+
+    elif cmd == "finish-report":
+        # gen_loop: decide done/failed from generate's scope report and the exit code.
+        if len(args) < 4:
+            print("Usage: review_requests.py finish-report PATH REPORT RC", file=sys.stderr)
+            sys.exit(1)
+        path, report_path = args[1], args[2]
+        try:
+            rc = int(args[3])
+        except ValueError:
+            rc = 1
+        try:
+            with open(report_path, encoding="utf-8") as f:
+                report = json.load(f)
+        except (OSError, ValueError):
+            report = None
+        ok, reason = verdict(report, rc)
+        try:
+            finish(path, ok=ok, error=reason, report=report)
+        except Exception as e:
+            print(f"error finishing request: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"request {'done' if ok else 'failed'}" + (f": {reason}" if reason else ""))
 
     elif cmd == "recover":
         target_dir = args[1] if len(args) > 1 else None

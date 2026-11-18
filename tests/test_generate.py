@@ -1915,16 +1915,18 @@ def test_delayed_audio_shifts_cards_to_the_video_timeline(monkeypatch, tmp_path,
 
     assert generate.process(str(v)) == "ok"
     conf = json.loads((tmp_path / "delayed.dubtitles.conf.json").read_text())
-    assert conf[0]["start"] == pytest.approx(1.25)
-    assert conf[0]["end"] == pytest.approx(2.08)
+    assert conf[0]["start"] == pytest.approx(1.25 - reflow.LEAD_IN)
+    assert conf[0]["end"] == pytest.approx(2.08 + reflow.LINGER)
 
     zero = tmp_path / "zero.mkv"
     zero.write_bytes(b"x" * 1000)
     assert generate.process(str(zero)) == "ok"
     zero_conf = json.loads((tmp_path / "zero.dubtitles.conf.json").read_text())
     assert zero_conf[0]["start"] == pytest.approx(0.0)
-    assert zero_conf[0]["end"] == pytest.approx(0.83)
-    assert conf[0]["start"] - zero_conf[0]["start"] == pytest.approx(1.25)
+    assert zero_conf[0]["end"] == pytest.approx(0.83 + reflow.LINGER)
+    # the delayed card can spend its full lead-in; the zero-based one cannot go before
+    # t=0, so the measured gap is the offset minus that difference in lead-in
+    assert conf[0]["start"] - zero_conf[0]["start"] == pytest.approx(1.25 - reflow.LEAD_IN)
     assert conf[0]["end"] - zero_conf[0]["end"] == pytest.approx(1.25)
 
     output = capsys.readouterr().out
@@ -1975,7 +1977,7 @@ def test_subframe_audio_start_does_not_shift_or_log(monkeypatch, tmp_path, capsy
     assert generate.process(str(v)) == "ok"
     conf = json.loads((tmp_path / "preskip.dubtitles.conf.json").read_text())
     assert conf[0]["start"] == pytest.approx(0.0)
-    assert conf[0]["end"] == pytest.approx(0.83)
+    assert conf[0]["end"] == pytest.approx(0.83 + reflow.LINGER)
     assert "audio start offset" not in capsys.readouterr().out
 
 
@@ -2270,3 +2272,214 @@ def test_a_segment_without_words_takes_its_own_confidence(monkeypatch, tmp_path)
     doc = {"segments": [{"start": 0.0, "end": 2.0, "text": " Mumbled line.", "avg_logprob": -2.5}]}
     _s, words = _map(monkeypatch, tmp_path, doc)
     assert len(words) == 1 and words[0]["prob"] == pytest.approx(math.exp(-2.5))
+
+
+def test_a_run_without_show_name_still_finds_its_glossary(tmp_path, monkeypatch):
+    """The glossary file is named after the show, so a run that lost SHOW_NAME can still
+    name the show -- transcribing with no glossary silently ships wrong names."""
+    import json
+
+    import generate
+
+    gloss = tmp_path / "Chainsaw Man (2022) [tvdbid-397934].json"
+    gloss.write_text(json.dumps({"show": "", "names": {"Denji": "Denji"}}), encoding="utf-8")
+    monkeypatch.delenv("SHOW_NAME", raising=False)
+    monkeypatch.setenv("GLOSSARY_FILE", str(gloss))
+    generate.load_glossary()
+    assert generate.INITIAL_PROMPT  # a prompt was derived, so the show was identified
+
+
+# --- long files: the endpoint has an upload cap and a request timeout -------------
+
+
+def test_plan_chunks_leaves_a_short_file_whole():
+    assert generate.plan_chunks(600.0, []) == [(0.0, 600.0)]
+
+
+def test_plan_chunks_cuts_at_targets_when_there_is_no_silence():
+    pieces = generate.plan_chunks(1500.0, [])
+    assert [round(a) for a, _b in pieces] == [0, 600, 1200]
+    assert pieces[-1][1] == 1500.0
+
+
+def test_plan_chunks_prefers_a_nearby_silence():
+    pieces = generate.plan_chunks(1500.0, [(590.0, 600.0), (1210.0, 1220.0)])
+    assert [round(a) for a, _b in pieces] == [0, 595, 1215]
+
+
+def test_plan_chunks_covers_a_three_hour_film():
+    pieces = generate.plan_chunks(3 * 3600.0, [])
+    assert pieces[0][0] == 0.0 and pieces[-1][1] == 3 * 3600.0
+    for a, b in pieces:
+        assert b - a >= generate.CHUNK_MIN
+
+
+def test_a_long_file_is_transcribed_in_pieces_with_times_offset(monkeypatch):
+    monkeypatch.setattr(generate, "_wav_duration", lambda _p: 2000.0)
+    monkeypatch.setattr(generate, "_detect_silences", lambda _p: [(590.0, 600.0), (1190.0, 1200.0), (1790.0, 1800.0)])
+    monkeypatch.setattr(generate, "endpoint_key_problem", lambda: None)
+    monkeypatch.setattr(generate, "_asr_key", lambda: "")
+    monkeypatch.setattr(generate, "_cut_chunk", lambda _w, _a, _b, _out: True)
+    seen = []
+
+    def fake(wav, _fields, _headers):
+        seen.append(wav)
+        return ([{"start": 0.0, "end": 1.0, "no_speech_prob": 0.0}],
+                [{"text": " hi", "start": 0.0, "end": 1.0, "prob": 0.9, "seg": 0}])
+
+    monkeypatch.setattr(generate, "_endpoint_request", fake)
+    segments, words = generate.endpoint_transcribe("/tmp/episode.wav")
+    assert len(seen) == 4
+    assert [round(w["start"], 1) for w in words] == [0.0, 595.0, 1195.0, 1795.0]
+    assert [w["seg"] for w in words] == [0, 1, 2, 3]
+    assert [round(s["start"], 1) for s in segments] == [0.0, 595.0, 1195.0, 1795.0]
+
+
+def test_scene_cuts_are_cached_beside_the_episode(tmp_path, monkeypatch):
+    """80 s of decoding per episode must not repeat on every text-tier run."""
+    video = tmp_path / "ep.mkv"
+    video.write_bytes(b"")
+    calls = []
+
+    class R:
+        stderr = "… pts_time:1.5 … pts_time:12.25 …"
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        return R()
+
+    monkeypatch.setattr(generate.subprocess, "run", fake_run)
+    first = generate.scene_cuts(str(video))
+    second = generate.scene_cuts(str(video))
+    assert first == [1.5, 12.25]
+    assert second == first
+    assert len(calls) == 1  # second read came from the cache
+
+
+def test_a_chunk_is_re_encoded_not_stream_copied(tmp_path, monkeypatch):
+    """`-c copy` on a 16 kHz wav exits 0 with a 138-byte header and no audio: the
+    endpoint then gets an empty chunk and the whole episode fails."""
+    seen = {}
+
+    class R:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd, **_kw):
+        seen["cmd"] = cmd
+        out = cmd[-1]
+        with open(out, "wb") as fh:
+            fh.write(b"0" * 2048)
+        return R()
+
+    monkeypatch.setattr(generate.subprocess, "run", fake_run)
+    assert generate._cut_chunk("/tmp/in.wav", 0.0, 60.0, str(tmp_path / "p.wav"))
+    assert "pcm_s16le" in seen["cmd"]
+    assert "copy" not in seen["cmd"]
+
+
+def test_a_success_clears_the_failure_markers(tmp_path, monkeypatch):
+    """A stale crash.json on an episode that delivered misleads every later triage."""
+    crash = tmp_path / "ep.dubtitles.crash.json"
+    no_speech = tmp_path / ("ep" + generate.NO_SPEECH_SUFFIX)
+    crash.write_text("{}", encoding="utf-8")
+    no_speech.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(generate, "out_for", lambda p: p)
+    generate._clear_failure_markers(str(tmp_path / "ep"))
+    assert not crash.exists()
+    assert not no_speech.exists()
+
+
+def test_force_redo_parks_the_delivered_sidecar(tmp_path, monkeypatch):
+    """A forced re-run must not leave last run's subtitle in place for the merge pass
+    to find; it parks it exactly as a version bump would."""
+    stem = tmp_path / "ep"
+    for name in ("ep.dub.en.ass", "ep.dub.en.srt", "ep.eng.dubtitles.srt", "ep.dubtitles.words.json"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    monkeypatch.setenv("SIDECAR_SUFFIX", ".dub.en")
+    generate.force_park_sidecars(str(stem))
+    assert not (tmp_path / "ep.dub.en.ass").exists()
+    assert not (tmp_path / "ep.eng.dubtitles.srt").exists()
+    assert (tmp_path / "ep.dub.en.ass.stale").exists()
+    assert (tmp_path / "ep.eng.dubtitles.srt.stale").exists()
+    # the transcript is parked too, so a forced run re-does the text tier as well
+    assert (tmp_path / "ep.dubtitles.words.json.stale").exists()
+
+
+def test_force_redo_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("FORCE_REDO", raising=False)
+    assert generate._force_redo() is False
+    monkeypatch.setenv("FORCE_REDO", "1")
+    assert generate._force_redo() is True
+    monkeypatch.setenv("FORCE_REDO", "off")
+    assert generate._force_redo() is False
+
+
+def test_force_redo_parks_the_delivery_markers_not_just_the_files(tmp_path, monkeypatch):
+    """Measured 2026-11-18: a forced season request finished "done" in nine minutes having
+    produced nothing, because the .dubtitles.done stamp still said already-muxed and the
+    stage record still said mux ok. Parking the artefacts alone is not un-delivering."""
+    stem = tmp_path / "ep"
+    for name in ("ep.dub.en.ass", "ep.dubtitles.done", "ep.dubtitles.stages.json"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("SIDECAR_SUFFIX", ".dub.en")
+    generate.force_park_sidecars(str(stem))
+    for name in ("ep.dub.en.ass", "ep.dubtitles.done", "ep.dubtitles.stages.json"):
+        assert not (tmp_path / name).exists(), f"{name} still marks the episode delivered"
+        assert (tmp_path / (name + ".stale")).exists()
+
+
+# --- a long file cut into pieces: one silent piece must not fail the episode ------------------
+#
+# Every episode over ~11.5 minutes is now sent in ~10-minute pieces. A piece the endpoint answers
+# with a valid transcription holding no speech (a long silence, an instrumental stretch) used to
+# raise "endpoint returned no segments", failing the whole episode -- three times, after which it
+# was retired as no-speech. That piece is simply empty. An error body is still a failure.
+
+
+def _chunked(monkeypatch, tmp_path, bodies):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"\0" * 4096)
+    monkeypatch.setattr(generate, "_asr_key", lambda: "")
+    monkeypatch.setattr(generate, "endpoint_key_problem", lambda: "")
+    monkeypatch.setattr(generate, "_wav_duration", lambda p: 1500.0)
+    monkeypatch.setattr(generate, "_detect_silences", lambda p: [])
+
+    def cut(src, a, b, out):
+        open(out, "wb").write(b"\0" * 2048)
+        return True
+
+    def mp3(src, out):
+        open(out, "wb").write(b"mp3")
+        return True
+
+    monkeypatch.setattr(generate, "_cut_chunk", cut)
+    monkeypatch.setattr(generate, "_mp3_for_upload", mp3)
+    it = iter(bodies)
+    monkeypatch.setattr(generate, "_post_multipart", lambda *a, **k: (200, json.dumps(next(it))))
+    return str(wav)
+
+
+def _speech(text):
+    return {"text": text, "segments": [{"start": 1.0, "end": 2.0, "avg_logprob": -0.1, "text": text,
+                                        "words": [{"word": " " + text, "start": 1.0, "end": 2.0, "probability": 0.9}]}]}
+
+
+def test_a_piece_with_no_speech_is_skipped_not_fatal(monkeypatch, tmp_path):
+    wav = _chunked(monkeypatch, tmp_path, [_speech("one"), {"text": "", "segments": []}, _speech("three")])
+    segments, words = generate.endpoint_transcribe(wav)
+    assert [w["text"].strip() for w in words] == ["one", "three"]
+    assert words[1]["start"] == pytest.approx(1201.0)  # the third piece keeps its offset
+    assert [w["seg"] for w in words] == [0, 1] and len(segments) == 2
+
+
+def test_an_error_body_in_one_piece_still_fails_the_episode(monkeypatch, tmp_path):
+    wav = _chunked(monkeypatch, tmp_path, [_speech("one"), {"error": {"message": "rate limited"}}, _speech("three")])
+    with pytest.raises(generate.EndpointAsrError):
+        generate.endpoint_transcribe(wav)
+
+
+def test_a_file_with_no_speech_in_any_piece_still_fails(monkeypatch, tmp_path):
+    wav = _chunked(monkeypatch, tmp_path, [{"text": "", "segments": []}] * 3)
+    with pytest.raises(generate.EndpointAsrError):
+        generate.endpoint_transcribe(wav)

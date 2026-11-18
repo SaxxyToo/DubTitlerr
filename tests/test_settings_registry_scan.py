@@ -30,6 +30,7 @@ CALLS = {"get", "getenv", "env_int", "env_float", "_env_num", "_fraction", "_cou
 # Names the scan sees that are not settings: shell locals, and the per-show inputs the loops set for each child.
 NON_SETTINGS = {
     "REPAIR_PROFILE": "an old runtime.env key, read once by settings_migrate.py",
+    "FORCE_REDO": "per-request signal from gen_loop.sh, never a stored setting",
     "DT_CONTAINER_BOOT_ID": "exported by container_run.sh at start, read by common.boot_id()",
     "ACQ_FLAGS": "gen_loop.sh local",
     "ANIME": "gen_loop.sh local",
@@ -41,6 +42,9 @@ NON_SETTINGS = {
     "PATTERN": "merge_pass.sh local",
     "PUSH": "sync_wiki.sh local",
     "ROOT": "merge_pass.sh local",
+    "REQUEST_SINCE": "gen_loop.sh -> generate.py plumbing: when the request being served started",
+    "RUN_REPORT": "gen_loop.sh -> generate.py plumbing: where to write the request's scope report",
+    "TMPDIR": "the standard temp-directory variable, read by gen_loop.sh",
     "ROOT_ABS": "merge_pass.sh local: the absolute library root every stage path starts from",
     "PWD": "the shell's own working directory, read once by merge_pass.sh after cd",
     "SRC": "sync_wiki.sh local",

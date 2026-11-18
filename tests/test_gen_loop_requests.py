@@ -8,6 +8,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+# generate.py now writes a scope report (RUN_REPORT) that decides whether gen_loop files the
+# request done or failed; a stub that writes none is failed closed. Prefixed to every generate
+# stub: on exit, report one episode rebuilt. A stub that exits non-zero still fails the request
+# through its exit code.
+REPORT_OK = """\
+import atexit as _ax, json as _js, os as _os
+_ax.register(lambda: _os.environ.get("RUN_REPORT") and open(_os.environ["RUN_REPORT"], "w").write(_js.dumps(
+    {"scope": 1, "forced": False, "rebuilt": 1, "delivered": 0, "awaiting_merge": 0, "not_done": {}})))
+"""
+
+
 
 def _setup_app(tmp_path):
     app = tmp_path / "app"
@@ -35,7 +46,7 @@ if os.environ.get("GENERATE_ONLY_RE"):
 else:
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """
-    (app / "generate.py").write_text(stub_generate)
+    (app / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -102,7 +113,7 @@ if os.environ.get("GENERATE_ONLY_RE"):
     sys.exit(2) # Fail the request pass
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """
-    (app / "generate.py").write_text(stub_generate)
+    (app / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -161,7 +172,7 @@ import os, pathlib
 pathlib.Path(r"{record}").write_text("ran")
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """
-    (app / "generate.py").write_text(stub_generate)
+    (app / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -232,7 +243,7 @@ def test_schedule_closed_starts_no_work(tmp_path):
 import pathlib
 pathlib.Path(r"{call_log}").write_text("called")
 """
-    (app / "generate.py").write_text(stub_generate)
+    (app / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -317,7 +328,7 @@ if os.environ.get("GENERATE_ONLY_RE"):
 else:
     pathlib.Path(r"{sweep_marker}").write_text("sweep_done")
 """
-    (app / "generate.py").write_text(stub_generate)
+    (app / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -383,7 +394,7 @@ def test_effective_env_content_and_masking(tmp_path):
     # Mutation caught: effective.env not written at sweep start or
     # secret environment variables leaked into effective.env.
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text("""\
+    (app / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -434,7 +445,7 @@ def test_recovery_of_running_file(tmp_path):
     # Mutation caught: interrupted/crashed .running file is not moved to
     # failed/ with 'interrupted by restart' on startup.
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text("""\
+    (app / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -483,7 +494,7 @@ def test_hostile_show_name_rejected_by_loop(tmp_path):
     # Mutation caught: hostile show name with newline/PATH injection
     # executes in shell or passes into gen_loop without rejection.
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text("""\
+    (app / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -560,7 +571,7 @@ sys.exit(res.returncode)
         })
     )
 
-    (app / "generate.py").write_text("""\
+    (app / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -595,12 +606,12 @@ import os, pathlib
 with open(r"{call_log}", "a") as f:
     f.write(os.environ.get("GENERATE_ONLY_RE", "sweep") + "\\n")
 """
-    (app / "generate.py").write_text(stub_generate)
+    (app / "generate.py").write_text(REPORT_OK + stub_generate)
 
     real_rr = REPO / "review_requests.py"
     (app / "review_requests.py").write_text(f"""\
 import sys, subprocess, os, pathlib
-if len(sys.argv) > 1 and sys.argv[1] == "finish":
+if len(sys.argv) > 1 and sys.argv[1] in ("finish", "finish-report"):
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
     sys.exit(1)
 res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:])
@@ -658,7 +669,7 @@ sys.exit(res.returncode)
 def test_loop_newline_injection_does_not_move_victim(tmp_path):
     # H1: A hostile request injecting a newline and PATH=victim must not move or unlink the victim.
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text("""\
+    (app / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -736,7 +747,7 @@ else:
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
     sys.exit(0)
 """
-    (app / "generate.py").write_text(stub_generate)
+    (app / "generate.py").write_text(REPORT_OK + stub_generate)
 
     order = tmp_path / "order.txt"
     order.write_text("Frieren\n")
@@ -779,7 +790,7 @@ else:
 def test_drain_requests_invokes_prune(tmp_path):
     # L3: Prune is invoked during drain_requests once per sweep
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text("""\
+    (app / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -851,7 +862,7 @@ sys.exit(res.returncode)
         })
     )
 
-    (app / "generate.py").write_text("""\
+    (app / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 if not os.environ.get("GENERATE_ONLY_RE"):
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
@@ -895,7 +906,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "start" and res.returncode == 0:
 sys.exit(res.returncode)
 """)
 
-    (app / "generate.py").write_text(f"""\
+    (app / "generate.py").write_text(REPORT_OK + f"""\
 import pathlib
 pathlib.Path(r"{gen_called}").touch()
 """)
@@ -971,7 +982,7 @@ else:
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
     sys.exit(0)
 """
-    (app / "generate.py").write_text(stub_generate)
+    (app / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -1018,3 +1029,75 @@ else:
     done_file = requests_dir / "done" / "20261012T100000Z-88888888.json"
     assert done_file.exists()
     assert json.loads(done_file.read_text())["status"] == "done"
+
+
+# --- the request is filed from generate's scope report, not its exit code -------------------
+
+
+def _request_env(tmp_path, app, rid, force=False):
+    anime = tmp_path / "anime"
+    (anime / "Frieren").mkdir(parents=True, exist_ok=True)
+    order = tmp_path / "order.txt"
+    order.write_text("Frieren\n")
+    requests_dir = tmp_path / "config" / "requests"
+    requests_dir.mkdir(parents=True, exist_ok=True)
+    body = {"id": rid, "show": "Frieren", "generate_only_re": r"Frieren.*S01E01", "status": "pending", "force": force}
+    (requests_dir / f"{rid}.json").write_text(json.dumps(body))
+    env = {k: v for k, v in os.environ.items() if k not in ("REQUIRE_ENG", "WATCH_QUEUE_WINDOW_DAYS")}
+    env.update(
+        APP_DIR=str(app),
+        ANIME_ROOT=str(anime),
+        ANIME_ORDER=str(order),
+        CONFIG_DIR=str(tmp_path / "config"),
+        REQUESTS_DIR=str(requests_dir),
+        GLOSSARY_DIR=str(tmp_path / "gloss"),
+        STOP_FLAG=str(tmp_path / "stop"),
+        RESCAN_INTERVAL="0",
+    )
+    return env, requests_dir
+
+
+def test_a_forced_request_that_rebuilt_nothing_is_filed_as_failed(tmp_path):
+    # Measured 2026-11-18: this exact request -- forced, exit code 0, nothing rebuilt -- was
+    # filed "done, error: null". The report it now writes says so, and the request fails.
+    app = _setup_app(tmp_path)
+    (app / "generate.py").write_text("""\
+import json, os, pathlib
+if os.environ.get("RUN_REPORT"):
+    pathlib.Path(os.environ["RUN_REPORT"]).write_text(json.dumps({"scope": 28, "forced": True, "rebuilt": 0,
+        "delivered": 28, "awaiting_merge": 0, "not_done": {"still delivered from an earlier run": 28}}))
+else:
+    pathlib.Path(os.environ["STOP_FLAG"]).touch()
+""")
+    env, requests_dir = _request_env(tmp_path, app, "20261018T100000Z-f0f0f0f0", force=True)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    failed = json.loads((requests_dir / "failed" / "20261018T100000Z-f0f0f0f0.json").read_text())
+    assert failed["status"] == "failed" and "rebuilt nothing" in failed["error"], failed
+    assert failed["report"]["delivered"] == 28
+    assert not (requests_dir / "done" / "20261018T100000Z-f0f0f0f0.json").exists()
+
+
+def test_every_resume_pass_of_a_request_shares_one_start_time(tmp_path):
+    app = _setup_app(tmp_path)
+    seen = tmp_path / "since.txt"
+    count = tmp_path / "count.txt"
+    show_dir = tmp_path / "anime" / "Frieren"
+    (app / "generate.py").write_text(REPORT_OK + f"""\
+import os, sys, pathlib
+if not os.environ.get("RUN_REPORT"):
+    pathlib.Path(os.environ["STOP_FLAG"]).touch()
+    sys.exit(0)
+n = int(pathlib.Path(r"{count}").read_text()) + 1 if pathlib.Path(r"{count}").exists() else 1
+pathlib.Path(r"{count}").write_text(str(n))
+with open(r"{seen}", "a") as f:
+    f.write(os.environ["REQUEST_SINCE"] + "\\n")
+(pathlib.Path(r"{show_dir}") / f"Frieren - S01E0{{n}}.eng.dubtitles.srt").touch()  # progress
+sys.exit(1 if n == 1 else 0)  # crash once, then finish
+""")
+    env, requests_dir = _request_env(tmp_path, app, "20261018T100000Z-5a5a5a5a")
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    stamps = seen.read_text().split()
+    assert len(stamps) == 2 and stamps[0] == stamps[1], stamps
+    assert (requests_dir / "done" / "20261018T100000Z-5a5a5a5a.json").exists()
