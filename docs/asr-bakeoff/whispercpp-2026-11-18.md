@@ -61,12 +61,46 @@ provably inert to firing — that is the point of the change, and it is a measur
 inference. The stricter `music_rule_would_fire` (needs nsp > 0.95 **and** lp < −2.0 in one
 segment) stays at 0 for both, because large-v3's peak is 0.9248.
 
+## Timing pass (T1.5b) — criterion 4
+
+`tools/timing_compare.py` over both configs' generated output (staged into one tree per
+config: symlinked videos plus that config's sidecars, so the tool can pair them). GPU-free.
+Four episodes analysed per config; one has no usable reference track.
+
+| Metric | turbo | large-v3 | Δ |
+|---|---|---|---|
+| `pct_cards_on_cue` | 91.79% | **91.57%** | −0.22 pp |
+| `kept_in_gap` | 124 | 128 | +4 |
+| `in_gap_speech` | 103 | 98 | −5 |
+| `in_gap_silent` | 21 | 30 | +9 |
+| `false_in_gap_rate` | 6.82% | **6.45%** | −0.37 pp |
+
+**Criterion 4 passes on the half that can be measured**: on-cue fraction is 0.22 pp lower,
+well inside the 2 pp tolerance, and `false_in_gap_rate` — the share of kept cards landing in a
+subtitle gap with no speech in it, i.e. hallucinated into silence — is slightly *better* on
+large-v3.
+
+**Two caveats, both about the criterion rather than the result:**
+
+1. **The criterion's second half cannot be evaluated.** It asks for "median absolute onset
+   error ≤ +50 ms", and `timing_compare` does not produce that metric — it fits a RANSAC
+   offset+drift and reports the on-cue classification, with no median onset-error field in its
+   report. Either the criterion should drop that clause or the tool should grow the field; it
+   has been left unevaluated rather than guessed at.
+2. **The default VAD backend is unusable here.** With the shipped default (`webrtcvad`) every
+   in-gap card errors (`in_gap_vad_error: 124`) and `false_in_gap_rate` is `null`, because
+   `webrtcvad` never installs — no wheel for this venv, and its best-effort install in the
+   image fails too. The numbers above use `--vad ffmpeg-silencedetect`, which works. Worth
+   noting for anyone reading a `timing_compare` report that shows `null`: that is what it means.
+
 ## Verdict against the spec's acceptance criteria
 
 | # | Criterion | Result |
 |---|---|---|
 | 1 | WER ≤ current + 0.5 pp | **PASS** — better on 3/4, mean −2.42 pp, worst +0.12 pp |
 | 2 | Historical context | WER 10–30%, in the range the wiki's CT2 table reports (18–21%) |
+| 4 | Timing: on-cue ≥ −2 pp | **PASS** — 91.57% vs 91.79%, −0.22 pp; `false_in_gap_rate` also slightly better (6.45% vs 6.82%). The criterion's second clause (median onset error) is not produced by the tool and is left unevaluated |
+| 3 | Pipeline QC | **Mixed** — see the pipeline section; layout counters improve, one hallucination signal rises |
 | 5 | Confidence calibration | **Reported, not gated** — nsp is on a different scale by design (that is the finding); evaluated on word `probability` |
 | 6 | Hallucination gate | **FLAGGED** — blocklist hits 15 (large-v3) vs 9 (turbo), i.e. 0.84% vs 0.48% of segments. Not "comparable"; unexplained |
 | 8 | Wall time | **1.46×** — inside the 1.5× flag threshold, barely |
