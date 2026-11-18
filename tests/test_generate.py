@@ -2483,3 +2483,62 @@ def test_a_file_with_no_speech_in_any_piece_still_fails(monkeypatch, tmp_path):
     wav = _chunked(monkeypatch, tmp_path, [{"text": "", "segments": []}] * 3)
     with pytest.raises(generate.EndpointAsrError):
         generate.endpoint_transcribe(wav)
+
+
+# --- the endpoint call survives a transient 429 / 5xx / dropped connection --------------------
+
+
+def _flaky(monkeypatch, tmp_path, failures):
+    import urllib.error
+
+    wav = _stub_endpoint(monkeypatch, tmp_path, "{}")
+    calls, waits = [], []
+    good = json.dumps({"text": "hi", "segments": [{"start": 0, "end": 1, "text": " hi"}]})
+
+    def post(*a, **k):
+        calls.append(1)
+        if len(calls) <= len(failures):
+            f = failures[len(calls) - 1]
+            if isinstance(f, int):
+                raise urllib.error.HTTPError("http://x", f, "err", {"Retry-After": "1"} if f == 429 else {}, None)
+            raise f
+        return 200, good
+
+    monkeypatch.setattr(generate, "_post_multipart", post)
+    monkeypatch.setattr(generate, "_retry_sleep", lambda s: waits.append(s))
+    return wav, calls, waits
+
+
+def test_a_transient_endpoint_error_is_retried(monkeypatch, tmp_path):
+    import urllib.error
+
+    wav, calls, waits = _flaky(monkeypatch, tmp_path, [503, urllib.error.URLError("connection reset")])
+    _segments, words = generate.endpoint_transcribe(wav)
+    assert [w["text"].strip() for w in words] == ["hi"] and len(calls) == 3
+    assert waits == [2.0, 4.0]
+
+
+def test_retry_after_is_honoured(monkeypatch, tmp_path):
+    wav, calls, waits = _flaky(monkeypatch, tmp_path, [429])
+    generate.endpoint_transcribe(wav)
+    assert waits == [1.0]
+
+
+def test_a_client_error_is_not_retried(monkeypatch, tmp_path):
+    import urllib.error
+
+    wav, calls, _waits = _flaky(monkeypatch, tmp_path, [401])
+    with pytest.raises(urllib.error.HTTPError):
+        generate.endpoint_transcribe(wav)
+    assert len(calls) == 1
+
+
+def test_retries_run_out_and_the_original_error_stands(monkeypatch, tmp_path):
+    # Still an HTTPError, not an EndpointAsrError: an outage must not count toward retiring an
+    # episode as no-speech (three EndpointAsrErrors do).
+    import urllib.error
+
+    wav, calls, _waits = _flaky(monkeypatch, tmp_path, [502, 502, 502, 502])
+    with pytest.raises(urllib.error.HTTPError):
+        generate.endpoint_transcribe(wav)
+    assert len(calls) == 1 + generate.ENDPOINT_RETRIES

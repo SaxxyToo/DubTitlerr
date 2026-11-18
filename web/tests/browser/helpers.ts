@@ -13,8 +13,13 @@ export async function reset(request: APIRequestContext) {
 
 /** Fill the sign-in form that is already on screen and submit it. */
 export async function signIn(page: Page, username = USERNAME, password = PASSWORD) {
-  await page.getByLabel('Username').fill(username);
-  await page.getByLabel('Password').fill(password);
+  // exact: a bare 'Password' also matches 'New password', 'Current password' and the rest on the
+  // Settings page, so a sign-in that ran before that page was gone failed as a strict-mode violation
+  // (CI, 2026-11-18: resolved to 6 elements). An exact label matches nothing there, so fill() waits
+  // for the sign-in form itself. signOut() cannot wait for it instead: an edited page intercepts
+  // the sign-out with the Unsaved changes dialog, and a spec tests exactly that.
+  await page.getByLabel('Username', { exact: true }).fill(username);
+  await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
 }
 
