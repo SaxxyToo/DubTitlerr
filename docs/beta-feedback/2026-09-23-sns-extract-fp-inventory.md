@@ -65,7 +65,21 @@ else (kept events: Berserk 58 → 55, JUJUTSU KAISEN 623 → 616, 25 other shows
   it alters what the repair stage anchors on. Left for a separate decision.
 - A signs track that names itself is not held to the stricter rule. No measured track
   showed dialogue there.
-- False negatives in named signs tracks. The same measurement found 57 real sign and song
-  events dropped from three of them (Chainsaw Man 35 opening-translation lines on style
-  `OP`; Steins;Gate 13 on `op trans` and 5 phone-screen signs; Devilman Crybaby 4 typeset
-  name cards). Separate fix.
+
+## Follow-up: false negatives in named signs tracks
+
+The same measurement found 57 live events dropped from three of the 19 tracks that name
+themselves as the signs track, all of them real sign or song content:
+
+| show | dropped | what |
+| :--- | ------: | :--- |
+| Chainsaw Man | 35 | opening translation on style `OP` (fade frames and glow layers carrying only `\alpha` / `\blur`) |
+| Steins;Gate | 18 | 13 opening-translation lines on `op trans`, 5 phone-screen signs on `CellphoneL` |
+| Devilman Crybaby | 4 | typeset name cards on `Crybaby - TS` |
+
+Rule adopted: a track that names itself as the signs track is kept whole, apart from
+comments, empty events and player-warning styles. The per-event classifier is for picking
+signs out of a dialogue track; a curated signs track has no dialogue to pick around.
+
+Old versus new on the 27 episodes: exactly these 57 events added, none removed, 24 shows
+identical.

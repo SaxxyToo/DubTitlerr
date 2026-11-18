@@ -1542,9 +1542,47 @@ def test_build_on_a_mixed_track_does_not_ship_top_aligned_fansub_dialogue(tmp_pa
     assert (signs, texts) == (1, ["a sign"])
 
 
-def test_build_on_a_dedicated_signs_track_is_unchanged(tmp_path, monkeypatch):
+def test_build_on_a_named_signs_track_keeps_every_event(tmp_path, monkeypatch):
+    # Was "is_unchanged" (2 of 3 kept) until the named-track rule below: the release put all
+    # three in its signs track, so all three are signs.
     signs, texts = _mixed_build(tmp_path, monkeypatch, dedicated=True)
-    assert signs == 2 and sorted(texts) == ["Top fansub dialogue.", "a sign"]
+    assert signs == 3 and sorted(texts) == ["Plain fansub dialogue.", "Top fansub dialogue.", "a sign"]
+
+
+# --- a track that names itself as the signs track is kept whole ---------------------------
+#
+# Measured 2026-11-16 on the first episode of 27 shows, 19 of which have a title-identified
+# signs/songs track. The per-event classifier dropped 57 live events from three of them, and
+# every one was a real sign or song line that the dub does not cover:
+#   Chainsaw Man      35  opening translation on style "OP", untagged or only \alpha/\blur
+#   Steins;Gate       13  opening translation on "op trans"; 5 phone-screen signs on "CellphoneL"
+#   Devilman Crybaby   4  typeset name cards on "Crybaby - TS"
+# The classifier exists to pick signs OUT of a dialogue track. A track the release itself
+# curated as signs/songs has no dialogue to pick around, so nothing is guessed there.
+
+
+@pytest.mark.parametrize(
+    "style,text",
+    [
+        ("OP", r"{\alpha&HDE&\blur0.6}An empty laundromat signals my lucky day"),  # Chainsaw Man S01E01
+        ("op trans", "Even the number of several billion heartbeats"),  # Steins;Gate S01E01
+        ("CellphoneL", r"{\blur3}Mayuri \NRe: Upa..."),  # Steins;Gate S01E01
+        ("Crybaby - TS", "KODA MOYURU TEAMMATE MURDERED"),  # Devilman Crybaby S01E01
+        ("Default", "an untagged line on the style a group reused for signs"),
+    ],
+)
+def test_named_signs_track_keeps_events_the_classifier_would_drop(style, text):
+    e = ev(text=text, style=style)
+    assert not dsm.keep_event(e), "precondition: the per-event classifier drops this"
+    assert dsm.keep_event(e, named_signs_track=True)
+
+
+def test_named_signs_track_still_drops_comments_empties_and_player_warnings():
+    assert not dsm.keep_event(pysubs2.SSAEvent(text="template line", style="OP", type="Comment"), named_signs_track=True)
+    assert not dsm.keep_event(ev(text=r"{\i1}{\i0}", style="OP"), named_signs_track=True)
+    assert not dsm.keep_event(ev(text="Your player does not support ASS.", style="Warning"), named_signs_track=True)
+
+
 # --- 2.2 an episode with no kept signs must stay an .srt, not become an .ass --------------
 #
 # A track that LOADS but keeps nothing is the ordinary no-signs episode: a mixed JA+EN

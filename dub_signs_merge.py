@@ -263,7 +263,7 @@ STRONG_DROP_STYLE = re.compile(r"warning", re.I)
 WEAK_DROP_STYLE = re.compile(r"main|dialog|default|flashback|thought|secondary|monolog|narrat|italics|^alt", re.I)
 
 
-def keep_event(ev, mixed_track=False):
+def keep_event(ev, mixed_track=False, named_signs_track=False):
     """True if this is a sign / song-romaji / caption / credit (not dialogue, and not the
     fansub English song translation — that's replaced by the transcribed Dubtitles).
 
@@ -286,6 +286,13 @@ def keep_event(ev, mixed_track=False):
     style = ev.style or ""
     if STRONG_DROP_STYLE.search(style):
         return False
+    if named_signs_track:
+        # The release curated this track as its signs and songs, so there is no dialogue to
+        # pick around and nothing below is worth guessing. Measured on 19 such tracks: the
+        # guesses dropped 57 live events from three of them and every one was a real sign
+        # or song line (Chainsaw Man's opening translation on a style named just "OP",
+        # Steins;Gate's phone-screen signs, Devilman Crybaby's typeset name cards).
+        return True
     if SONG_FAMILY_STYLE.search(style):  # Opening-/ED<N>- sibling, any language -> keep
         return True
     t = ev.text
@@ -506,7 +513,8 @@ def build(video, dub_srt, out_ass):
     failed_streams = 0
     # Decided once per episode, not per track: when no track names itself as the signs track,
     # every track read here is a dialogue track carrying signs (see keep_event).
-    mixed_track = not signs_track_dedicated(video, SUB_LANGS)
+    named_signs_track = signs_track_dedicated(video, SUB_LANGS)
+    mixed_track = not named_signs_track
     for idx in signs_sub_streams(video, SUB_LANGS):
         with tempfile.TemporaryDirectory() as td:
             ex = os.path.join(td, "s.ass")
@@ -524,7 +532,7 @@ def build(video, dub_srt, out_ass):
         seen_intra = set()
         kept_events = []
         for ev in src_events:
-            if not keep_event(ev, mixed_track):
+            if not keep_event(ev, mixed_track, named_signs_track):
                 continue
             key = (int(ev.start), int(ev.end), ev.style, ev.layer, ev.text)
             if key in seen_intra:
