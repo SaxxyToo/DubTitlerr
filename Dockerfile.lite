@@ -1,24 +1,47 @@
-# Lite image: the fork's pipeline scripts only, ASR via an OpenAI-compatible
+# Lite image: the pipeline scripts only, ASR via an OpenAI-compatible
 # /audio/transcriptions endpoint (OpenRouter, llama-swap whisper, Nous gateway...).
 #
-# No torch, no ctranslate2, no baked Whisper model -- ~300 MB instead of ~13 GB.
+# No torch, no ctranslate2, no baked Whisper model -- under 1 GB instead of ~13 GB.
 # Requires ASR_BACKEND=endpoint plus ASR_URL / ASR_MODEL / ASR_KEY_ENV at runtime.
 #
 #   docker build -f Dockerfile.lite -t dubtitlerr:lite .
+#
+# Everything else matches Dockerfile.builder: the runtime packages, the review UI and the
+# health check. tests/test_dockerfile_copy.py compares the two files, so a runtime dependency
+# added to one and not the other fails the suite.
+#
+# The ENTRYPOINT is the supervisor and ignores arguments; for a one-off command use
+#   docker run --rm --entrypoint sh dubtitlerr:lite -c '...'
+
+FROM node:24-alpine AS review-ui
+WORKDIR /ui
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run check && npm run build
+
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     APP_DIR=/app
 
+# wamerican: the common-word guard (glossary.py, punctuation.py) reads /usr/share/dict.
+# tzdata: MERGE_WINDOW and the schedule window read local time.
+# hadolint ignore=DL3008,DL3013
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg mkvtoolnix ca-certificates \
+ && apt-get install -y --no-install-recommends ffmpeg mkvtoolnix ca-certificates wamerican tzdata \
  && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir pysubs2
+# jellyfish: glossary.py's phonetic name tier switches itself off when the import fails.
+RUN pip install --no-cache-dir pysubs2 jellyfish
+
+EXPOSE 8842
+HEALTHCHECK --interval=5m --timeout=10s --start-period=10m --retries=3 CMD python3 -c "import os,urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('REVIEW_PORT', '8842'), timeout=5).status==200 else 1)"
 
 WORKDIR /app
 COPY . /app/
+COPY --from=review-ui /ui/dist/ /app/web/dist/
 RUN chmod +x /app/*.sh 2>/dev/null || true
 
-ENTRYPOINT ["/app/container_run.sh"]
+ENTRYPOINT ["sh", "/app/container_run.sh"]

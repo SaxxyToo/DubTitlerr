@@ -206,3 +206,62 @@ def test_every_module_reachable_from_an_entrypoint_is_copied_into_the_image():
                 missing.setdefault(name, []).append(module)
             queue.append(name)
     assert not missing, f"not COPY'd into the image but reachable from an entrypoint: {missing}"
+
+
+# --- the lite image carries what the pipeline needs at runtime -------------------------------
+#
+# Dockerfile.lite was built from python:3.11-slim by listing what seemed needed; it shipped without
+# mkvtoolnix (found on the first real merge pass: "FATAL: mkvmerge not found") and still lacks
+# what Dockerfile.builder installs for accuracy: jellyfish (glossary.py's phonetic name tier
+# switches itself off when the import fails), wamerican (the common-word guard falls back to a
+# small bundled list), tzdata (MERGE_WINDOW and the schedule read local time), the review UI and
+# the health check. Each was invisible until real work ran. These compare the two Dockerfiles, so a
+# runtime dependency added to one and not the other fails here instead.
+
+# Installed by Dockerfile.builder, deliberately absent from the lite image.
+LITE_EXEMPT_APT = {"python3-pip", "git"}  # the slim base ships pip; nothing at runtime runs git
+LITE_EXEMPT_PIP = {"webrtcvad"}  # tools/ analytics only, never imported by the pipeline
+
+
+def _dockerfile(name):
+    with open(os.path.join(ROOT, name)) as f:
+        return f.read().replace("\\\n", " ")
+
+
+def _apt_packages(body):
+    out = set()
+    for m in re.finditer(r"apt-get install\s+(.*?)(?:&&|$)", body, re.M):
+        out.update(t for t in m.group(1).split() if not t.startswith("-"))
+    return out
+
+
+def _pip_packages(body):
+    out = set()
+    for m in re.finditer(r"pip install\s+(.*?)(?:&&|\|\||\)|$)", body, re.M):
+        out.update(t for t in m.group(1).split() if not t.startswith("-"))
+    return out
+
+
+def test_the_lite_image_installs_every_runtime_package_the_full_image_does():
+    full, lite = _dockerfile("Dockerfile.builder"), _dockerfile("Dockerfile.lite")
+    missing_apt = _apt_packages(full) - _apt_packages(lite) - LITE_EXEMPT_APT
+    missing_pip = _pip_packages(full) - _pip_packages(lite) - LITE_EXEMPT_PIP
+    assert not missing_apt and not missing_pip, f"lite image lacks apt {sorted(missing_apt)} pip {sorted(missing_pip)}"
+
+
+def _healthcheck(body):
+    m = re.search(r"^HEALTHCHECK .*$", body, re.M)
+    return m.group(0) if m else None
+
+
+def test_the_lite_image_has_the_same_health_check_and_review_ui():
+    full, lite = _dockerfile("Dockerfile.builder"), _dockerfile("Dockerfile.lite")
+    assert _healthcheck(lite), "Dockerfile.lite has no HEALTHCHECK: a node reports healthy the moment it starts"
+    assert _healthcheck(lite) == _healthcheck(full), "the two images check health differently"
+    assert "/app/web/dist" in lite, "Dockerfile.lite does not ship the built review UI"
+
+
+def test_the_lite_image_ships_the_data_files():
+    # .dockerignore once excluded data/ for the lite image, which broke the full image's COPY.
+    ignored = open(os.path.join(ROOT, ".dockerignore")).read().split()
+    assert "data/" not in ignored and "data" not in ignored
