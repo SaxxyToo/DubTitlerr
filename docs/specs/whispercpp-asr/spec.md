@@ -122,6 +122,36 @@ gated in this project (see Out of scope).
   no Vulkan backend.** It cannot serve the Intel iGPU hosts.
 - `--flash-attn` defaults **true** in the llama-swap build.
 
+## Live finding: `no_speech_prob` is present but degenerate on the endpoint
+
+Measured 2026-11-18 against the live `whisper-large-v3-turbo-subs` entry (a 30 s dub clip,
+JUJUTSU KAISEN S01E13):
+
+| Field | whisper.cpp (live) | faster-whisper (production) |
+|---|---|---|
+| `no_speech_prob` | `2.2e-10`, `0.0`, `4.6e-12` — present, but ~10 orders of magnitude below anything usable | typically `0.0`–`0.9` |
+| `avg_logprob` | `-0.041` | the repair threshold is `-0.8` |
+
+Two consequences, both live **today** on omarchy (which already runs endpoint mode):
+
+1. The low-confidence gate at `generate.py:934` is
+   `avg_logprob < -0.8 or no_speech_prob > 0.6`. With `no_speech_prob ~1e-10`, **that half can
+   essentially never fire on endpoint runs** — only the logprob half is doing any work.
+2. In the judge, `NSP_ALIVE_FLOOR` is `1e-6`; every one of these segments counts as *dead*.
+   So `nsp_alive_frac`, `nsp_over_0_5`, `maybe_silence_would_fire` and `music_rule_would_fire`
+   are all inert for an endpoint entrant. (The floor exists precisely because turbo is known to
+   collapse nsp — whisper.cpp's turbo collapses it further than CT2's.)
+
+**This revises acceptance criterion 5.** Comparing `no_speech_prob` distributions between the
+two families will show "not close" — but that is a *scale/regime* difference, not evidence that
+whisper.cpp is worse, and it must be reported as such rather than read as a gate failure. The
+handoff anticipated exactly this risk ("confidence values come out on a different scale… stop and
+escalate rather than retune"). Criterion 5 is therefore evaluated on **word `probability`
+distributions** (both families produce those) with `no_speech_prob` reported for context only.
+
+Whether to adapt the production gate to a second confidence regime is an admission-policy
+decision for the maintainer — **not** something this project should do unilaterally.
+
 ## Config gaps (existing endpoint vs production faster-whisper)
 
 | Parameter | Production faster-whisper (`generate.py:1587`) | Live llama-swap entry | Action |
