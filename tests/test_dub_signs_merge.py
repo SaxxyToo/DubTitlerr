@@ -1564,8 +1564,6 @@ def test_build_on_a_named_signs_track_keeps_every_event(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "style,text",
     [
-        ("OP", r"{\alpha&HDE&\blur0.6}An empty laundromat signals my lucky day"),  # Chainsaw Man S01E01
-        ("op trans", "Even the number of several billion heartbeats"),  # Steins;Gate S01E01
         ("CellphoneL", r"{\blur3}Mayuri \NRe: Upa..."),  # Steins;Gate S01E01
         ("Crybaby - TS", "KODA MOYURU TEAMMATE MURDERED"),  # Devilman Crybaby S01E01
         ("Default", "an untagged line on the style a group reused for signs"),
@@ -1636,3 +1634,143 @@ def test_process_one_keeps_the_srt_when_the_track_had_no_kept_signs(tmp_path, mo
     assert not os.path.exists(stem + ".eng.dubtitles.ass.part")
     rec = common.read_stages(stem)["signs"]
     assert (rec["outcome"], rec["detail"]) == ("ok", "no-signs"), rec
+
+
+# --- song detection: OP/ED by token, and dialogue over a song survives ------------------------
+#
+# Measured 2026-11-18 on the first episode of 27 shows: the old pattern (an "Opening-"/"ED<N>-"
+# prefix) recognised song styles in ONE release, Parasyte. "OP", "ED", "OP-E", "ED_ENG",
+# "OP - English", "op trans", "EDTL", "Death Note OP" ... got no song span, so whisper's sung
+# hallucinations shipped over the fansub's lyrics. With OP/ED matched as a token, 137 more dub
+# cards fall inside a song -- and some are real dialogue: Angel Beats! and Frieren S01E28 both
+# play the ending over closing lines. On 30 regenerated episodes, 493 cards fell inside a song;
+# the release's own fansub had dialogue under 5 of them (four real farewell lines over Frieren's
+# ending), lyrics only under the other 488. That is the gate.
+
+
+@pytest.mark.parametrize(
+    "style",
+    ["OP", "ED", "op", "OP1", "OP-E", "OP-R-S", "ED-R", "ED1-Rom", "OP_ENG1", "OP_ROM3", "ED_ENG", "EDTL", "Op TL",
+     "op trans", "OP - English", "ED - Romaji", "ED Kanji", "OP Karaoke Fuu v2", "Death Note OP", "Opening-Romaji-L1",
+     "ED1-Japanese", "ED Title Cards"],
+)
+def test_song_family_styles_seen_in_the_library_are_recognised(style):
+    assert dsm.SONG_FAMILY_STYLE.search(style), style
+
+
+@pytest.mark.parametrize(
+    "style",
+    ["Default", "Default - Overlap", "Editor", "Edo", "Pop", "Open", "OPEN", "Episode Title", "Signs", "Insert English",
+     "English Lyrics", "Crybaby Songs", "Ending Card"],
+)
+def test_words_that_merely_contain_op_or_ed_are_not_songs(style):
+    # Insert songs are kept as signs (KEEP_STYLE) but deliberately do not open a song span: they
+    # play inside scenes, under dialogue. An "Ending Card" is the end-card illustration, which a
+    # next-episode preview is often spoken over.
+    assert not dsm.SONG_FAMILY_STYLE.search(style), style
+
+
+def test_op_and_ed_are_told_apart_for_dedup():
+    assert dsm._song_family("OP_ENG1") == "op" and dsm._song_family("Death Note OP") == "op"
+    assert dsm._song_family("EDTL") == "ed" and dsm._song_family("ED - Romaji") == "ed"
+    assert dsm._song_family("Opening-Kanji-L1") == "op" and dsm._song_family("Signs") is None
+
+
+def test_a_lyric_line_is_not_reference_dialogue():
+    # is_dialogue_event picks repair references and the gate below; an OP/ED lyric is neither.
+    assert not common.is_dialogue_event(ev(text="Light it up, baby.", style="OP - English"))
+    assert not common.is_dialogue_event(ev(text="Your dreams are where your heart is", style="ED_Eng"))
+    assert common.is_dialogue_event(ev(text="A tearful goodbye wouldn't suit us.", style="Default"))
+
+
+def _plain_song_track():
+    t = pysubs2.SSAFile()
+    t.styles["OP"] = pysubs2.SSAStyle()
+    t.events = [pysubs2.SSAEvent(start=0, end=10000, style="OP", text="the translated lyric")]
+    return t
+
+
+def _two_cards_inside_the_song(tmp_path):
+    p = tmp_path / "dub.srt"
+    p.write_text("1\n00:00:01,000 --> 00:00:03,000\nmisheard lyric\n\n"
+                 "2\n00:00:06,000 --> 00:00:08,000\nA line spoken over the song.\n\n", encoding="utf-8")
+    return str(p)
+
+
+def _song_build(tmp_path, monkeypatch, reference):
+    monkeypatch.setattr(dsm, "signs_sub_streams", lambda video, langs: [0])
+    monkeypatch.setattr(dsm, "extract", lambda video, idx, out: _plain_song_track().save(out) or True)
+    monkeypatch.setattr(dsm, "dialogue_intervals", lambda video: reference)
+    out = str(tmp_path / "out.ass")
+    status, _signs, _dub = dsm.build("fake.mkv", _two_cards_inside_the_song(tmp_path), out)
+    assert status == "ok"
+    return {e.plaintext.strip() for e in pysubs2.load(out).events if e.style == "Dubtitles"}
+
+
+def test_a_plain_op_style_now_opens_a_song_span(tmp_path, monkeypatch):
+    assert _song_build(tmp_path, monkeypatch, reference=[(30.0, 31.0, "dialogue elsewhere")]) == set()
+
+
+def test_dialogue_the_reference_shows_over_a_song_is_kept(tmp_path, monkeypatch):
+    texts = _song_build(tmp_path, monkeypatch, reference=[(5.9, 8.2, "Someone is talking here.")])
+    assert texts == {"A line spoken over the song."}
+
+
+def test_a_brush_with_reference_dialogue_does_not_rescue_a_lyric(tmp_path, monkeypatch):
+    # 0.2 s of overlap at the card's edge is timing slop, not someone talking under it
+    texts = _song_build(tmp_path, monkeypatch, reference=[(2.8, 4.0, "a line that starts as the card ends")])
+    assert "misheard lyric" not in texts
+
+
+def test_without_any_reference_dialogue_the_song_span_drops_everything(tmp_path, monkeypatch):
+    # A release with no English dialogue track cannot tell a lyric from a line: today's behaviour.
+    assert _song_build(tmp_path, monkeypatch, reference=[]) == set()
+
+
+@pytest.mark.parametrize(
+    "style,text",
+    [
+        ("OP", r"{\alpha&HDE&\blur0.6}An empty laundromat signals my lucky day"),  # Chainsaw Man S01E01
+        ("op trans", "Even the number of several billion heartbeats"),  # Steins;Gate S01E01
+    ],
+)
+def test_opening_lyrics_on_plain_op_styles_are_kept_by_the_classifier_itself(style, text):
+    # Dropped by the per-event classifier until OP/ED became a token match; only the
+    # named-signs-track rule rescued them. A mixed track now keeps them too.
+    assert dsm.keep_event(ev(text=text, style=style), mixed_track=True)
+
+
+def test_the_start_of_a_sentence_stretched_into_the_song_stays_with_it(tmp_path, monkeypatch):
+    # Frieren S01E28: "Denken, the Imperial Mage, I know all about you." is spoken just after the
+    # opening, but whisper stretched "Denken," and "the Imperial" back into it. Only "Mage," overlaps
+    # the reference line; dropping the two cards before it left "Mage, I know all about you."
+    p = tmp_path / "dub.srt"
+    p.write_text("1\n00:00:01,000 --> 00:00:02,000\nmisheard lyric.\n\n"
+                 "2\n00:00:03,000 --> 00:00:05,000\nDenken,\n\n"
+                 "3\n00:00:05,050 --> 00:00:07,000\nthe Imperial\n\n"
+                 "4\n00:00:07,050 --> 00:00:09,500\nMage, I know all about you.\n\n", encoding="utf-8")
+    monkeypatch.setattr(dsm, "signs_sub_streams", lambda video, langs: [0])
+    monkeypatch.setattr(dsm, "extract", lambda video, idx, out: _plain_song_track().save(out) or True)
+    monkeypatch.setattr(dsm, "dialogue_intervals", lambda video: [(8.0, 11.0, "I know you well, Imperial Mage Denken.")])
+    out = str(tmp_path / "out.ass")
+    dsm.build("fake.mkv", str(p), out)
+    texts = [e.plaintext.strip() for e in pysubs2.load(out).events if e.style == "Dubtitles"]
+    assert texts == ["Denken,", "the Imperial", "Mage, I know all about you."]
+
+
+def test_unpunctuated_lyric_lines_are_not_pulled_back_in_by_a_kept_card(tmp_path, monkeypatch):
+    # Angel Beats! S01E01's legacy subtitle has no punctuation and back-to-back lyric lines; the card
+    # that ends the opening ("I glad they gone Where am I") overlaps the first real line, and an
+    # unbounded chain pulled eight full lyric lines back in. Only a short stretched start (<= 3
+    # words, <= 2 cards) belongs to the kept sentence.
+    p = tmp_path / "dub.srt"
+    p.write_text("1\n00:00:01,000 --> 00:00:03,000\nthe wind that blows through such a daily life\n\n"
+                 "2\n00:00:03,050 --> 00:00:05,000\nthe millions of stars are fading away\n\n"
+                 "3\n00:00:05,050 --> 00:00:09,500\nI glad they gone Where am I\n\n", encoding="utf-8")
+    monkeypatch.setattr(dsm, "signs_sub_streams", lambda video, langs: [0])
+    monkeypatch.setattr(dsm, "extract", lambda video, idx, out: _plain_song_track().save(out) or True)
+    monkeypatch.setattr(dsm, "dialogue_intervals", lambda video: [(8.0, 11.0, "Where am I?")])
+    out = str(tmp_path / "out.ass")
+    dsm.build("fake.mkv", str(p), out)
+    texts = [e.plaintext.strip() for e in pysubs2.load(out).events if e.style == "Dubtitles"]
+    assert texts == ["I glad they gone Where am I"]
