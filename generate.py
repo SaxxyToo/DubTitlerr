@@ -178,8 +178,10 @@ def decoder_identity() -> dict:
             "url": ASR_URL,
             "initial_prompt": INITIAL_PROMPT,
         }
+    # Deliberately unchanged from before the endpoint backend existed: this dict is the
+    # words.json identity, so adding a key here invalidates every existing transcript and
+    # forces a full re-transcription of the library.
     return {
-        "backend": "local",
         "model": MODEL,
         "initial_prompt": INITIAL_PROMPT,
         "compute_type": COMPUTE,
@@ -1006,18 +1008,19 @@ def _post_multipart(url, fields, filename, payload, content_type, headers, timeo
     chunks = []
     for name, value in fields:
         chunks.append(
-            ('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n'
-             % (boundary, name, value)).encode()
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
         )
     chunks.append(
-        ('--%s\r\nContent-Disposition: form-data; name="file"; filename="%s"\r\n'
-         'Content-Type: %s\r\n\r\n' % (boundary, filename, content_type)).encode()
+        (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f'Content-Type: {content_type}\r\n\r\n'
+        ).encode()
     )
     chunks.append(payload)
-    chunks.append(("\r\n--%s--\r\n" % boundary).encode())
+    chunks.append(f"\r\n--{boundary}--\r\n".encode())
     body = b"".join(chunks)
     req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Content-Type", "multipart/form-data; boundary=%s" % boundary)
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
     req.add_header("Content-Length", str(len(body)))
     for k, v in headers.items():
         req.add_header(k, v)
@@ -1034,7 +1037,7 @@ def endpoint_transcribe(wav):
     if not key:
         # Keyless endpoints exist (a llama-swap whisper on the LAN). Don't refuse here:
         # an endpoint that wants a key answers 401 and the error carries that.
-        log("warning: ASR_BACKEND=endpoint with no key in $%s — sending none" % ASR_KEY_ENV)
+        log(f"warning: ASR_BACKEND=endpoint with no key in ${ASR_KEY_ENV} — sending none")
     mp3 = wav + ".mp3"
     if not _mp3_for_upload(wav, mp3):
         raise RuntimeError("could not build the upload mp3 from the extracted wav")
@@ -1065,7 +1068,7 @@ def endpoint_transcribe(wav):
     if not segs and doc.get("text"):
         segs = [{"start": 0.0, "end": float(doc.get("duration") or 0.0), "text": doc["text"]}]
     if not segs:
-        raise RuntimeError("endpoint returned no segments: %s" % raw[:300])
+        raise RuntimeError(f"endpoint returned no segments: {raw[:300]}")
     segments, words = [], []
     for si, s in enumerate(segs):
         start, end = float(s.get("start") or 0.0), float(s.get("end") or 0.0)
@@ -1180,9 +1183,13 @@ def process(video):
                 sw = s.words or []
                 if sw:
                     for w in sw:
-                        words.append(
-                            {"text": w.word, "start": w.start, "end": w.end, "prob": getattr(w, "probability", 1.0) or 1.0, "seg": si}
-                        )
+                        words.append({
+                            "text": w.word,
+                            "start": w.start,
+                            "end": w.end,
+                            "prob": getattr(w, "probability", 1.0) or 1.0,
+                            "seg": si,
+                        })
                 else:  # no word timestamps -> whole segment as one "word"
                     words.append(
                         {"text": s.text, "start": s.start, "end": s.end, "prob": min(1.0, math.exp(s.avg_logprob)), "seg": si}

@@ -10,7 +10,18 @@ import settings_registry as reg
 FIRST_WAVE = {
     "general": ["REVIEW_PORT", "REVIEW_BIND"],
     "library": ["REQUIRE_ENG", "SKIP_IF_SRT", "KEEP_LANGS", "SUB_LANGS", "MIN_FREE_GB", "REMOTE_PATH_MAPPINGS"],
-    "transcription": ["WHISPER_MODEL", "COMPUTE_TYPE", "WHISPER_BEAM_SIZE", "ASR_DEVICE"],
+    "transcription": [
+        "WHISPER_MODEL",
+        "COMPUTE_TYPE",
+        "WHISPER_BEAM_SIZE",
+        "ASR_DEVICE",
+        "ASR_BACKEND",
+        "ASR_URL",
+        "ASR_MODEL",
+        "ASR_KEY_ENV",
+        "ASR_TIMEOUT",
+        "ASR_REFERER",
+    ],
     "glossary": [
         "ACQUIRE",
         "ACQUIRE_APPLY",
