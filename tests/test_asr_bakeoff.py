@@ -485,3 +485,49 @@ def test_endpoint_shape_clamps_a_zero_probability_before_the_log():
     words = [{"text": " a", "start": 0.0, "end": 1.0, "prob": 0.0, "seg": 0}]
     segs, _ws = ab.endpoint_run_shape(segments, words)
     assert segs[0]["avg_logprob"] == pytest.approx(math.log(reflow.PROB_FLOOR))
+
+
+def test_strip_transcripts_removes_every_carrier_of_dub_text():
+    """The report keeps transcripts on purpose (the verdict tells you to hand-read the
+    noisiest episode), and that is exactly why a repo-committed report must not: the text
+    is a commercial dub's script. All three carriers have to go -- the top-level texts,
+    the word list, and each episode's own text."""
+    entry = {
+        "model": "x",
+        "episodes": [
+            {"episode": "e1.mkv", "wall_s": 4.0, "segments": 3, "text": "the whole script"},
+            {"episode": "e2.mkv", "wall_s": 1.0, "error": "no-eng-dub-or-extract-failed"},
+        ],
+        "texts": ["the whole script"],
+        "words": [{"text": " the", "start": 0.0, "end": 0.5, "prob": 0.9}],
+    }
+    out = ab.strip_transcripts([entry])
+    stripped = out[0]
+    assert "texts" not in stripped and "words" not in stripped
+    assert all("text" not in ep for ep in stripped["episodes"])
+    # the metrics must survive -- this strips text, not the measurement
+    assert stripped["episodes"][0]["wall_s"] == 4.0
+    assert stripped["episodes"][0]["segments"] == 3
+    assert stripped["episodes"][1]["error"] == "no-eng-dub-or-extract-failed"
+
+
+def test_strip_transcripts_leaves_the_metrics_untouched():
+    """The blocklist counts and confidence stats are built from text but are themselves
+    numbers; stripping must not silently drop them or the report stops being evidence."""
+    entry = {
+        "model": "x",
+        "episodes": [{"episode": "e.mkv", "text": "secret"}],
+        "texts": ["secret"],
+        "words": [],
+        "blocklist_hits": 2,
+        "nsp_median": 0.1,
+        "logprob_p05": -1.5,
+        "music_rule_would_fire": 3,
+        "word_count": 10,
+    }
+    stripped = ab.strip_transcripts([entry])[0]
+    assert stripped["blocklist_hits"] == 2
+    assert stripped["nsp_median"] == 0.1
+    assert stripped["logprob_p05"] == -1.5
+    assert stripped["music_rule_would_fire"] == 3
+    assert stripped["word_count"] == 10

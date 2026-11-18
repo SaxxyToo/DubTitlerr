@@ -966,6 +966,24 @@ def score_against_references(entries: list[dict], refs: dict[str, str]) -> None:
                 ep["wer_vs_ref"] = wer(ref, ep["text"])
 
 
+def strip_transcripts(entries: list[dict]) -> list[dict]:
+    """Remove every carrier of transcribed dialogue from report entries.
+
+    A report committed to the repo must not hold a commercial dub's script. The report
+    keeps transcripts ON PURPOSE when you are reading it locally (the verdict line tells
+    you to hand-read the noisiest episode, which is exactly where blocklist and agreement
+    metrics cannot see wrong-but-plausible words) -- so this is opt-in via --metrics-only,
+    and it removes text ONLY. Every number derived from that text stays: blocklist_hits,
+    the nsp/logprob stats and word_count are the evidence, and dropping them would leave
+    a report that no longer supports the verdict it is attached to."""
+    out: list[dict] = []
+    for e in entries:
+        stripped = {k: v for k, v in e.items() if k not in ("texts", "words")}
+        stripped["episodes"] = [{k: v for k, v in ep.items() if k != "text"} for ep in e.get("episodes", [])]
+        out.append(stripped)
+    return out
+
+
 def shape_report(entries: list[dict], agreement: dict) -> dict:
     """Assemble the JSON report dict the CLI writes (also the unit-test target)."""
     return {"entrants": entries, "agreement_wer": agreement}
@@ -1031,6 +1049,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default="", help="write the JSON report here")
     ap.add_argument("--report-only", action="store_true", help="re-print a saved --out report, no GPU")
     ap.add_argument(
+        "--metrics-only",
+        action="store_true",
+        help="drop transcripts (texts, words, per-episode text) from the report -- use for any report that leaves this machine",
+    )
+    ap.add_argument(
         "--ref",
         action="append",
         default=[],
@@ -1070,6 +1093,9 @@ def main(argv: list[str] | None = None) -> int:
     # Agreement WER for every pair of entrants that completed the same episode set -- a
     # one-sided or error-punctuated join would score a mismatch the models never both saw.
     report = shape_report(entries, pairwise_agreement(entries))
+    if args.metrics_only:
+        report["entrants"] = strip_transcripts(report["entrants"])
+        print("metrics-only: transcripts stripped from the report")
     if args.out:
         with open(args.out, "w") as f:
             json.dump(report, f, indent=2)
