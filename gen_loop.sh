@@ -192,13 +192,14 @@ drain_requests() {
 
 		req_out=$(python3 "$APP_DIR"/review_requests.py unpack "$req_json" 2>/dev/null) || break
 
-		req_path="" req_show="" req_gen_re="" req_req_eng=""
+		req_path="" req_show="" req_gen_re="" req_req_eng="" req_force=""
 		while IFS='=' read -r k v; do
 			case "$k" in
 				PATH) [ -z "$req_path" ] && req_path="$v" ;;
 				SHOW) [ -z "$req_show" ] && req_show="$v" ;;
 				GENERATE_ONLY_RE) [ -z "$req_gen_re" ] && req_gen_re="$v" ;;
 				REQUIRE_ENG) [ -z "$req_req_eng" ] && req_req_eng="$v" ;;
+				FORCE_REDO) [ -z "$req_force" ] && req_force="$v" ;;
 			esac
 		done <<EOF
 $req_out
@@ -244,7 +245,7 @@ EOF
 			attempt=$((attempt + 1))
 			before=$(find "$ANIME/$req_show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
 			SHOW_NAME="$req_show" GLOSSARY_FILE="$GLOSS" REQUIRE_ENG="$req_eng" COMPUTE_TYPE="${COMPUTE_TYPE:-int8}" \
-				GENERATE_ONLY_RE="$req_gen_re" \
+				GENERATE_ONLY_RE="$req_gen_re" FORCE_REDO="$req_force" \
 				python3 "$APP_DIR"/generate.py --root "$ANIME/$req_show" </dev/null && rc=0 || rc=$?
 			after=$(find "$ANIME/$req_show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
 			[ "$rc" = "0" ] && break

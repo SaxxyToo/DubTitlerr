@@ -16,7 +16,7 @@ from typing import Any
 REQUESTS_DIR = os.environ.get("REQUESTS_DIR", "/config/requests")
 ANIME_ROOT = os.environ.get("ANIME_ROOT", "/media/Anime Library")
 
-ALLOWED_BODY_KEYS = frozenset(("show", "season", "episode_re", "require_eng", "webhook"))
+ALLOWED_BODY_KEYS = frozenset(("show", "season", "episode_re", "require_eng", "webhook", "force"))
 
 
 class Refused(Exception):
@@ -328,12 +328,17 @@ def validate(body: dict, anime_root: str | None = None) -> dict:
     if webhook is not None and not isinstance(webhook, dict):
         raise Refused(400, "webhook must be an object or null")
 
+    force = body.get("force", False)
+    if not isinstance(force, bool):
+        raise Refused(400, "force must be a boolean")
+
     return {
         "show": show,
         "season": season,
         "episode_re": episode_re,
         "require_eng": require_eng,
         "webhook": webhook,
+        "force": force,
     }
 
 
@@ -459,6 +464,7 @@ def create(
             "episode_re": clean["episode_re"],
             "generate_only_re": gen_re,
             "require_eng": clean["require_eng"],
+            "force": clean["force"],
             "status": "pending",
             "error": None,
             "finished_at": None,
@@ -1152,6 +1158,7 @@ def main() -> None:
         print(f"SHOW={data.get('show', '')}")
         print(f"GENERATE_ONLY_RE={data.get('generate_only_re', '')}")
         print(f"REQUIRE_ENG={data.get('require_eng', '')}")
+        print(f"FORCE_REDO={'1' if data.get('force') else ''}")
 
     elif cmd == "start":
         if len(args) < 2:

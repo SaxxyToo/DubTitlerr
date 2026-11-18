@@ -1077,6 +1077,32 @@ SCENE_THRESHOLD = 0.30
 CUTS_VERSION = 1
 
 
+def _force_redo():
+    return os.environ.get("FORCE_REDO", "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def force_park_sidecars(stem):
+    """FORCE_REDO: park an episode's delivered and intermediate sidecars so this run
+    rebuilds them.
+
+    The same ``.stale`` rename park_stale_sidecars uses, for the same reason: a failed
+    rebuild is one rename away from being undone, and drop_parked_sidecars() clears the
+    parked copy once the replacement is written. This is the scoped alternative to
+    bumping TEXT_VERSION -- regenerate one show from a request instead of re-running the
+    library, and without an operator moving files aside by hand.
+    """
+    prefix = os.environ.get("SIDECAR_SUFFIX", ".dub.en")
+    paths = [stem + s for s in SIDECAR_SUFFIXES]
+    paths += [stem + prefix + ext for ext in (".ass", ".srt")]
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        try:
+            os.replace(path, path + STALE_SUFFIX)
+        except OSError:
+            pass
+
+
 def _clear_failure_markers(stem):
     """A successful episode supersedes its failure markers.
 
@@ -1654,6 +1680,8 @@ def main():
             log("stop requested: not starting", os.path.basename(v))
             break
         log("→", os.path.basename(v))
+        if _force_redo():
+            force_park_sidecars(os.path.splitext(v)[0])
         try:
             status = process(v)  # one bad episode must not abort the show
             log("  ", status)

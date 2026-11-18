@@ -2388,3 +2388,28 @@ def test_a_success_clears_the_failure_markers(tmp_path, monkeypatch):
     generate._clear_failure_markers(str(tmp_path / "ep"))
     assert not crash.exists()
     assert not no_speech.exists()
+
+
+def test_force_redo_parks_the_delivered_sidecar(tmp_path, monkeypatch):
+    """A forced re-run must not leave last run's subtitle in place for the merge pass
+    to find; it parks it exactly as a version bump would."""
+    stem = tmp_path / "ep"
+    for name in ("ep.dub.en.ass", "ep.dub.en.srt", "ep.eng.dubtitles.srt", "ep.dubtitles.words.json"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    monkeypatch.setenv("SIDECAR_SUFFIX", ".dub.en")
+    generate.force_park_sidecars(str(stem))
+    assert not (tmp_path / "ep.dub.en.ass").exists()
+    assert not (tmp_path / "ep.eng.dubtitles.srt").exists()
+    assert (tmp_path / "ep.dub.en.ass.stale").exists()
+    assert (tmp_path / "ep.eng.dubtitles.srt.stale").exists()
+    # the transcript is parked too, so a forced run re-does the text tier as well
+    assert (tmp_path / "ep.dubtitles.words.json.stale").exists()
+
+
+def test_force_redo_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("FORCE_REDO", raising=False)
+    assert generate._force_redo() is False
+    monkeypatch.setenv("FORCE_REDO", "1")
+    assert generate._force_redo() is True
+    monkeypatch.setenv("FORCE_REDO", "off")
+    assert generate._force_redo() is False
