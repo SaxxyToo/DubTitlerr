@@ -1,8 +1,9 @@
 # DubTitlerr
 
-[![Release](https://img.shields.io/github/v/release/XenaRathon/DubTitlerr?sort=semver)](https://github.com/XenaRathon/DubTitlerr/releases/latest)
-[![Image](https://img.shields.io/badge/image-ghcr.io%2Fxenarathon%2Fdubtitlerr-blue?logo=docker&logoColor=white)](https://github.com/XenaRathon/DubTitlerr/pkgs/container/dubtitlerr)
-[![License: GPL-3.0](https://img.shields.io/github/license/XenaRathon/DubTitlerr)](LICENSE)
+[![Fork of XenaRathon/DubTitlerr](https://img.shields.io/badge/fork%20of-XenaRathon%2FDubTitlerr-informational)](https://github.com/XenaRathon/DubTitlerr)
+[![Upstream release](https://img.shields.io/github/v/release/XenaRathon/DubTitlerr?sort=semver&label=upstream%20release)](https://github.com/XenaRathon/DubTitlerr/releases/latest)
+[![Lite image](https://img.shields.io/badge/lite%20image-936%20MB-2496ED?logo=docker&logoColor=white)](#images)
+[![License: GPL-3.0](https://img.shields.io/github/license/SaxxyToo/DubTitlerr)](LICENSE)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
 
 DubTitlerr transcribes English dub audio into subtitles and merges on-screen signs and songs into the same track.
@@ -123,24 +124,24 @@ The two images install the same runtime packages, serve the same review UI and s
 ## Quickstart
 
 ```sh
-curl -LO https://raw.githubusercontent.com/XenaRathon/DubTitlerr/main/compose.yaml
-curl -L -o .env https://raw.githubusercontent.com/XenaRathon/DubTitlerr/main/.env.example
+curl -LO https://raw.githubusercontent.com/SaxxyToo/DubTitlerr/main/compose.yaml
+curl -L -o .env https://raw.githubusercontent.com/SaxxyToo/DubTitlerr/main/.env.example
 # edit .env: MEDIA_ROOT, ANIME_ROOT, and pin DUBTITLERR_TAG=v0.3.0
 docker compose up -d
 ```
 
-Then open `http://<host>:8842/review/setup` to create the admin account. The full setup, from model server to your first muxed show, is in [Your first show](https://github.com/XenaRathon/DubTitlerr/wiki/Your-First-Show).
+Then open `http://<host>:8842/review/setup` to create the admin account. The full setup, from model server to your first muxed show, is in [Your first show](docs/wiki/Your-First-Show.md).
 
 ## Documentation
 
 | Page | What is there |
 | --- | --- |
-| [Home](https://github.com/XenaRathon/DubTitlerr/wiki/Home) | Start here: install path, per-episode pipeline, requirements. |
-| [Your first show](https://github.com/XenaRathon/DubTitlerr/wiki/Your-First-Show) | Full walkthrough: one season from model server to muxed track. |
-| [How-to guides](https://github.com/XenaRathon/DubTitlerr/wiki/How-To-Guides) | Recipes for one problem each (queue, repair backend, accounts, webhooks). |
-| [Reference](https://github.com/XenaRathon/DubTitlerr/wiki/Reference) | Every variable, glossary field, sidecar, stage outcome, and route. |
-| [Why it works this way](https://github.com/XenaRathon/DubTitlerr/wiki/Why-It-Works-This-Way) | The reasoning behind the guards, queues, and defaults. |
-| [Choosing an ASR model](https://github.com/XenaRathon/DubTitlerr/wiki/Choosing-an-ASR-Model) | Measured evidence behind the transcription defaults. |
+| [Home](docs/wiki/Home.md) | Start here: install path, per-episode pipeline, requirements. |
+| [Your first show](docs/wiki/Your-First-Show.md) | Full walkthrough: one season from model server to muxed track. |
+| [How-to guides](docs/wiki/How-To-Guides.md) | Recipes for one problem each (queue, repair backend, accounts, webhooks). |
+| [Reference](docs/wiki/Reference.md) | Every variable, glossary field, sidecar, stage outcome, and route. |
+| [Why it works this way](docs/wiki/Why-It-Works-This-Way.md) | The reasoning behind the guards, queues, and defaults. |
+| [Choosing an ASR model](docs/wiki/Choosing-an-ASR-Model.md) | Measured evidence behind the transcription defaults. |
 | [Agent guide](docs/AGENT-GUIDE.md) | Setup, troubleshooting, and contributing in agent-actionable form. |
 
 
@@ -150,7 +151,7 @@ Beta upstream; the endpoint backend and lite image are newer than the rest and h
 
 ## Roadmap
 
-Planned work lives with the wiki: see the [roadmap](https://github.com/XenaRathon/DubTitlerr/wiki/Home#roadmap).
+Planned work lives with the wiki: see the [roadmap](docs/wiki/Home.md#roadmap).
 
 ## License
 

@@ -2,12 +2,12 @@
 
 DubTitlerr transcribes English-dub anime audio into subtitles, repairs them with an LLM, merges the signs/songs track, and muxes the result into a live media library. Treat it as production media infrastructure: a bad run burns hours of GPU time or leaves an episode's subtitle track worse than before.
 
-**Start with the [agent guide](https://github.com/XenaRathon/DubTitlerr/blob/main/docs/AGENT-GUIDE.md)** (`docs/AGENT-GUIDE.md` in the repo): setup, the file map, the checks CI runs, contribution conventions, the PR checklist, and the changes that need the maintainer's sign-off first. It is the single source for those. This file holds only the working rules the guide doesn't cover.
+**Start with the [agent guide](https://github.com/SaxxyToo/DubTitlerr/blob/main/docs/AGENT-GUIDE.md)** (`docs/AGENT-GUIDE.md` in the repo): setup, the file map, the checks CI runs, contribution conventions, the PR checklist, and the changes that need the maintainer's sign-off first. It is the single source for those. This file holds only the working rules the guide doesn't cover.
 
 ## Working rules
 
 - **Commits** follow Conventional Commits with a scope where one fits: `fix:`, `feat:`, `docs:`, `test(web):`, `chore:`.
-- **Issues and specs** live in GitHub issues on `XenaRathon/DubTitlerr`. Command shapes: [issue tracker](https://github.com/XenaRathon/DubTitlerr/blob/main/docs/agents/issue-tracker.md). Domain docs: [domain](https://github.com/XenaRathon/DubTitlerr/blob/main/docs/agents/domain.md).
+- **Issues and specs** live in GitHub issues on `XenaRathon/DubTitlerr`. Command shapes: [issue tracker](https://github.com/SaxxyToo/DubTitlerr/blob/main/docs/agents/issue-tracker.md). Domain docs: [domain](https://github.com/SaxxyToo/DubTitlerr/blob/main/docs/agents/domain.md).
 - **Validate on a spread of shows**, never one: one with a fansub track and one without, one whose glossary came from acquisition and one that was only mined. One Pace is the least representative title, because it holds nearly all the curated `hard_fixes` and its seasons differ in whether a fansub track exists.
 - **One worker per library.** Nothing in the code locks across workers. Two workers on one library race on `<stem>.muxtmp.mkv` and re-transcribe each other's episodes. Building a real claim/lock is open work; a change that assumes a lock exists is a bug.
 - **Persist incrementally** in any expensive stage: write per item or per batch (append-only JSONL is the house idiom; see `unresolved.py`), so a killed run keeps the work it finished. A longer timeout can unblock a run, but the fix is incremental writes.
