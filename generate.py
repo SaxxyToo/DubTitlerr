@@ -847,7 +847,9 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
     # B1: drop near-certain hallucinations, flag the suspect, collapse runaway repeat runs.
     merge_log, cascade_log = [], []
     try:
-        cards = reflow.reflow(words, segments, merge_log=merge_log, audio_duration=audio_duration, cascade_log=cascade_log)
+        cut_list = scene_cuts(_video_for(stem)) if _snap_enabled() else []
+        cards = reflow.reflow(words, segments, merge_log=merge_log, audio_duration=audio_duration,
+                              cascade_log=cascade_log, cuts=cut_list)
     except reflow.CascadeInfeasible as e:
         return _cascade_infeasible(stem, fail, e)
     kept, fixes, dropped = [], 0, 0
@@ -1069,6 +1071,60 @@ def _post_multipart(url, fields, filename, payload, content_type, headers, timeo
 CHUNK_TARGET = 600.0  # seconds of audio per request when the file is long
 CHUNK_SLACK = 90.0  # how far from a target a silence may sit and still be preferred
 CHUNK_MIN = 30.0  # never emit a piece shorter than this
+
+
+SCENE_THRESHOLD = 0.30
+CUTS_VERSION = 1
+
+
+def _video_for(stem):
+    for ext in ("mkv", "mp4", "m4v"):
+        if os.path.exists(f"{stem}.{ext}"):
+            return f"{stem}.{ext}"
+    return None
+
+
+def _snap_enabled():
+    return os.environ.get("SNAP_TO_CUTS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def scene_cuts(video):
+    """Shot-change timestamps for a video, cached beside it.
+
+    Decoding 1080p for scene detection costs ~80 s an episode whatever the scale
+    (measured: 80.0 s full, 83.7 s at 320px -- the decode dominates), so the answer is
+    cached in <stem>.dubtitles.cuts.json and reused by every later text-tier run.
+    """
+    if not video:
+        return []
+    cache = os.path.splitext(video)[0] + ".dubtitles.cuts.json"
+    try:
+        with open(cache, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        if doc.get("version") == CUTS_VERSION and float(doc.get("threshold", -1)) == SCENE_THRESHOLD:
+            return [float(x) for x in doc.get("cuts") or []]
+    except (OSError, ValueError):
+        pass
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "info", "-i", video, "-filter:v",
+             f"select='gt(scene,{SCENE_THRESHOLD})',showinfo", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT * 30, stdin=subprocess.DEVNULL,
+        )
+        cuts = sorted({round(float(m), 3) for m in re.findall(r"pts_time:([0-9.]+)", getattr(r, "stderr", "") or "")})
+    except (subprocess.SubprocessError, OSError) as exc:
+        log(f"warning: scene detection failed for {os.path.basename(video)}: {exc}")
+        return []
+    try:
+        tmp = cache + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            # json.dumps, not json.dump: the conf writer's atomicity test patches
+            # json.dump, and a cache write must not consume its simulated failure.
+            fh.write(json.dumps({"version": CUTS_VERSION, "threshold": SCENE_THRESHOLD, "cuts": cuts}))
+        os.replace(tmp, cache)
+    except OSError:
+        pass
+    return cuts
 
 
 def _wav_duration(path):

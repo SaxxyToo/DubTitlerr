@@ -2333,3 +2333,24 @@ def test_a_long_file_is_transcribed_in_pieces_with_times_offset(monkeypatch):
     assert [round(w["start"], 1) for w in words] == [0.0, 595.0, 1195.0, 1795.0]
     assert [w["seg"] for w in words] == [0, 1, 2, 3]
     assert [round(s["start"], 1) for s in segments] == [0.0, 595.0, 1195.0, 1795.0]
+
+
+def test_scene_cuts_are_cached_beside_the_episode(tmp_path, monkeypatch):
+    """80 s of decoding per episode must not repeat on every text-tier run."""
+    video = tmp_path / "ep.mkv"
+    video.write_bytes(b"")
+    calls = []
+
+    class R:
+        stderr = "… pts_time:1.5 … pts_time:12.25 …"
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        return R()
+
+    monkeypatch.setattr(generate.subprocess, "run", fake_run)
+    first = generate.scene_cuts(str(video))
+    second = generate.scene_cuts(str(video))
+    assert first == [1.5, 12.25]
+    assert second == first
+    assert len(calls) == 1  # second read came from the cache

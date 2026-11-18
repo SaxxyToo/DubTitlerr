@@ -190,6 +190,7 @@ DUR_TOL^output^float^2^merge^next_merge_pass^-^Duration tolerance (s)^Largest le
 DUB_SUFFIX^output^string^".eng.dubtitles.srt"^merge^next_merge_pass^-^Sidecar suffix^File suffix of the dubtitle sidecar.
 MINE_EXTRACT_TIMEOUT^glossary^float^600^gen^next_show^-^Mining extract timeout (s)^Limit for extracting one embedded track.
 MINE_EPISODE_TIMEOUT^glossary^float^180^gen^next_show^-^Mining episode timeout (s)^Abort one episode's mining after this long so a stuck file cannot wedge the sweep.
+SNAP_TO_CUTS^output^bool^true^gen^next_show^-^Snap to shot changes^Move a card boundary onto a scene cut when one is within a quarter second.
 MINE_MAX_LOWER_SHARE^glossary^float^0.6^gen^next_show^-^Mining lowercase share^Names mostly written in lowercase are dropped above this share.
 MINE_MIN_LOWER_EVIDENCE^glossary^int^3^gen^next_show^-^Mining lowercase evidence^Occurrences needed before the lowercase share applies.
 ACQUIRE_CONTEXT_LINES^glossary^int^4^gen^next_show^-^Acquire context lines^Transcript lines quoted per name.

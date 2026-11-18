@@ -996,3 +996,31 @@ def test_an_ordinary_laugh_is_left_alone():
     for text in ("Hahahahaha", "Nooooo!", "Hey!"):
         words = [{"text": text, "start": 0.0, "end": 1.0}]
         assert reflow._collapse_repeats(words)[0]["text"] == text
+
+
+# --- shot changes: do not let text hang over a new shot -----------------------
+
+
+def test_an_end_snaps_onto_a_nearby_cut():
+    st, en, cuts = [1.0], [3.0], [3.2]
+    reflow._snap_to_cuts(st, en, cuts)
+    assert en[0] == 3.2
+
+
+def test_a_start_snaps_onto_a_nearby_cut():
+    st, en, cuts = [5.0], [7.0], [5.2]
+    reflow._snap_to_cuts(st, en, cuts)
+    assert st[0] == 5.2
+
+
+def test_a_cut_too_close_to_the_start_is_left_alone():
+    """Snapping here would take the card under MIN_DUR."""
+    st, en, cuts = [5.0], [5.5], [5.2]
+    reflow._snap_to_cuts(st, en, cuts)
+    assert (st[0], en[0]) == (5.0, 5.5)
+
+
+def test_no_cuts_leaves_timing_untouched():
+    st, en = [1.0, 4.0], [3.0, 6.0]
+    reflow._snap_to_cuts(st, en, [])
+    assert (st, en) == ([1.0, 4.0], [3.0, 6.0])
