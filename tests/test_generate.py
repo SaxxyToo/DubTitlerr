@@ -2354,3 +2354,25 @@ def test_scene_cuts_are_cached_beside_the_episode(tmp_path, monkeypatch):
     assert first == [1.5, 12.25]
     assert second == first
     assert len(calls) == 1  # second read came from the cache
+
+
+def test_a_chunk_is_re_encoded_not_stream_copied(tmp_path, monkeypatch):
+    """`-c copy` on a 16 kHz wav exits 0 with a 138-byte header and no audio: the
+    endpoint then gets an empty chunk and the whole episode fails."""
+    seen = {}
+
+    class R:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd, **_kw):
+        seen["cmd"] = cmd
+        out = cmd[-1]
+        with open(out, "wb") as fh:
+            fh.write(b"0" * 2048)
+        return R()
+
+    monkeypatch.setattr(generate.subprocess, "run", fake_run)
+    assert generate._cut_chunk("/tmp/in.wav", 0.0, 60.0, str(tmp_path / "p.wav"))
+    assert "pcm_s16le" in seen["cmd"]
+    assert "copy" not in seen["cmd"]

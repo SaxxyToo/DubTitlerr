@@ -1187,12 +1187,19 @@ def plan_chunks(duration, silences, target=CHUNK_TARGET, slack=CHUNK_SLACK, mini
 
 def _cut_chunk(wav, start, end, out_path):
     """Write [start, end) of ``wav`` to ``out_path`` without re-encoding."""
+    # Re-encode to PCM rather than stream-copy. Measured on a real episode: `-c copy`
+    # on a 16 kHz wav exits 0 and writes a 138-byte header with no audio at all, so the
+    # chunk is silently empty and the endpoint gets nothing to transcribe.
     r = subprocess.run(
         ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.3f}",
-         "-t", f"{end - start:.3f}", "-i", wav, "-c", "copy", out_path],
-        capture_output=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
+         "-t", f"{end - start:.3f}", "-i", wav, "-ac", "1", "-ar", "16000",
+         "-c:a", "pcm_s16le", out_path],
+        capture_output=True, text=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
     )
-    return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 1024
+    if r.returncode != 0:
+        log(f"warning: cutting {start:.0f}-{end:.0f}s failed: {(r.stderr or '').strip()[:200]}")
+        return False
+    return os.path.exists(out_path) and os.path.getsize(out_path) > 1024
 
 
 def _endpoint_request(wav, fields, headers):
