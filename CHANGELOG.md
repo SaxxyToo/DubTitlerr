@@ -9,6 +9,7 @@ that shipped since.
 ## [Unreleased]
 
 ### Fixed
+- The lite image installs what the full image does at runtime (`jellyfish`, `wamerican`, `tzdata`), serves the review UI and has the same health check. Without them the phonetic name tier and the full common-word guard were silently off on endpoint nodes. A test now fails when the two Dockerfiles drift.
 - Endpoint transcription of a long file: a piece the endpoint answers with a valid but empty transcription (a long silence, an instrumental stretch) is skipped instead of failing the whole episode, which three failures used to retire as no-speech. An error body, or a file with no speech in any piece, still fails.
 - Glossary mining reads only what a run is about. A delivered episode counted as new (delivery removes the `.eng.dubtitles.*` transcript the check looked for), so every delivered episode was re-read on every run; a delivery stamp now counts as mined. A run request's episode filter now reaches MINE too: a one-season Frieren request had mined 38 episodes to serve 28.
 - Run requests are filed `done` or `failed` from a scope report of what exists on disk, attached to the request, instead of from `generate.py`'s exit code. A forced request on a delivered show used to finish `done` having rebuilt nothing: `needs_work()` dropped every delivered episode before `force_park_sidecars()` could un-deliver it. Force now reaches delivered episodes, once per request across resume passes, and a request fails with the counts when no episode matched, a forced run rebuilt nothing, or any episode was not done.
