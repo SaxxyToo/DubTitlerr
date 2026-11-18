@@ -1334,6 +1334,46 @@ def _cut_chunk(wav, start, end, out_path):
     return os.path.exists(out_path) and os.path.getsize(out_path) > 1024
 
 
+ENDPOINT_RETRIES = 2  # extra tries after a 429, a 5xx or a dropped connection (the glossary stages' policy)
+_retry_sleep = time.sleep  # the retry loop's own wait, so a test can observe it alone
+
+
+def _retry_wait(retry_after, attempt):
+    """Seconds before retry ``attempt`` (0-based): a finite Retry-After of 0 or more, capped at
+    30 s; anything else backs off 2 s then 4 s. The same rule as repair._retry_wait."""
+    try:
+        wait = float(retry_after)
+        if math.isfinite(wait) and wait >= 0:
+            return min(wait, 30.0)
+    except (TypeError, ValueError):
+        pass
+    return 2.0 * 2**attempt
+
+
+def _post_with_retries(fields, filename, payload, headers):
+    """POST one piece of audio, retrying what is transient: HTTP 429, any 5xx, and a connection
+    that dropped or timed out. A 4xx other than 429 is the request's own fault and is raised at
+    once. When the retries run out the ORIGINAL error is raised -- not EndpointAsrError, so a
+    backend outage never counts toward retiring an episode as no-speech."""
+    import urllib.error
+
+    for attempt in range(ENDPOINT_RETRIES + 1):
+        try:
+            return _post_multipart(ASR_URL, fields, filename, payload, "audio/mpeg", headers, ASR_TIMEOUT)
+        except urllib.error.HTTPError as e:
+            if not (e.code == 429 or e.code >= 500) or attempt == ENDPOINT_RETRIES or common.stop_requested():
+                raise
+            wait = _retry_wait((e.headers or {}).get("Retry-After"), attempt)
+            log(f"  asr retry {attempt + 1}/{ENDPOINT_RETRIES} after HTTP {e.code} (waiting {wait:.0f}s)")
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            if attempt == ENDPOINT_RETRIES or common.stop_requested():
+                raise
+            wait = _retry_wait(None, attempt)
+            log(f"  asr retry {attempt + 1}/{ENDPOINT_RETRIES} after {type(e).__name__} (waiting {wait:.0f}s)")
+        _retry_sleep(wait)
+    raise AssertionError("unreachable")  # the loop returns or raises
+
+
 def _endpoint_request(wav, fields, headers):
     """One POST: the mapped (segments, words) for a single piece of audio."""
     mp3 = wav + ".mp3"
@@ -1342,8 +1382,7 @@ def _endpoint_request(wav, fields, headers):
     try:
         with open(mp3, "rb") as fh:
             payload = fh.read()
-        _status, raw = _post_multipart(ASR_URL, fields, os.path.basename(mp3), payload,
-                                       "audio/mpeg", headers, ASR_TIMEOUT)
+        _status, raw = _post_with_retries(fields, os.path.basename(mp3), payload, headers)
         doc = json.loads(raw)
     finally:
         try:
