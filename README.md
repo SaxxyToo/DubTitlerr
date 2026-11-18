@@ -20,7 +20,7 @@ Upstream DubTitlerr bakes a Whisper model into a ~13 GB image, needs an NVIDIA G
 | Addition | Why | Where |
 | --- | --- | --- |
 | **Endpoint ASR backend** (`ASR_BACKEND=endpoint`) | Transcribe through any OpenAI-compatible `/audio/transcriptions` — OpenRouter, a llama-swap whisper, a Nous gateway — so a node needs no model, no torch, no GPU and no CUDA | `generate.py` |
-| **Lite image** (`Dockerfile.lite`) | 933 MB instead of 13.1 GB. Python-slim + ffmpeg + mkvtoolnix + pysubs2, no model baked in | `Dockerfile.lite` |
+| **Lite image** (`Dockerfile.lite`) | 936 MB instead of 13.1 GB. The full image's runtime packages and review UI, no model baked in | `Dockerfile.lite` |
 | **Sidecar delivery and adoption** (`OUTPUT_MODE=sidecar`, `ADOPT_DUB_EN=1`) | Publish `<episode>.dub.en.ass` beside the video instead of rewriting it, and run an existing sidecar from another pipeline through repair + signs merge | `merge_pass.sh`, `mux.py`, `publish_gate.py` |
 
 Everything downstream of transcription — reflow, glossary correction, LLM repair, hallucination gate, signs/songs merge, QC — is unchanged and runs identically on both backends.
@@ -93,7 +93,7 @@ Measured on an 892-episode library: local CPU int8 at beam 7 runs 3.2× realtime
 | Image | Size | Contains | Use |
 | --- | --- | --- | --- |
 | `ghcr.io/xenarathon/dubtitlerr:v0.3.0` | ~13.1 GB | Full upstream release: Whisper model, torch, ctranslate2 | `ASR_BACKEND=local`, GPU or CPU |
-| `dubtitlerr:lite` | 933 MB | `python:3.11-slim` + ffmpeg + mkvtoolnix + pysubs2 + this fork's scripts | `ASR_BACKEND=endpoint` |
+| `dubtitlerr:lite` | 936 MB | `python:3.11-slim` + ffmpeg, mkvtoolnix, wamerican, tzdata, pysubs2, jellyfish + the review UI + this fork's scripts | `ASR_BACKEND=endpoint` |
 
 ```sh
 # full image (upstream), local ASR
@@ -111,6 +111,8 @@ docker run -d --name dubtitlerr --network host \
 ```
 
 Both images need `mkvtoolnix` — the merge stage shells out to `mkvmerge` to read the video's subtitle streams and attachments. A lite build without it fails at the first merge pass with `FATAL: mkvmerge not found — image is misbuilt`.
+
+The two images install the same runtime packages, serve the same review UI and share one health check; `tests/test_dockerfile_copy.py` fails when they drift. Both entrypoints are the supervisor and ignore arguments, so run a one-off command with `docker run --rm --entrypoint sh dubtitlerr:lite -c '...'`.
 
 ## Requirements
 
