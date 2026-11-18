@@ -270,17 +270,6 @@ def _split_unwrappable_one(group: list[dict], log: list[dict]) -> list[list[dict
     return _split_unwrappable_one(group[:i], log) + _split_unwrappable_one(group[i:], log)
 
 
-def _split_unwrappable(groups: list[list[dict]]) -> tuple[list[list[dict]], list[dict]]:
-    """Split any group that cannot be wrapped legally. merge_runts() joins short
-    neighbours, and two runts that each wrapped fine can join into text whose only
-    split is over MAX_LINE -- that join is what this undoes."""
-    out: list[list[dict]] = []
-    log: list[dict] = []
-    for g in groups:
-        out.extend(_split_unwrappable_one(g, log))
-    return out, log
-
-
 def wrap_balance(text: str) -> str:
     """Wrap ``text`` to <=MAX_LINES lines of <=MAX_LINE chars, balanced. Returns
     the text with at most one embedded newline."""
