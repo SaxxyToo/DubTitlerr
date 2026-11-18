@@ -50,6 +50,8 @@ The container runs as **root**, so `generate.py` can chown into the media tree. 
 
 All are written beside the video, sharing its basename. The merged `.ass` keeps the same `...eng.dubtitles.*` name, so it still shows up as the Dubtitles track with signs included. If the sidecar came from subgen with `SKIP_IF_EXTERNAL_SUBTITLES_EXIST`, replacing the `.srt` with the merged `.ass` does not trigger a re-transcribe loop.
 
+A subtitle track can load and still hold no sign — a mixed dialogue track on an episode that has none, or a release that ships dialogue-only `.ass`. When no event survives `keep_event()`, `dub_signs_merge.py` reports `no-signs`, writes no `.ass` at all, and the dialogue-only `.srt` stays the artifact: sidecar mode delivers an `.srt`, and mux mode embeds from it. `mux.py`'s signs-regression guard accepts the `no-signs` outcome as safe to fall back for (see `tests/test_mux.py`), so this is not confused with a failed signs build.
+
 | Suffix                           | Written by                                                   | Read by                                      | Contents                                                                                                            |
 | -------------------------------- | ------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `.eng.dubtitles.srt`             | `generate.py`, `repair.py`, `review_apply.py`                | `dub_signs_merge.py`, `mux.py`               | The dialogue transcript from the dub audio                                                                          |

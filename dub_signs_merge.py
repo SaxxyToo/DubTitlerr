@@ -620,6 +620,15 @@ def build(video, dub_srt, out_ass):
                             log(f"  style conflict: '{sname}' — font/size differ, using first definition")
                     else:
                         base.styles[sname] = sty
+    if not kept:
+        # A track loaded but held no sign: the ordinary signs-free episode, where a mixed JA+EN
+        # dialogue track carries only spoken lines and keep_event() rejects every one of them.
+        # Carrying on wrote an .ass holding nothing but the Dubtitles -- in sidecar mode an
+        # external .ass with nothing positioned in it, which forces a burn-in transcode on
+        # clients that would direct-play the .srt for free. Report no-signs so process_one
+        # drops the .part and keeps the dialogue-only .srt, as it does when no stream loads.
+        log("  no sign events kept — leaving the dialogue-only .srt")
+        return "no-signs", 0, 0
     # bottom dub dialogue style
     #
     # PlayResY is NOT a font scalar: it is the coordinate space every value in the script is
