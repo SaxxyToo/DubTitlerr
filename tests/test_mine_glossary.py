@@ -11,6 +11,7 @@ asserting the false claim that mine_text() ignores it.
 """
 
 import json
+import os
 import subprocess
 import sys
 import types
@@ -702,3 +703,51 @@ def test_the_episode_budget_is_configurable(monkeypatch):
     assert mine_glossary._episode_timeout() == 5.0
     monkeypatch.setenv("MINE_EPISODE_TIMEOUT", "nonsense")
     assert mine_glossary._episode_timeout() == 180.0
+
+
+# --- MINE reads only what a run is about ----------------------------------------------------
+#
+# Measured 2026-11-18: a one-season Frieren request mined 38 episodes to serve 28, ~37 s each.
+# Two causes. A delivered episode has no .eng.dubtitles.* left (mux deletes it; sidecar mode
+# renames it to .dub.en.*), so the "already mined" check read every delivered episode as new and
+# re-read it on every run. And MINE walked the whole show, ignoring the request's scope.
+
+
+def _show_tree(tmp_path, monkeypatch):
+    show = tmp_path / "Some Show"
+    for season, eps in (("Season 01", 3), ("Season 02", 2)):
+        (show / season).mkdir(parents=True)
+        for i in range(1, eps + 1):
+            (show / season / f"Some Show - S{season[-2:]}E{i:02d}.mkv").write_text("")
+    gloss = tmp_path / "gloss"
+    gloss.mkdir()
+    monkeypatch.setattr(mine_glossary, "GLOSS_DIR", str(gloss))
+    read = []
+    monkeypatch.setattr(mine_glossary, "eng_sub_text", lambda p: read.append(os.path.basename(p)) or "")
+    monkeypatch.setattr(sys, "argv", ["mine_glossary.py", str(show)])
+    return show, read
+
+
+def test_a_delivered_episode_is_not_mined_again(tmp_path, monkeypatch):
+    show, read = _show_tree(tmp_path, monkeypatch)
+    (show / "Season 02" / "Some Show - S02E01.dubtitles.done").write_text("{}")  # delivered (stamp)
+    monkeypatch.delenv("GENERATE_ONLY_RE", raising=False)
+    mine_glossary.main()
+    assert "Some Show - S02E01.mkv" not in read
+    assert len(read) == 4
+
+
+def test_mining_honours_the_request_scope(tmp_path, monkeypatch):
+    show, read = _show_tree(tmp_path, monkeypatch)
+    monkeypatch.setenv("GENERATE_ONLY_RE", r"S01E0[12]")
+    mine_glossary.main()
+    assert sorted(read) == ["Some Show - S01E01.mkv", "Some Show - S01E02.mkv"]
+
+
+def test_an_invalid_scope_pattern_mines_nothing(tmp_path, monkeypatch):
+    # generate.py refuses an invalid GENERATE_ONLY_RE (exit 2); mining the whole show instead
+    # would be the out-of-scope work this exists to prevent.
+    show, read = _show_tree(tmp_path, monkeypatch)
+    monkeypatch.setenv("GENERATE_ONLY_RE", "S01E(")
+    mine_glossary.main()
+    assert read == []

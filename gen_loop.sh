@@ -98,7 +98,9 @@ prep_show() {
 		return 0
 	fi
 	echo "#### MINE $_ps_show $(date)"
-	GLOSSARY_DIR="$GLOSS_DIR" python3 "$APP_DIR"/mine_glossary.py "$ANIME/$_ps_show" </dev/null 2>&1 || echo "  mine failed (continuing)"
+	# $2: a request's episode filter, so MINE reads only the episodes the run is about (empty in
+	# the library sweep, which mines every new episode).
+	GLOSSARY_DIR="$GLOSS_DIR" GENERATE_ONLY_RE="${2:-}" python3 "$APP_DIR"/mine_glossary.py "$ANIME/$_ps_show" </dev/null 2>&1 || echo "  mine failed (continuing)"
 	# Acquire names the miner cannot reach: releases with no embedded fansub track leave the
 	# glossary empty for that stretch of the show. Wiki-owned canonicals only. Two separate
 	# gates: ACQUIRE enables the step at all (default on);
@@ -232,7 +234,7 @@ EOF
 		req_eng="${req_req_eng:-${REQUIRE_ENG:-1}}"
 		# Same prep as the sweep gives a show. A soft stop during it leaves the stop flag set, so the generate loop below
 		# does not start and the request is requeued by the check after it.
-		prep_show "$req_show"
+		prep_show "$req_show" "$req_gen_re"
 		GLOSS="$_prep_gloss"
 
 		attempt=0

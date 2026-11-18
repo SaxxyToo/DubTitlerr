@@ -24,7 +24,7 @@ from collections.abc import Collection
 
 import pysubs2
 
-from common import NON_DIALOGUE_STYLE, SIGNS_TITLE, is_our_track, load_extras, stop_requested, stream_title
+from common import NON_DIALOGUE_STYLE, SIGNS_TITLE, STAMP_SUFFIX, is_our_track, load_extras, stop_requested, stream_title
 
 EXTRA_DIRS = load_extras()  # data/extras.txt is the source (see common.load_extras)
 
@@ -396,14 +396,29 @@ def _mine(show_dir, show, gpath):
     counter, poss, mid, lower = {}, {}, set(), {}
     mined_eps = 0
     read_eps = 0
+    # A request's scope (gen_loop passes the request's GENERATE_ONLY_RE): mine only the episodes
+    # the run is about. Measured 2026-11-18: a one-season request mined 38 episodes to serve 28.
+    # An invalid pattern mines nothing -- generate.py refuses it too, and the whole show would be
+    # exactly the out-of-scope work this exists to prevent.
+    only = os.environ.get("GENERATE_ONLY_RE", "")
+    try:
+        only_rx = re.compile(only) if only else None
+    except re.error as e:
+        print(f"mine[{show}]: invalid GENERATE_ONLY_RE {only!r} ({e}); mining nothing")
+        return
     for dp, dns, fs in os.walk(show_dir):
         dns[:] = [d for d in dns if d.lower() not in EXTRA_DIRS]
         for fn in fs:
             if not fn.lower().endswith((".mkv", ".mp4")) or SKIP_FILE_RE.search(fn):
                 continue
+            if only_rx is not None and not only_rx.search(fn):
+                continue
             stem = os.path.splitext(os.path.join(dp, fn))[0]
-            # only NEW episodes (no dubtitle yet) -> each episode mined exactly once, additively
-            if os.path.exists(stem + ".eng.dubtitles.ass") or os.path.exists(stem + ".eng.dubtitles.srt"):
+            # only NEW episodes -> each episode mined exactly once, additively. "Not new" is a
+            # pipeline transcript OR a delivery stamp: delivery removes the transcript (mux deletes
+            # it, sidecar mode renames it to SIDECAR_SUFFIX), so without the stamp check every
+            # delivered episode read as new and was re-mined on every run.
+            if any(os.path.exists(stem + suf) for suf in (".eng.dubtitles.ass", ".eng.dubtitles.srt", STAMP_SUFFIX)):
                 continue
             # Soft stop (SIGTERM at window close). Between episodes is the safe point: nothing
             # is persisted until the whole walk is counted, so leave WITHOUT writing -- a

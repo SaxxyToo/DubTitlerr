@@ -497,3 +497,17 @@ def test_a_verify_connection_and_its_key_reach_the_next_show_but_the_repair_endp
     )
     assert seen["REPAIR_MODEL"] == "m", "the repair model alone reaches it, as REPAIR_MODEL always did"
     assert "sk-gen-key" not in (config / "effective.env").read_text()
+
+
+def test_mine_gets_the_requests_scope_and_the_sweep_gets_none(tmp_path):
+    # A one-season request mined 38 episodes to serve 28 (2026-11-18): MINE never saw the
+    # request's episode filter. The sweep has no filter and must stay unscoped.
+    touch_stop = "pathlib.Path(os.environ['STOP_FLAG']).touch()\n"
+    record_scope = "open(LOG, 'a').write('scope ' + os.environ.get('GENERATE_ONLY_RE', '') + '\\n')\n"
+    stop_on_show1 = f"if os.environ['SHOW_NAME'] == 'Show1':\n    {touch_stop}"
+    env, log_file, requests_dir = _prep_env(tmp_path, "Show1\n", {"mine": record_scope, "generate": stop_on_show1})
+    _write_request(requests_dir)
+    _run_gen_loop(env)
+    lines = log_file.read_text().splitlines()
+    scopes = [ln for ln in lines if ln.startswith("scope")]
+    assert scopes == ["scope E01", "scope "], lines  # the request's filter, then the sweep's none
