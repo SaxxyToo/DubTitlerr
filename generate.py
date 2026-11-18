@@ -1241,7 +1241,9 @@ def scene_cuts(video):
         r = subprocess.run(
             ["ffmpeg", "-nostdin", "-v", "info", "-i", video, "-filter:v",
              f"select='gt(scene,{SCENE_THRESHOLD})',showinfo", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT * 30, stdin=subprocess.DEVNULL,
+            # Bounded like any other full decode: ~80 s for an episode, ~10 min for a three-hour film.
+            # On a timeout the episode is simply not snapped, and nothing is cached.
+            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
         )
         cuts = sorted({round(float(m), 3) for m in re.findall(r"pts_time:([0-9.]+)", getattr(r, "stderr", "") or "")})
     except (subprocess.SubprocessError, OSError) as exc:
@@ -1278,7 +1280,7 @@ def _detect_silences(path):
         r = subprocess.run(
             ["ffmpeg", "-nostdin", "-v", "info", "-i", path, "-af",
              "silencedetect=noise=-35dB:d=0.35", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT * 4, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
         )
         out = r.stderr
     except (subprocess.SubprocessError, OSError):
