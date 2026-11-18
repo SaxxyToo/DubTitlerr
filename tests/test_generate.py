@@ -2413,3 +2413,17 @@ def test_force_redo_is_off_by_default(monkeypatch):
     assert generate._force_redo() is True
     monkeypatch.setenv("FORCE_REDO", "off")
     assert generate._force_redo() is False
+
+
+def test_force_redo_parks_the_delivery_markers_not_just_the_files(tmp_path, monkeypatch):
+    """Measured 2026-11-18: a forced season request finished "done" in nine minutes having
+    produced nothing, because the .dubtitles.done stamp still said already-muxed and the
+    stage record still said mux ok. Parking the artefacts alone is not un-delivering."""
+    stem = tmp_path / "ep"
+    for name in ("ep.dub.en.ass", "ep.dubtitles.done", "ep.dubtitles.stages.json"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("SIDECAR_SUFFIX", ".dub.en")
+    generate.force_park_sidecars(str(stem))
+    for name in ("ep.dub.en.ass", "ep.dubtitles.done", "ep.dubtitles.stages.json"):
+        assert not (tmp_path / name).exists(), f"{name} still marks the episode delivered"
+        assert (tmp_path / (name + ".stale")).exists()

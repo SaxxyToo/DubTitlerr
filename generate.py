@@ -1094,6 +1094,12 @@ def force_park_sidecars(stem):
     prefix = os.environ.get("SIDECAR_SUFFIX", ".dub.en")
     paths = [stem + s for s in SIDECAR_SUFFIXES]
     paths += [stem + prefix + ext for ext in (".ass", ".srt")]
+    # The delivery MARKERS matter more than the artefacts: process() decides "already-muxed"
+    # from the .dubtitles.done stamp and the merge pass decides from the stage record, so
+    # parking only the files leaves the episode delivered and the run reports success with
+    # nothing to do -- measured 2026-11-18: a forced season request finished "done" in nine
+    # minutes having produced zero subtitles.
+    paths += [stem + STAMP_SUFFIX, stem + ".dubtitles.stages.json"]
     for path in paths:
         if not os.path.exists(path):
             continue
