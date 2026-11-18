@@ -1158,10 +1158,7 @@ def _write_run_report(rep):
     if not path:
         return
     try:
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(rep, f, indent=2)
-        os.replace(tmp, path)
+        _atomic_write(path, lambda f: json.dump(rep, f, indent=2))
     except OSError as e:
         log("  run report write failed:", e)
 

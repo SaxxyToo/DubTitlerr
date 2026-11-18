@@ -43,10 +43,8 @@ decide it. A corrupt or unreadable cache degrades to a full run.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 
-from common import SIDECAR_MODE
+from common import atomic_write
 
 SUFFIX = ".acquire-cache.json"
 
@@ -69,21 +67,11 @@ def load(gloss_path: str) -> dict:
 def save(gloss_path: str, cache: dict) -> bool:
     """Atomic replace, group-writable so a non-root writer can update it later."""
     p = path_for(gloss_path)
-    tmp = None
-    try:
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p) or ".", prefix=os.path.basename(p) + ".", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(cache, f, ensure_ascii=False, indent=1, sort_keys=True)
-        os.chmod(tmp, SIDECAR_MODE)
-        os.replace(tmp, p)
-        return True
-    except (OSError, ValueError, TypeError):
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-        return False
+    return atomic_write(
+        p,
+        lambda f: json.dump(cache, f, ensure_ascii=False, indent=1, sort_keys=True),
+        quiet=True,
+    )
 
 
 def escalation_for(cache: dict, variant: str, canonical: str) -> dict | None:

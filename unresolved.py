@@ -45,11 +45,10 @@ episode that otherwise generated correctly. Every entry point returns a bool.
 import json
 import os
 import re
-import tempfile
 import time
 
 import decisions
-from common import SIDECAR_MODE, out_for
+from common import SIDECAR_MODE, atomic_write, out_for
 
 # Imported as a NAME so the CLI resolves a show exactly the way the store and the mux gate
 # do. decisions.py imports only stdlib, so this cannot cycle back through here.
@@ -364,25 +363,12 @@ def undecided(entries: list, store: dict) -> list:
 
 
 def _rewrite(stem: str, doc: list) -> bool:
-    """Whole-file replace, used only by resolve(). Atomic via temp + os.replace."""
-    path = path_for(stem)
-    d = os.path.dirname(path) or "."
-    tmp = None
-    try:
-        fd, tmp = tempfile.mkstemp(dir=d, prefix=os.path.basename(path) + ".", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            for e in doc:
-                f.write(json.dumps(e, ensure_ascii=False) + "\n")
-        os.chmod(tmp, SIDECAR_MODE)
-        os.replace(tmp, path)
-        return True
-    except (OSError, ValueError):
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-        return False
+    """Whole-file replace, used only by resolve(). Written through common.atomic_write."""
+    def render(f):
+        for e in doc:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+    return atomic_write(path_for(stem), render, quiet=True)
 
 
 def record(stem: str, stage: str, reason: str, **fields) -> bool:

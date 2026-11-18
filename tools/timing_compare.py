@@ -47,6 +47,7 @@ sys.path.insert(0, ".")
 import common  # noqa: E402
 import hallucination  # noqa: E402  -- pure stdlib (see hallucination.py docstring), no GPU import
 import tools.vad as vad  # noqa: E402
+from common import atomic_write
 
 log = common.log
 
@@ -937,20 +938,9 @@ def build_report(show_results: dict, config: dict) -> dict:
 
 
 def write_report_atomic(report: dict, out_path: str) -> None:
-    """Write `report` as JSON to out_path atomically (tempfile in the same dir + os.replace)
-    so a crash mid-write never leaves a truncated/partial report on disk."""
-    out_dir = os.path.dirname(os.path.abspath(out_path)) or "."
-    fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=".timing-compare.", suffix=".json.tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(report, f, indent=2)
-        os.replace(tmp_path, out_path)
-    except Exception:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise
+    """Write `report` as JSON to out_path atomically, so a crash mid-write never leaves a
+    truncated/partial report on disk. 0600, as before: this is a local analysis artefact."""
+    atomic_write(out_path, lambda f: json.dump(report, f, indent=2), mode=0o600)
 
 
 def _fmt(x) -> str:

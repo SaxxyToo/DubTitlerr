@@ -32,9 +32,10 @@ import json
 import os
 import re
 import sys
-import tempfile
 import urllib.error
 import urllib.request
+
+from common import atomic_write
 
 WATCHSTATE_URL = os.environ.get("WATCHSTATE_URL", "")
 WATCHSTATE_API_KEY = os.environ.get("WATCHSTATE_API_KEY", "")
@@ -321,19 +322,11 @@ def main(argv=None):
         # RESCAN_INTERVAL on an order file that parses to zero shows.
         print("watch_queue: REFUSING TO WRITE -- 0 shows matched a library directory (see unmatched above)", file=sys.stderr)
         return 2
-    tmp = None
     try:
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(a.out) or ".", prefix=os.path.basename(a.out) + ".", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write("\n".join(order) + "\n")
-        os.replace(tmp, a.out)
+        # 0600, unchanged: gen_loop.sh reads this as root inside the container.
+        atomic_write(a.out, lambda f: f.write("\n".join(order) + "\n"), mode=0o600)
     except OSError as e:
         print(f"watch_queue: REFUSING TO WRITE -- {e}", file=sys.stderr)
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
         return 2
     print(f"  wrote {a.out}")
     return 0

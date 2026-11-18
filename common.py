@@ -39,30 +39,23 @@ MEDIA_GID = int(os.environ.get("MEDIA_GID", "100"))
 SIDECAR_MODE = 0o664
 os.umask(0o002)
 
+# atomic_write ``mode`` sentinel: reuse the target's current permission bits instead of
+# installing a fixed set. A target that does not exist yet gets SIDECAR_MODE.
+MODE_KEEP = "keep"
+
 HEARTBEAT_PATH = os.environ.get("HEARTBEAT_PATH", "/config/heartbeat.json")
 
 
 def heartbeat(**fields):
     """Write a heartbeat JSON document atomically to HEARTBEAT_PATH, merging with existing fields."""
-    dir_name = os.path.dirname(HEARTBEAT_PATH)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=dir_name,
-        prefix="heartbeat.",
-        suffix=".tmp",
-        delete=False,
-    ) as f:
-        # Read existing content to merge
-        try:
-            with open(HEARTBEAT_PATH) as existing:
-                existing_data = json.load(existing)
-        except (OSError, ValueError):
-            existing_data = {}
-        # Merge existing with new fields
-        existing_data.update(fields)
-        json.dump(existing_data, f)
-        temp_path = f.name
-    os.replace(temp_path, HEARTBEAT_PATH)
+    try:
+        with open(HEARTBEAT_PATH) as existing:
+            data = json.load(existing)
+    except (OSError, ValueError):
+        data = {}
+    # Merge, so a later writer's fields do not drop an earlier writer's
+    data.update(fields)
+    atomic_write(HEARTBEAT_PATH, lambda f: json.dump(data, f), mode=0o600)
 
 
 def read_heartbeat():
@@ -346,7 +339,7 @@ def stop_requested():
     return bool(flag) and os.path.exists(flag)
 
 
-def atomic_write(path, render, mode=SIDECAR_MODE, newline=None):
+def atomic_write(path, render, mode=SIDECAR_MODE, newline=None, fsync=False, quiet=False):
     """Write ``path`` through a temp file in the same directory plus os.replace -- the
     discipline qc.write and glossary_acquire._write_json already follow.
 
@@ -363,19 +356,88 @@ def atomic_write(path, render, mode=SIDECAR_MODE, newline=None):
 
     ``newline`` is passed to the file object (csv output needs ``newline=""``).
 
-    ``mode`` defaults to common.SIDECAR_MODE (0664); mkstemp creates 0600, which would strip
-    group/other read from every file we ship. It must stay GROUP-WRITABLE -- 0644 meant only
-    the creating uid could ever overwrite a sidecar, which broke every non-root writer (see
-    the SIDECAR_MODE comment above)."""
+    ``mode`` is the permission bits installed on the replacement: an int, or MODE_KEEP to
+    reuse the target's current bits (a target that does not exist yet gets SIDECAR_MODE).
+    It defaults to common.SIDECAR_MODE (0664) because mkstemp creates 0600, which would
+    strip group/other read from every file we ship; sidecars must stay GROUP-WRITABLE --
+    0644 meant only the creating uid could ever overwrite one, which broke every non-root
+    writer (see the SIDECAR_MODE comment above).
+
+    ``fsync`` also flushes the containing directory after the rename, making the rename
+    itself durable. Set it where a lost write is a lost account or setting (the config
+    volume), not for per-episode sidecars the next sweep rewrites anyway.
+
+    ``quiet`` returns False instead of raising, for callers that own a verdict path and
+    need a False they can report (decisions.save, unresolved._rewrite). The default is to
+    raise: an episode's product must not go missing silently.
+
+    Returns True on success. Either way the previous file survives and no temp remains.
+"""
+    return _atomic_replace(path, render, mode, fsync, quiet, binary=False, newline=newline)
+
+
+def atomic_write_bytes(path, data, mode=SIDECAR_MODE, fsync=False, quiet=False):
+    """atomic_write for a bytes payload (settings_store, review_glossary's glossary edits).
+
+    Same guarantees: temp file beside the target, chmod, os.replace; the old file survives
+    any failure and no temp is left behind. ``data`` may be str, encoded UTF-8."""
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return _atomic_replace(path, lambda f: f.write(data), mode, fsync, quiet, binary=True, newline=None)
+
+
+def _resolve_mode(path, mode):
+    """MODE_KEEP -> the target's current permission bits (a new target gets SIDECAR_MODE);
+    anything else is the mode to install verbatim."""
+    if mode != MODE_KEEP:
+        return mode
+    try:
+        return os.stat(path).st_mode & 0o777
+    except OSError:
+        return SIDECAR_MODE
+
+
+def _fsync_dir(d):
+    """Flush the directory entry, so the rename survives a power loss. Best-effort: a
+    filesystem that refuses it must not turn a finished write into an error."""
+    try:
+        dfd = os.open(d, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dfd)
+    except OSError:
+        pass
+    finally:
+        os.close(dfd)
+
+
+def _atomic_replace(path, write, mode, fsync, quiet, binary, newline):
+    """The one atomic-replace engine both public writers run on.
+
+    mkstemp beside the target (same filesystem, so the rename is atomic), let ``write``
+    fill the fd, install ``mode``, os.replace over the target. On any Exception the temp is
+    unlinked: ``quiet`` callers get a False, everyone else the original traceback."""
     d = os.path.dirname(path) or "."
     tmp = None
     try:
         fd, tmp = tempfile.mkstemp(dir=d, prefix=os.path.basename(path) + ".", suffix=".tmp")
-        with os.fdopen(fd, "w", newline=newline) as f:
-            render(f)
-        os.chmod(tmp, mode)
+        kwargs = {} if binary else {"encoding": "utf-8", "newline": newline}
+        with os.fdopen(fd, "wb" if binary else "w", **kwargs) as f:
+            write(f)
+            if fsync:
+                f.flush()
+                os.fsync(f.fileno())
+        os.chmod(tmp, _resolve_mode(path, mode))
         os.replace(tmp, path)
         tmp = None
+        if fsync:
+            _fsync_dir(d)
+        return True
+    except Exception:
+        if quiet:
+            return False
+        raise
     finally:
         if tmp is not None:
             try:
@@ -561,11 +623,7 @@ def write_stage(stem: str, stage: str, outcome: str, detail: str = "") -> None:
     data[stage] = {"outcome": outcome, "at": time.time()}
     if detail:
         data[stage]["detail"] = detail
-    # atomic write
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, path)
+    atomic_write(path, lambda f: json.dump(data, f))
 
 
 def read_stages(stem: str) -> dict:
@@ -591,10 +649,7 @@ def clear_stage(stem: str, *stages: str) -> None:
         return
     for st in stages:
         data.pop(st, None)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, path)
+    atomic_write(path, lambda f: json.dump(data, f))
 
 
 def failed_stage(stem: str, only=None) -> str | None:

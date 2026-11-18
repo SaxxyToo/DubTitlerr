@@ -39,12 +39,11 @@ Env:
 import argparse
 import json
 import os
-import tempfile
 
 import card_split
 import decisions
 import reflow
-from common import MEDIA_GID, MEDIA_UID, SIDECAR_MODE, STAMP_SUFFIX, log, read_words, ts_srt
+from common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, atomic_write, log, read_words, ts_srt
 
 # The SAME fits_card repair.py applies, imported rather than reimplemented. Two writers of
 # the shipped srt that disagreed about C1 would mean a `correct` refused on a re-run and
@@ -60,7 +59,7 @@ ASS_SUFFIX = ".eng.dubtitles.ass"
 
 
 def _write_srt(path: str, rows: list, texts: list) -> None:
-    """Atomic temp + os.replace, mirroring generate._atomic_write.
+    """Written through common.atomic_write (temp + os.replace).
 
     Re-wrapped through reflow.wrap_balance, the same call repair.py's rebuild uses, so an
     UNCHANGED cue comes out byte-identical: conf.json stores text flattened, wrap_balance is
@@ -69,24 +68,15 @@ def _write_srt(path: str, rows: list, texts: list) -> None:
     Each entry in ``texts`` is either a plain string (one cue, ``rows[i]``'s own timing) or
     a 2-tuple of card_split's two piece-dicts (two cues) -- see apply_episode. conf.json is
     never touched either way; the split exists only in this write."""
-    d = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=os.path.basename(path) + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            i = 0
-            for c, t in zip(rows, texts):
-                pieces = t if isinstance(t, tuple) else ({"start": c["start"], "end": c["end"], "text": t},)
-                for p in pieces:
-                    i += 1
-                    f.write(f"{i}\n{ts_srt(p['start'])} --> {ts_srt(p['end'])}\n{reflow.wrap_balance(p['text'])}\n\n")
-        os.chmod(tmp, SIDECAR_MODE)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    def render(f):
+        i = 0
+        for c, t in zip(rows, texts):
+            pieces = t if isinstance(t, tuple) else ({"start": c["start"], "end": c["end"], "text": t},)
+            for p in pieces:
+                i += 1
+                f.write(f"{i}\n{ts_srt(p['start'])} --> {ts_srt(p['end'])}\n{reflow.wrap_balance(p['text'])}\n\n")
+
+    atomic_write(path, render)
     try:
         os.chown(path, MEDIA_UID, MEDIA_GID)
     except OSError:

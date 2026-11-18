@@ -40,11 +40,10 @@ import contextlib
 import hashlib
 import json
 import os
-import tempfile
 import threading
 import time
 
-from common import SIDECAR_MODE, log
+from common import SIDECAR_MODE, atomic_write, log
 
 VERSION = 1
 MAX_AGE_DAYS = 30
@@ -184,7 +183,6 @@ class Journal:
         """Rewrite to the latest line per key, minus anything older than MAX_AGE_DAYS. Atomic; idempotent. Returns lines kept."""
         if self._broken:
             return 0
-        tmp = None
         try:
             with self._lock, _flock(self.path, exclusive=True):
                 lines = self._read_lines()
@@ -203,25 +201,12 @@ class Journal:
                         return len(kept)  # already compact: leave the file (and its mtime) alone
                 except OSError:
                     pass
-                fd, tmp = tempfile.mkstemp(
-                    dir=os.path.dirname(self.path) or ".", prefix=os.path.basename(self.path) + ".", suffix=".tmp"
-                )
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(body)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.chmod(tmp, SIDECAR_MODE)
-                os.replace(tmp, self.path)
-                tmp = None
+                atomic_write(self.path, lambda f: f.write(body), fsync=True)
                 self._entries = {e["key"]: e for e in kept}
                 return len(kept)
         except OSError as exc:
             self._break(f"could not be compacted ({exc.__class__.__name__})")
             return 0
-        finally:
-            if tmp is not None:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp)
 
 
 def pick_key(term: str) -> str:

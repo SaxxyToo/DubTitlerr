@@ -7,7 +7,8 @@ loaded and written back untouched. ``show`` is resolved only against the server-
 
 A write holds glossary_lock.locked(path, "webui"), refuses a stale ``expected_version`` (sha256 of
 the raw file bytes), copies the prior file to ``<file>.bak-<UTC timestamp>`` (newest 20 kept), and
-swaps the new content in with a temp file plus os.replace in the same directory."""
+swaps the new content in through common.atomic_write_bytes (temp + os.replace in the same
+directory)."""
 
 import contextlib
 import datetime
@@ -16,13 +17,12 @@ import json
 import os
 import re
 import shutil
-import tempfile
 import unicodedata
 
 import decisions
 import glossary_lock
 import glossary_verify
-from common import log
+from common import MODE_KEEP, atomic_write_bytes, log
 
 EDITABLE = ("names", "phrases", "hard_fixes")
 OPS = ("add", "update", "delete")
@@ -262,29 +262,14 @@ def _write(path, new_bytes):
     while os.path.exists(backup):  # two writes in one clock tick must not overwrite the first undo point
         n += 1
         backup = f"{path}.bak-{stamp}-{n}"  # sorts after the plain stamp, so prune still keeps the newest
-    tmp = None
     try:
         shutil.copy2(path, backup)
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".glossary-", suffix=".tmp")
-        with os.fdopen(fd, "wb") as f:
-            f.write(new_bytes)
-            f.flush()
-            os.fsync(f.fileno())
-        shutil.copymode(path, tmp)
-        os.replace(tmp, path)
+        atomic_write_bytes(path, new_bytes, mode=MODE_KEEP, fsync=True)
     except BaseException:
-        # Nothing was committed: neither the temp file nor the undo copy of an edit that never happened may stay.
-        for leftover in (tmp, backup):
-            if leftover:
-                with contextlib.suppress(OSError):
-                    os.unlink(leftover)
+        # Nothing was committed: the undo copy of an edit that never happened must not stay.
+        with contextlib.suppress(OSError):
+            os.unlink(backup)
         raise
-    with contextlib.suppress(OSError):  # make the rename itself durable; the edit is committed either way
-        dfd = os.open(os.path.dirname(path), os.O_RDONLY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
     with contextlib.suppress(OSError):  # the edit is committed; a failed prune must not turn it into an error
         prune_backups(path)
     return os.path.basename(backup)

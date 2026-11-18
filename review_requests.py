@@ -5,13 +5,14 @@ import json
 import os
 import re
 import sys
-import tempfile
 import time
 import unicodedata
 import urllib.parse
 import uuid
 import zoneinfo
 from typing import Any
+
+from common import atomic_write, atomic_write_bytes
 
 REQUESTS_DIR = os.environ.get("REQUESTS_DIR", "/config/requests")
 ANIME_ROOT = os.environ.get("ANIME_ROOT", "/media/Anime Library")
@@ -471,27 +472,7 @@ def create(
         }
 
         dest_path = os.path.join(rdir, f"{req_id}.json")
-        tmp_path = os.path.join(rdir, f".{req_id}.tmp")
-
-        payload = (json.dumps(doc, indent=2) + "\n").encode("utf-8")
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o664)
-        try:
-            os.write(fd, payload)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-
-        with contextlib.suppress(OSError):
-            os.chmod(tmp_path, 0o664)
-
-        os.replace(tmp_path, dest_path)
-
-        with contextlib.suppress(OSError):
-            dfd = os.open(rdir, os.O_RDONLY)
-            try:
-                os.fsync(dfd)
-            finally:
-                os.close(dfd)
+        atomic_write_bytes(dest_path, json.dumps(doc, indent=2) + "\n", fsync=True)
 
         return 201, {"id": req_id, "status": "pending"}
 
@@ -672,12 +653,11 @@ def mark_running(path: str, requests_dir: str | None = None) -> str:
     else:
         running_path = path + ".running"
 
-    tmp_path = running_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
+    def render(f):
         json.dump(data, f, indent=2)
         f.write("\n")
 
-    os.replace(tmp_path, running_path)
+    atomic_write(running_path, render)
     if os.path.exists(path) and os.path.abspath(path) != os.path.abspath(running_path):
         with contextlib.suppress(OSError):
             os.unlink(path)
@@ -705,12 +685,11 @@ def requeue(path: str, requests_dir: str | None = None) -> str:
     else:
         pending_path = actual_path + ".json"
 
-    tmp_path = pending_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
+    def render(f):
         json.dump(data, f, indent=2)
         f.write("\n")
 
-    os.replace(tmp_path, pending_path)
+    atomic_write(pending_path, render)
     if os.path.exists(actual_path) and os.path.abspath(actual_path) != os.path.abspath(pending_path):
         with contextlib.suppress(OSError):
             os.unlink(actual_path)
@@ -789,20 +768,7 @@ def finish(
     os.makedirs(target_dir, exist_ok=True)
 
     dest_path = os.path.join(target_dir, f"{req_id}.json")
-    tmp_path = os.path.join(target_dir, f".{req_id}.tmp")
-
-    payload = (json.dumps(data, indent=2) + "\n").encode("utf-8")
-    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o664)
-    try:
-        os.write(fd, payload)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-
-    with contextlib.suppress(OSError):
-        os.chmod(tmp_path, 0o664)
-
-    os.replace(tmp_path, dest_path)
+    atomic_write_bytes(dest_path, json.dumps(data, indent=2) + "\n", fsync=True)
 
     if os.path.abspath(actual_path) != os.path.abspath(dest_path) and os.path.exists(actual_path):
         with contextlib.suppress(OSError):
@@ -965,12 +931,8 @@ def write_effective_env(out_file: str | None = None, env: dict | None = None) ->
 
     parent = os.path.dirname(os.path.abspath(target))
     os.makedirs(parent, exist_ok=True)
-    tmp = target + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        os.fchmod(f.fileno(), 0o640)  # umask-proof: the host user reads the report, other users do not
-        f.writelines(lines)
-    os.replace(tmp, target)
+    # 0o640, umask-proof: the host user reads the report, other users do not.
+    atomic_write(target, lambda f: f.writelines(lines), mode=0o640)
     return target
 
 
@@ -1060,25 +1022,7 @@ def put_schedule(body: dict, schedule_file: str | None = None) -> tuple[int, dic
     lock_fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o664)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        payload = (json.dumps(clean, indent=2) + "\n").encode("utf-8")
-        fd, tmp_path = tempfile.mkstemp(prefix=".schedule-", suffix=".tmp", dir=parent)
-        try:
-            os.write(fd, payload)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-
-        with contextlib.suppress(OSError):
-            os.chmod(tmp_path, 0o664)
-
-        os.replace(tmp_path, sfile)
-
-        with contextlib.suppress(OSError):
-            dfd = os.open(parent, os.O_RDONLY)
-            try:
-                os.fsync(dfd)
-            finally:
-                os.close(dfd)
+        atomic_write_bytes(sfile, json.dumps(clean, indent=2) + "\n", fsync=True)
     finally:
         with contextlib.suppress(OSError):
             fcntl.flock(lock_fd, fcntl.LOCK_UN)

@@ -14,13 +14,12 @@ import json
 import os
 import re
 import secrets
-import tempfile
 import threading
 import time
 import urllib.parse
 
 import glossary_lock
-from common import log
+from common import atomic_write, log
 
 CLOCK = time.time
 LOCK_WAIT = 2.0
@@ -150,27 +149,10 @@ def users_path() -> str:
 
 def _write_atomic(path: str, text: str) -> None:
     """Temp file in the same directory, fsync, 0600, then os.replace: a reader sees the old file or the new one, never half."""
-    tmp = None
     try:
-        directory = os.path.dirname(path)
-        os.makedirs(directory, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-        with contextlib.suppress(OSError):  # make the rename durable; a failure here must not undo a finished write
-            dfd = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(dfd)
-            finally:
-                os.close(dfd)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        atomic_write(path, lambda f: f.write(text), mode=0o600, fsync=True)
     except OSError as e:
-        if tmp:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
         raise Unavailable("the config volume is not writable") from e
 
 

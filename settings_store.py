@@ -12,12 +12,12 @@ import contextlib
 import copy
 import json
 import os
-import tempfile
 import urllib.parse
 
 import glossary_lock
 import settings_connections as conns
 import settings_registry as reg
+from common import atomic_write_bytes
 
 VERSION = 1
 MAX_BYTES = 256 * 1024
@@ -241,27 +241,7 @@ def locked(environ=None):
 
 def atomic_write(path, data, mode):
     """data -> path through a temp file in the same directory, fsynced; the old file survives any failure."""
-    if isinstance(data, str):
-        data = data.encode("utf-8")
-    directory = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".settings.", suffix=".tmp")
-    try:
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
-    with contextlib.suppress(OSError):
-        dfd = os.open(directory, os.O_RDONLY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
+    atomic_write_bytes(path, data, mode=mode, fsync=True)
 
 
 def _keep_prev(path, mode):

@@ -26,9 +26,10 @@ import contextlib
 import fcntl
 import json
 import os
-import tempfile
 import time
 import unicodedata
+
+from common import atomic_write
 
 # The four outcomes a reviewer can reach. `force` admits a repair accept_repair refused;
 # it overrides the judgement gates but never fits_card, because card timing is immutable.
@@ -303,7 +304,7 @@ def locked(show: str, dir: str = DECISIONS_DIR):
 def save(store: dict, show: str, dir: str = DECISIONS_DIR) -> bool:
     """Write the store atomically. Returns False rather than raising.
 
-    Atomic via mkstemp + os.replace, mirroring `unresolved._rewrite`: a reader in
+    Written through common.atomic_write (temp + os.replace): a reader in
     `repair.py` sees the old file or the new one, never a partial. False is not cosmetic --
     a review that silently discards the human's verdict is worse than one that errors,
     because the human believes the line is settled and never revisits it.
@@ -315,20 +316,16 @@ def save(store: dict, show: str, dir: str = DECISIONS_DIR) -> bool:
     store["show"], store["version"] = show, STORE_VERSION
     store.setdefault("decisions", [])
     path = path_for(show, dir)
-    tmp = None
     try:
         os.makedirs(dir, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=dir, prefix=os.path.basename(path) + ".", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(store, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, path)
-        return True
-    except (OSError, ValueError):
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+        # 0600: the store holds every human verdict for a show, and nothing but this pipeline reads it.
+        return atomic_write(
+            path,
+            lambda f: json.dump(store, f, ensure_ascii=False, indent=2, sort_keys=True),
+            mode=0o600,
+            quiet=True,
+        )
+    except OSError:
         return False
 
 

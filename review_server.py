@@ -53,7 +53,6 @@ import re
 import secrets
 import string
 import subprocess
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -190,15 +189,11 @@ def resolve_token(token_dir: str = "") -> str:
     _GENERATED = tok
     try:
         os.makedirs(d, exist_ok=True)
-        # 0600 from the moment it exists, via a temp file plus os.replace -- the same
-        # atomic idiom decisions.save and unresolved._rewrite use. A direct O_TRUNC write
+        # 0600 from the moment it exists, through common.atomic_write -- the atomic idiom
+        # the other state writers share. A direct O_TRUNC write
         # leaves a window where the file exists and is empty, and a reader in that window
         # regenerates a second token that only one of the two writers will keep.
-        fd, tmp = tempfile.mkstemp(dir=d, prefix="review_token.", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(tok + "\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
+        common.atomic_write(path, lambda f: f.write(tok + "\n"), mode=0o600)
         log(f"review server: generated an access token, stored {path} (0600)")
         log(f"review server: token = {tok}")  # printed ONCE, at startup, to the operator's own log
     except OSError as e:
