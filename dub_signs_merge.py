@@ -49,6 +49,8 @@ from common import (
     MEDIA_GID,
     MEDIA_UID,
     POSITIONED,
+    SONG_FAMILY_STYLE,
+    dialogue_intervals,
     find_video,
     log,
     out_for,
@@ -250,7 +252,8 @@ KEEP_STYLE = re.compile(r"karaoke|sign|song|caption|title|credit|note|lyric|roma
 # of each song's on-screen text was silently missing. The "Opening-"/"ED<N>-" prefix
 # convention covers the whole family regardless of which language suffix a given release
 # uses, without needing to enumerate every language name.
-SONG_FAMILY_STYLE = re.compile(r"^(?:opening|ending)[\s_-]|^(?:op|ed)\d+[\s_-]", re.I)
+# SONG_FAMILY_STYLE now lives in common (one definition with is_dialogue_event): an OP/ED token
+# anywhere in the style name, not only the "Opening-"/"ED<N>-" prefix described above.
 # STRONG_DROP_STYLE: an unambiguous role, independent of the release's own style-naming
 # quirks -- a "Warning" style is a player-support notice, never actual signs content, and
 # wins even over a keep-signal tag.
@@ -347,20 +350,43 @@ def _overlaps_any(start, end, spans):
     return any(start < s_end and end > s_start for s_start, s_end in spans)
 
 
+# A dub card inside a song is kept only when reference dialogue lies under at least this much of
+# it: a brush at the card's edge is timing slop, not someone talking.
+SONG_DIALOGUE_MIN_OVERLAP_MS = 300
+# ...and a dropped card this close before a kept one, with no sentence-final punctuation, is the
+# start of that same sentence.
+SONG_SENTENCE_GAP_MS = 300
+SONG_SENTENCE_START_WORDS = 3
+SONG_SENTENCE_START_CARDS = 2
+
+
+def _overlap_ms(start, end, spans):
+    return max((min(end, b) - max(start, a) for a, b in spans), default=0)
+
+
+def _reference_dialogue_ms(video):
+    """(start_ms, end_ms) of every reference dialogue line (common.dialogue_intervals: the
+    release's English tracks, signs/songs/lyrics excluded). [] when there is none or it cannot
+    be read -- the caller then drops the whole song span, the behaviour before this existed."""
+    try:
+        return [(int(a * 1000), int(b * 1000)) for a, b, _t in dialogue_intervals(video)]
+    except Exception as e:  # noqa: BLE001 - a reference that cannot be read must not fail the merge
+        log(f"  reference dialogue unreadable ({e}); song spans drop every dub card")
+        return []
+
+
 def cross_track_dedup_enabled():
     val = os.environ.get("SIGNS_CROSS_TRACK_DEDUP", "1").strip().lower()
     return val not in {"0", "no", "false", "off"}
 
 
 def _song_family(style):
-    if not style:
+    """"op" or "ed" for a song-family style (SONG_FAMILY_STYLE), else None. Used by the
+    cross-track dedup so an opening's line never deduplicates against an ending's."""
+    m = SONG_FAMILY_STYLE.search(style or "")
+    if not m:
         return None
-    s = style.strip()
-    if re.match(r"^(?:opening|op\d*)(?:[\s_-]|$)", s, re.I):
-        return "op"
-    if re.match(r"^(?:ending|ed\d*)(?:[\s_-]|$)", s, re.I):
-        return "ed"
-    return None
+    return "op" if m.group(1).lower() in ("op", "opening") else "ed"
 
 
 def _is_cjk_or_hangul(text):
@@ -683,29 +709,50 @@ def build(video, dub_srt, out_ass):
     base.styles["Dubtitles"] = st
     dub = pysubs2.load(dub_srt)
     song_spans = _song_spans(kept)
-    added = dropped_song = 0
-    for ev in dub:
-        if ev.is_comment:
-            continue
-        # debt: a card of real spoken dialogue over an opening/ending is dropped along with
-        # the lyrics, since the whole song span is cut regardless of what's actually sung
-        # under it. This HAS now fired on real content -- One Pace S17/S27, measured
-        # 2026-09-02 -- correcting the original note here, which claimed SAO S01E02 was the
-        # only measured case and that it had silence under the intro. Every dropped card
-        # inspected so far is genuine whisper song output, but two were ambiguous ("If
-        # you're in it, I'll protect you from the moment", S17E03 63.5s; "I'll see you /
-        # next time.", S27E04 112.6s) and nothing distinguishes them from dialogue except
-        # reading them. Revisit by gating on avg_logprob, which already separates sung
-        # hallucination (-1.7 to -4.1) from ordinary dialogue (-0.3/-0.7), instead of
-        # cutting a blanket span.
-        if _overlaps_any(ev.start, ev.end, song_spans):
-            dropped_song += 1
+    added = dropped_song = spared_song = 0
+    # Song spans: a dub card inside an opening or ending is whisper hearing the song -- unless the
+    # release's own dialogue track has a line under it. Measured 2026-11-18 on 30 regenerated
+    # episodes: of 493 cards inside a song, the fansub had dialogue under 5 (four real lines over
+    # Frieren S01E28's ending) and lyrics only under 488. With no reference dialogue at all, nothing
+    # tells a line from a lyric, and the whole span drops as it always did.
+    cards = [ev for ev in dub if not ev.is_comment]
+    keep = [True] * len(cards)
+    in_song = [_overlaps_any(ev.start, ev.end, song_spans) for ev in cards]
+    if any(in_song):
+        spoken = _reference_dialogue_ms(video)
+        for i, ev in enumerate(cards):
+            if in_song[i]:
+                keep[i] = bool(spoken) and _overlap_ms(ev.start, ev.end, spoken) >= SONG_DIALOGUE_MIN_OVERLAP_MS
+        # A sentence whose opening words whisper stretched back into the song: "Denken," and "the
+        # Imperial" ran straight into a kept "Mage, I know all about you." (Frieren S01E28). A dropped
+        # card with no sentence-final punctuation that runs straight into a kept one is its start.
+        # Only a SHORT stretched start (<= SONG_SENTENCE_START_WORDS words, at most
+        # SONG_SENTENCE_START_CARDS cards back): unpunctuated back-to-back lyric lines would
+        # otherwise chain all the way back through the song (Angel Beats! S01E01, legacy subtitle).
+        chain = 0
+        for i in range(len(cards) - 2, -1, -1):
+            if not keep[i + 1] or not in_song[i + 1]:
+                chain = 0
+            if (in_song[i] and not keep[i] and keep[i + 1] and chain < SONG_SENTENCE_START_CARDS
+                    and cards[i + 1].start - cards[i].end <= SONG_SENTENCE_GAP_MS
+                    and len(cards[i].plaintext.split()) <= SONG_SENTENCE_START_WORDS
+                    and not cards[i].plaintext.rstrip().endswith((".", "!", "?", "\u2026", "\u266a"))):
+                keep[i] = True
+                chain += 1
+            elif not keep[i]:
+                chain = 0
+        spared_song = sum(1 for i, s_ in enumerate(in_song) if s_ and keep[i])
+        dropped_song = sum(1 for i, s_ in enumerate(in_song) if s_ and not keep[i])
+    for ev, k in zip(cards, keep):
+        if not k:
             continue
         ev.style = "Dubtitles"
         base.events.append(ev)
         added += 1
     if dropped_song:
         log(f"  song-span dropped {dropped_song} whisper dub card(s) (fansub translation kept instead)")
+    if spared_song:
+        log(f"  song-span kept {spared_song} dub card(s) the reference shows as dialogue over the song")
     # Dubtitles dialogue on the floor (layer 0); every sign/song event bumped one
     # layer up so it renders on top. Shift (not zero) keeps the relative z-order
     # among multi-layer sign compositions.
