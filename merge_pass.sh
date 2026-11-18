@@ -147,6 +147,18 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 		break
 	fi
 	[ -f "$stem.dubtitles.fail" ] && continue # generate crashed on it -> skip
+	# Already delivered: a stamp that is current for the video AND records the running
+	# OUTPUT_MODE. The default SIDECAR_SUFFIX puts the published file at the artifact's own
+	# name, so the finder keeps seeing it, and without this every pass re-ran repair -> signs
+	# -> mux over an episode it had already delivered (LLM calls and a rewrite of a published
+	# subtitle, every MERGE_INTERVAL). mux.already_delivered() is the predicate mux.py itself
+	# uses and --delivered exposes it, so there is no second definition. A dropped or
+	# invalidated stamp (review verdicts, tools/reapply_glossary.py, tools/reopen_for_signs.py)
+	# makes this false again, which is exactly how those reopen an episode.
+	if python3 "$APP/mux.py" --delivered "$stem" </dev/null >/dev/null 2>&1; then
+		echo "skip: already delivered $stem"
+		continue
+	fi
 	if [ ! -f "$stem.eng.dubtitles.ass" ] && [ -f "$stem.eng.dubtitles.srt" ]; then
 		echo "### assemble $stem"
 		# Drop records from older runs so the crash fallbacks and the gates below only ever see

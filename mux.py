@@ -52,6 +52,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import time
 
 import unresolved
@@ -521,6 +522,24 @@ def already_delivered(stamp, video, mode=None) -> bool:
     return stamp_valid(stamp, video) and stamp_mode(stamp) == (mode or OUTPUT_MODE)
 
 
+def delivered(stem: str) -> bool:
+    """True when this stem is already delivered for the OUTPUT_MODE we are running.
+
+    merge_pass.sh asks this before its assemble block (`mux.py --delivered <stem>`). The
+    default SIDECAR_SUFFIX gives the published file the pipeline artifact's own name, so the
+    finder keeps seeing `stem.eng.dubtitles.srt` and, without the question, every pass re-ran
+    repair -> signs -> mux over an episode it had already delivered -- LLM calls and a rewrite
+    of a published subtitle, every MERGE_INTERVAL. Same predicate process() uses, exposed
+    rather than re-derived. A dropped or invalidated stamp (review verdicts,
+    tools/reapply_glossary.py, tools/reopen_for_signs.py) makes this False again.
+    """
+    for ext in (".mkv", ".mp4", ".m4v"):
+        video = stem + ext
+        if os.path.exists(video):
+            return already_delivered(read_stamp(stem + STAMP_SUFFIX), video)
+    return False
+
+
 def sidecar_target(stem: str, src: str) -> str:
     """Where sidecar mode leaves the assembled subtitle: <stem><SIDECAR_SUFFIX>.<ext>.
 
@@ -873,8 +892,16 @@ def process(orig, apply):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument(
+        "--delivered",
+        metavar="STEM",
+        help="exit 0 when this stem is already delivered for the running OUTPUT_MODE; "
+             "merge_pass.sh uses it to skip a delivered episode instead of re-assembling it",
+    )
     ap.add_argument("paths", nargs="*", help="explicit video paths; else walk MUX_ROOTS")
     a = ap.parse_args(argv)
+    if a.delivered:
+        return 0 if delivered(a.delivered) else 1
     if a.apply and os.geteuid() != 0:
         log("WARNING: not root — atomic replace may fail (mergerfs perms).")
     vids = list(a.paths)
@@ -904,4 +931,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
