@@ -2376,3 +2376,15 @@ def test_a_chunk_is_re_encoded_not_stream_copied(tmp_path, monkeypatch):
     assert generate._cut_chunk("/tmp/in.wav", 0.0, 60.0, str(tmp_path / "p.wav"))
     assert "pcm_s16le" in seen["cmd"]
     assert "copy" not in seen["cmd"]
+
+
+def test_a_success_clears_the_failure_markers(tmp_path, monkeypatch):
+    """A stale crash.json on an episode that delivered misleads every later triage."""
+    crash = tmp_path / "ep.dubtitles.crash.json"
+    no_speech = tmp_path / ("ep" + generate.NO_SPEECH_SUFFIX)
+    crash.write_text("{}", encoding="utf-8")
+    no_speech.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(generate, "out_for", lambda p: p)
+    generate._clear_failure_markers(str(tmp_path / "ep"))
+    assert not crash.exists()
+    assert not no_speech.exists()

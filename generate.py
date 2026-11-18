@@ -1077,6 +1077,21 @@ SCENE_THRESHOLD = 0.30
 CUTS_VERSION = 1
 
 
+def _clear_failure_markers(stem):
+    """A successful episode supersedes its failure markers.
+
+    Without this, a crash.json from an earlier attempt (or a no-speech marker from
+    before the endpoint key was fixed) survives the episode that fixed it: the retry
+    counter never resets, and anyone triaging sees a failure on an episode that
+    delivered.
+    """
+    for suffix in (".dubtitles.crash.json", NO_SPEECH_SUFFIX):
+        try:
+            os.remove(out_for(stem + suffix))
+        except OSError:
+            pass
+
+
 def _video_for(stem):
     for ext in ("mkv", "mp4", "m4v"):
         if os.path.exists(f"{stem}.{ext}"):
@@ -1644,6 +1659,7 @@ def main():
             log("  ", status)
             if status == "ok":
                 transcribed += 1
+                _clear_failure_markers(os.path.splitext(v)[0])
                 for k in totals:
                     totals[k] += _LAST_STATS.get(k, 0)
         except Exception as e:
