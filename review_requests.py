@@ -12,7 +12,7 @@ import uuid
 import zoneinfo
 from typing import Any
 
-from common import atomic_write, atomic_write_bytes
+from atomic_file import atomic_write, atomic_write_bytes
 
 REQUESTS_DIR = os.environ.get("REQUESTS_DIR", "/config/requests")
 ANIME_ROOT = os.environ.get("ANIME_ROOT", "/media/Anime Library")

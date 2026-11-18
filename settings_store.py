@@ -17,7 +17,7 @@ import urllib.parse
 import glossary_lock
 import settings_connections as conns
 import settings_registry as reg
-from common import atomic_write_bytes
+from atomic_file import atomic_write_bytes
 
 VERSION = 1
 MAX_BYTES = 256 * 1024

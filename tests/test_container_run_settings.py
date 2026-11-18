@@ -80,6 +80,7 @@ def run_server_function(tmp_path, secrets, env=None):
         "settings_connections.py",
         "glossary_lock.py",
         "common.py",
+        "atomic_file.py",
     ):
         shutil.copy(os.path.join(REPO, name), app / name)
     dump = tmp_path / "server-env.json"

@@ -3,9 +3,10 @@
 repair.py, dub_signs_merge.py, mine_glossary.py, recreate_srt.py).
 
 Single source of truth for the helpers that used to be duplicated per-module (see
-specs/v1-polish/spec.md, Phase 1 — Foundation). Stdlib + pysubs2: no imports from other
-project modules, so any pipeline stage can import this without dragging in the rest
-of the pipeline (and without risking a circular import).
+specs/v1-polish/spec.md, Phase 1 — Foundation). Stdlib + pysubs2, plus atomic_file (the
+dependency-free atomic-write leaf, re-exported below): no imports back from the rest of
+the pipeline, so any stage can import this without dragging the pipeline in and without
+risking a circular import.
 """
 
 import http.client
@@ -20,6 +21,13 @@ import uuid
 
 import pysubs2
 
+# The atomic-write primitive and the file-mode constants live in atomic_file.py, which has no
+# third-party imports. The shell loops drive a few CLIs (review_requests.py, watch_queue.py,
+# the settings store) from a minimal app directory that has no pysubs2, so what they need at
+# import time cannot come from this module. Re-exported here because common is the shared
+# helper surface the rest of the pipeline imports.
+from atomic_file import MODE_KEEP, SIDECAR_MODE, atomic_write, atomic_write_bytes  # noqa: F401
+
 MEDIA_UID = int(os.environ.get("MEDIA_UID", "1000"))
 MEDIA_GID = int(os.environ.get("MEDIA_GID", "100"))
 
@@ -33,15 +41,10 @@ MEDIA_GID = int(os.environ.get("MEDIA_GID", "100"))
 # umask 002 covers the plain open(path, "w") sites (write_stamp, the .fail marker,
 # crash/lastrun json, repair's srt + summary, mux.log). It is set at import because every
 # pipeline module imports common, so there is exactly one place to get this right. Sites that
-# chmod EXPLICITLY override umask and must use SIDECAR_MODE instead -- see _atomic_write in
-# generate.py and qc.write (qc.py is deliberately standalone and hardcodes the same value;
-# test_qc_mode_matches_common pins the two together).
-SIDECAR_MODE = 0o664
+# chmod EXPLICITLY must use SIDECAR_MODE instead (see atomic_file.py, which owns that constant
+# and the atomic write primitive; qc.py is deliberately standalone and hardcodes the same
+# value, with test_qc_mode_matches_common pinning the two together).
 os.umask(0o002)
-
-# atomic_write ``mode`` sentinel: reuse the target's current permission bits instead of
-# installing a fixed set. A target that does not exist yet gets SIDECAR_MODE.
-MODE_KEEP = "keep"
 
 HEARTBEAT_PATH = os.environ.get("HEARTBEAT_PATH", "/config/heartbeat.json")
 
@@ -337,113 +340,6 @@ def stop_requested():
     STOP_FLAG unset (manual runs, tests) nothing ever stops."""
     flag = os.environ.get("STOP_FLAG")
     return bool(flag) and os.path.exists(flag)
-
-
-def atomic_write(path, render, mode=SIDECAR_MODE, newline=None, fsync=False, quiet=False):
-    """Write ``path`` through a temp file in the same directory plus os.replace -- the
-    discipline qc.write and glossary_acquire._write_json already follow.
-
-    process() clears the in-flight .dubtitles.fail marker as soon as transcription
-    finishes, BEFORE the srt and conf are written, so a plain open(path, "w") that dies
-    mid-loop leaves a TRUNCATED file with no marker behind it: the default SKIP_IF_SRT=1
-    already-srt guard reads that as a finished episode on the next sweep and mux embeds a
-    cut-off subtitle. Same rule as the stale-sidecar parking fix one function away --
-    never drop known-good output before the replacement exists. os.replace either swaps
-    or does nothing, and a failure leaves neither a partial target nor a temp file.
-
-    The exception is deliberately NOT swallowed (unlike qc.write's): the srt and conf are
-    the episode's product, not observability, and a run that lost them must not report ok.
-
-    ``newline`` is passed to the file object (csv output needs ``newline=""``).
-
-    ``mode`` is the permission bits installed on the replacement: an int, or MODE_KEEP to
-    reuse the target's current bits (a target that does not exist yet gets SIDECAR_MODE).
-    It defaults to common.SIDECAR_MODE (0664) because mkstemp creates 0600, which would
-    strip group/other read from every file we ship; sidecars must stay GROUP-WRITABLE --
-    0644 meant only the creating uid could ever overwrite one, which broke every non-root
-    writer (see the SIDECAR_MODE comment above).
-
-    ``fsync`` also flushes the containing directory after the rename, making the rename
-    itself durable. Set it where a lost write is a lost account or setting (the config
-    volume), not for per-episode sidecars the next sweep rewrites anyway.
-
-    ``quiet`` returns False instead of raising, for callers that own a verdict path and
-    need a False they can report (decisions.save, unresolved._rewrite). The default is to
-    raise: an episode's product must not go missing silently.
-
-    Returns True on success. Either way the previous file survives and no temp remains.
-"""
-    return _atomic_replace(path, render, mode, fsync, quiet, binary=False, newline=newline)
-
-
-def atomic_write_bytes(path, data, mode=SIDECAR_MODE, fsync=False, quiet=False):
-    """atomic_write for a bytes payload (settings_store, review_glossary's glossary edits).
-
-    Same guarantees: temp file beside the target, chmod, os.replace; the old file survives
-    any failure and no temp is left behind. ``data`` may be str, encoded UTF-8."""
-    if isinstance(data, str):
-        data = data.encode("utf-8")
-    return _atomic_replace(path, lambda f: f.write(data), mode, fsync, quiet, binary=True, newline=None)
-
-
-def _resolve_mode(path, mode):
-    """MODE_KEEP -> the target's current permission bits (a new target gets SIDECAR_MODE);
-    anything else is the mode to install verbatim."""
-    if mode != MODE_KEEP:
-        return mode
-    try:
-        return os.stat(path).st_mode & 0o777
-    except OSError:
-        return SIDECAR_MODE
-
-
-def _fsync_dir(d):
-    """Flush the directory entry, so the rename survives a power loss. Best-effort: a
-    filesystem that refuses it must not turn a finished write into an error."""
-    try:
-        dfd = os.open(d, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dfd)
-    except OSError:
-        pass
-    finally:
-        os.close(dfd)
-
-
-def _atomic_replace(path, write, mode, fsync, quiet, binary, newline):
-    """The one atomic-replace engine both public writers run on.
-
-    mkstemp beside the target (same filesystem, so the rename is atomic), let ``write``
-    fill the fd, install ``mode``, os.replace over the target. On any Exception the temp is
-    unlinked: ``quiet`` callers get a False, everyone else the original traceback."""
-    d = os.path.dirname(path) or "."
-    tmp = None
-    try:
-        fd, tmp = tempfile.mkstemp(dir=d, prefix=os.path.basename(path) + ".", suffix=".tmp")
-        kwargs = {} if binary else {"encoding": "utf-8", "newline": newline}
-        with os.fdopen(fd, "wb" if binary else "w", **kwargs) as f:
-            write(f)
-            if fsync:
-                f.flush()
-                os.fsync(f.fileno())
-        os.chmod(tmp, _resolve_mode(path, mode))
-        os.replace(tmp, path)
-        tmp = None
-        if fsync:
-            _fsync_dir(d)
-        return True
-    except Exception:
-        if quiet:
-            return False
-        raise
-    finally:
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
 
 
 def write_stamp(path: str, video: str, stages: dict | None = None, mode: str | None = None) -> None:

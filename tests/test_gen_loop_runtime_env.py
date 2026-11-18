@@ -27,7 +27,13 @@ def _setup_app(tmp_path, include_exporter=True):
         shutil.copy(REPO / "review_settings_write.py", app / "review_settings_write.py")
         if (REPO / "glossary_lock.py").exists():
             shutil.copy(REPO / "glossary_lock.py", app / "glossary_lock.py")
-        for module in ("settings_registry.py", "settings_store.py", "settings_connections.py", "decision_client.py"):
+        for module in (
+            "settings_registry.py",
+            "settings_store.py",
+            "settings_connections.py",
+            "decision_client.py",
+            "atomic_file.py",  # the settings store's atomic write, stdlib-only by design
+        ):
             shutil.copy(REPO / module, app / module)
     (app / "mine_glossary.py").write_text("")
     return app

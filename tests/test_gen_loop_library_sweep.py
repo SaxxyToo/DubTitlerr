@@ -25,6 +25,9 @@ def _run_loop(tmp_path, sweep, with_order=True, **extra):
     (app / "shell").mkdir(parents=True)
     shutil.copy(REPO / "shell" / "lib.sh", app / "shell" / "lib.sh")
     shutil.copy(REPO / "review_requests.py", app / "review_requests.py")
+    # review_requests now shares the atomic-write primitive, which is stdlib-only so this
+    # minimal app dir stays pysubs2-free.
+    shutil.copy(REPO / "atomic_file.py", app / "atomic_file.py")
     (app / "mine_glossary.py").write_text("")
     (app / "generate.py").write_text(_STUB_GENERATE)
     (app / "watch_queue.py").write_text("import os; open(os.environ['CALLLOG'] + '.watch', 'w').close()\n")

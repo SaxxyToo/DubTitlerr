@@ -29,7 +29,7 @@ import os
 import time
 import unicodedata
 
-from common import atomic_write
+from atomic_file import atomic_write
 
 # The four outcomes a reviewer can reach. `force` admits a repair accept_repair refused;
 # it overrides the judgement gates but never fits_card, because card timing is immutable.
