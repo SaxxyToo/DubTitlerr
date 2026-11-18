@@ -95,15 +95,27 @@ Run on **debiantop**, from the repo root. Both entrants are the *same* endpoint 
 after `@` must be the router's entry name**.
 
 ```bash
-cd /root/workspace/repos/DubTitlerr        # debiantop
+cd /root/workspace/repos/DubTitlerr            # debiantop
 
-.venv/bin/python tools/asr_bakeoff.py \
-  "/mnt/saxro-media/anime-tv/<show>/Season 01/<episode>.mkv" \
+EP="/mnt/saxro-media/anime-tv/Attack on Titan (2013) [tvdbid-267440]/Season 01/Attack on Titan (2013) - S01E01 - 001 - To You in 2,000 Years The Fall of Shiganshina 1 [v2][Bluray-1080p v2][Opus 2.0][JA+EN][x265 10bit]-ZeroBuild.mkv"
+REF=/root/workspace/dubtitlerr-audit/bakeoff-refs/aot-s01e01-crunchyroll.srt
+
+.venv/bin/python tools/asr_bakeoff.py "$EP" \
   --models "endpoint:http://omarchy:11434/v1/audio/transcriptions@whisper-large-v3-turbo-subs,endpoint:http://omarchy:11434/v1/audio/transcriptions@whisper-large-v3-turbo-subs-v2" \
-  --ref "$(basename "<the same episode>.mkv")=<path to the reference SRT>" \
-  --out /tmp/bakeoff-config-ab-$(date +%Y%m%d).json \
+  --ref "$(basename "$EP")=$REF" \
+  --out /tmp/bakeoff-aot-e1-$(date +%Y%m%d).json \
   --metrics-only
 ```
+
+**About that reference.** `REF` is AOT S01E01's Crunchyroll subtitle track, extracted from
+the episode (stream 9) — a *sub*, not the dub script. The wiki's original reference was a
+movie whose SDL track turned out to be the actual dub script; that file is not identified
+anywhere in the repo and both cards that measured it are gone. A sub reference inflates the
+absolute WER (dub and sub localise differently) but both configurations are scored against
+**the same reference**, so the **delta** is what to read, not the absolute number. Agreement
+between the two entrants is computed regardless of `--ref`, and on a config A/B that is the
+first thing to look at: if the two agree ~100%, the flag changed nothing and the question is
+moot.
 
 - `--metrics-only` is **required for any report that leaves the machine**: the full report
   carries a commercial dub's script, and this repo does not commit transcripts.
