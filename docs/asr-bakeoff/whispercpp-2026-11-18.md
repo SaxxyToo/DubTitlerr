@@ -127,9 +127,21 @@ from `hallucination.BLOCKLIST` matching known hallucination patterns. It rises 2
 and the bakeoff's `blocklist_hits` independently rises 9 → 15 on the same episodes. **Two
 instruments, one signal, same direction.**
 
-What remains genuinely open is whether that is large-v3 hallucinating more, or large-v3's
-output tripping patterns turbo's does not — a confidence-calibration difference would not
-explain it, because the blocklist matches *text*, not confidence.
+**What that signal actually is** (checked 2026-11-18): the blocklist is 17 patterns —
+`amara.org`, `thank you for watching`, `thanks for your support`, `please subscribe`,
+`subtitles by`, `captions by`, `translated by`, `copyright`, `www.` — i.e. the **classic whisper
+hallucination-artifact family**, the boilerplate whisper invents when it decodes silence or
+music. So `dropped_hallucination` is a real hallucination count, not a proxy.
+
+As a rate: **1.46% of cards** on turbo (28 / 1918) against **2.40%** on large-v3 (45 / 1875).
+Small in absolute terms, ~1.6× in relative terms, consistent across both instruments.
+
+**Limits of this analysis, stated plainly:** which patterns fired cannot be enumerated from
+these artifacts. The pipeline *drops* blocklist cards before `conf.json` is written (a direct
+match over both conf files returns 0 hits for both configs), and the bakeoff report was stripped
+by `--metrics-only`. Determining whether large-v3 invents these lines more often, or invents
+different ones, needs a run whose transcripts are retained — which then must not leave the
+machine.
 
 One episode drives a lot of it: **Death Note S01E01 has `flagged` 11 → 27 (+145%)** — and it
 is also the one episode where large-v3's WER was marginally *worse* (+0.12 pp). It is the
