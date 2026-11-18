@@ -79,9 +79,60 @@ segment) stays at 0 for both, because large-v3's peak is 0.9248.
 - **Criterion 7 (VRAM)** — not applicable to an endpoint entrant; the model lives on the
   serving host, and reporting this process's VRAM would be meaningless.
 
+---
+
+## Pipeline pass (T1.5) — criterion 3
+
+The same five episodes run through **`generate.py` itself** (not just the transcriber), each
+config into its own `OUTPUT_ROOT`, on scratch copies of the media so nothing touched the live
+library. Counters are summed from the per-episode `dubtitles.qc.json` plus the run
+`lastrun.json`. `collapsed_runs` and `dropped_hallucination` live only in `lastrun.json`.
+
+| Counter | turbo | large-v3 | Δ | vs the 10% rule |
+|---|---|---|---|---|
+| `collapsed_runs` | 10 | **0** | −100% | **better** |
+| `merged_backward` | 112 | 95 | −15% | better |
+| `over_cps` | 423 | 378 | −11% | better |
+| `violations` | 432 | 386 | −11% | better |
+| `cards_after` | 1918 | 1875 | −2% | same |
+| `restore_runs_sent` | 60 | 64 | +7% | same |
+| `flagged` | 127 | 140 | +10.2% | **borderline** |
+| `low_conf` | 91 | 132 | **+45%** | **expected, not a defect** |
+| `dropped_hallucination` | 28 | 45 | **+61%** | **REGRESS** |
+| `orphan_candidates` | 2 | 6 | **+200%** | **REGRESS** |
+
+**Criterion 3 does not pass as written.** Three counters move the wrong way, two of them far
+outside tolerance.
+
+`low_conf` deserves its own reading: it is
+`avg_logprob < -0.8 or no_speech_prob > 0.6`, and large-v3 is the config whose
+`no_speech_prob` is *alive*. So this counter rising is the guard starting to work, not a
+regression — the two configs are not measuring the same thing any more. That is the finding
+from the bakeoff showing up again downstream.
+
+`dropped_hallucination` (+61%) and `orphan_candidates` (+200%) are not explained that way.
+Together with the bakeoff's blocklist rise (9 → 15) they form a consistent picture: **large-v3
+either hallucinates more, or trips the hallucination filters more, on the same audio.** Three
+independent counters agree, which makes this more than noise.
+
+One episode drives a lot of it: **Death Note S01E01 has `flagged` 11 → 27 (+145%)** — and it
+is also the one episode where large-v3's WER was marginally *worse* (+0.12 pp). It is the
+episode to hand-read before trusting the change.
+
+### On wall-clock in the pipeline pass
+
+`lastrun.json` reports turbo 875.6 s and large-v3 299.1 s for their five episodes. **This
+contradicts the bakeoff's 1.46× and is not trustworthy.** The server's own request log shows
+per-piece timings that are similar for both configs (turbo 4–23 s, large-v3 8–22 s), so the
+difference is in the gaps *between* episodes, not in transcription — something outside the
+decoder dominated that number and I could not account for it from the logs available. The
+bakeoff's per-episode wall times, measured back-to-back under the same conditions and
+instrumented directly, remain the reliable speed figure: **1.46×**.
+
 ## Open item worth naming
 
 The blocklist delta (9 → 15 across the same episodes) is the one result that argues *against*
-large-v3, and it is unexplained. It could be more segments in the 10–30% WER band carrying
+large-v3, and it is unexplained. The pipeline pass above strengthens it: `dropped_hallucination`
++61% and `orphan_candidates` +200% point the same way. It could be more segments in the 10–30% WER band carrying
 recognisable hallucination patterns, or a real regression. It should be understood before a
 rollout, and it is the strongest argument for running T1.5's pipeline QC pass.
