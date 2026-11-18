@@ -14,7 +14,10 @@ export async function reset(request: APIRequestContext) {
 /** Fill the sign-in form that is already on screen and submit it. */
 export async function signIn(page: Page, username = USERNAME, password = PASSWORD) {
   // exact: a bare 'Password' also matches 'New password', 'Current password' and the rest on the
-  // Settings page, so a sign-in that starts before that page is gone fails as a strict-mode violation.
+  // Settings page, so a sign-in that ran before that page was gone failed as a strict-mode violation
+  // (CI, 2026-11-18: resolved to 6 elements). An exact label matches nothing there, so fill() waits
+  // for the sign-in form itself. signOut() cannot wait for it instead: an edited page intercepts
+  // the sign-out with the Unsaved changes dialog, and a spec tests exactly that.
   await page.getByLabel('Username', { exact: true }).fill(username);
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
@@ -33,9 +36,6 @@ export async function signOut(page: Page) {
   const menu = page.getByRole('button', { name: 'Account menu' });
   if ((await menu.getAttribute('aria-expanded')) !== 'true') await menu.click();
   await page.getByRole('button', { name: 'Sign out' }).click();
-  // Signed out means the sign-in form is showing. Returning on the click let the next signIn() race
-  // the navigation (CI, 2026-11-18: 'Password' resolved to 6 elements on the Settings page).
-  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
 }
 
 /** The sidebar button for a view, opening the mobile drawer first when it is collapsed. */
