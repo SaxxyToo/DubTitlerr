@@ -2567,3 +2567,43 @@ def test_whispercpp_verbose_json_fixture_maps_to_whole_words():
     # the segment shape carries no text and no logprob: production rebuilds cards from
     # words, and the judge derives its logprob from word probs (see asr_bakeoff.endpoint_run_shape)
     assert "text" not in segments[0] and "avg_logprob" not in segments[0]
+
+
+def test_the_endpoint_request_asks_for_segments_as_well_as_words(tmp_path, monkeypatch):
+    """`no_speech_prob` lives only on SEGMENTS, and OpenRouter omits `segments` entirely
+    when word granularity is the only thing asked for.
+
+    Measured 2026-11-18 against openai/whisper-1: `verbose_json` alone returns segments
+    (no_speech_prob 0.279); adding `timestamp_granularities[]=word` returns NO segments and
+    no nsp at all; asking for BOTH word and segment returns both, with nsp intact. So the
+    old single-granularity request silently cost the repair stage its music guard -- the
+    endpoint path then rebuilt one synthetic whole-file segment, whose nsp is 0.0.
+
+    whisper.cpp is unaffected by the extra field (same segments, same words either way), so
+    this is safe on both endpoint flavours.
+    """
+    seen = {}
+
+    def _capture(url, fields, filename, payload, content_type, headers, timeout):
+        seen["fields"] = fields
+        return (200, json.dumps({"segments": [], "text": ""}))
+
+    def _fake_mp3(w, path):
+        open(path, "wb").write(b"x" * 2048)  # the real one writes the file; the open below needs it
+        return True
+
+    monkeypatch.setattr(generate, "_mp3_for_upload", _fake_mp3)
+    monkeypatch.setattr(generate, "_asr_key", lambda: "")
+    monkeypatch.setattr(generate, "_post_multipart", _capture)
+    monkeypatch.setattr(generate, "ASR_URL", "https://example.invalid/v1/audio/transcriptions")
+
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF")
+    try:
+        generate.endpoint_transcribe(str(wav))
+    except Exception:
+        pass  # the shape of the reply is not what this test is about
+
+    granules = [v for k, v in seen.get("fields", []) if k == "timestamp_granularities[]"]
+    assert "word" in granules, "word timestamps are still required by reflow"
+    assert "segment" in granules, "segments carry no_speech_prob; asking only for words loses it"
