@@ -136,12 +136,29 @@ music. So `dropped_hallucination` is a real hallucination count, not a proxy.
 As a rate: **1.46% of cards** on turbo (28 / 1918) against **2.40%** on large-v3 (45 / 1875).
 Small in absolute terms, ~1.6× in relative terms, consistent across both instruments.
 
-**Limits of this analysis, stated plainly:** which patterns fired cannot be enumerated from
-these artifacts. The pipeline *drops* blocklist cards before `conf.json` is written (a direct
-match over both conf files returns 0 hits for both configs), and the bakeoff report was stripped
-by `--metrics-only`. Determining whether large-v3 invents these lines more often, or invents
-different ones, needs a run whose transcripts are retained — which then must not leave the
-machine.
+**Which patterns fired — answered 2026-11-18** by re-running the same five episodes through
+the bakeoff with `--metrics-only` omitted, so the per-segment texts were on hand to match
+against. The report stayed in scratch and was not committed.
+
+| Pattern | turbo | large-v3 |
+|---|---|---|
+| `we.?ll be right back` | 6 | 9 |
+| `transcri(bed\|ption) by` | 2 | 0 |
+| `see you (in the )?next (video\|time)` | 1 | 2 |
+| `to be continued` | 0 | 3 |
+| `thank you for watching` | 0 | 1 |
+| **total** | **9** | **15** |
+
+**The answer: the same failure mode, modestly more often — not a new one.** Both models invent
+the same family of broadcast/credits boilerplate over silence and music transitions
+("we'll be right back", "to be continued", "thanks for watching", "transcribed by"). large-v3
+emits them about 1.7× as often (9 → 15 segments; 0.48% vs 0.84% of segments) and trades a couple
+of phrases for others, but every one is caught and dropped by the existing filter. There is no
+evidence of a worse or different failure mode.
+
+Read against WER, this is coherent: large-v3 is more willing to emit plausible-sounding text in
+a gap, which is the same behaviour that earns it a better WER on real dialogue. The filter is
+what keeps that from reaching a subtitle.
 
 One episode drives a lot of it: **Death Note S01E01 has `flagged` 11 → 27 (+145%)** — and it
 is also the one episode where large-v3's WER was marginally *worse* (+0.12 pp). It is the
