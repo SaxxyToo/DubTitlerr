@@ -1,5 +1,7 @@
 name: CI
-on: [push, pull_request, workflow_call]
+# workflow_dispatch: run CI by hand from the Actions tab or `gh workflow run CI`. On a fork GitHub
+# runs no workflow at all until the owner enables them once in the Actions tab.
+on: [push, pull_request, workflow_call, workflow_dispatch]
 
 # Stacked pushes to the same ref waste runners on commits nobody will ship.
 concurrency:
@@ -32,7 +34,9 @@ jobs:
       # test module fails at collection and this job never really ran. faster_whisper is
       # stubbed in tests (test_generate) and webrtcvad is monkeypatched (test_vad), so
       # neither is installed here.
-      - run: pip install pytest pysubs2 jellyfish
+      # Pinned, with scripts/check.sh pinning the same versions: a new release of a test tool
+      # must not fail a build on its own.
+      - run: pip install pytest==9.2.0 pysubs2==1.9.1 jellyfish==1.3.0
       # pyproject's [tool.pytest.ini_options] already sets addopts = "-q" and testpaths.
       - run: pytest
 
@@ -43,7 +47,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
-      - run: pip install ruff
+      - run: pip install ruff==0.17.5
       # The whole tree, not a hand-maintained file list. The previous list named ten modules
       # and had stopped covering thirteen others as the repo grew -- including
       # review_server.py, an authenticated HTTP write surface that runs as root, and
@@ -63,7 +67,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
-      - run: pip install pysubs2 jellyfish
+      - run: pip install pysubs2==1.9.1 jellyfish==1.3.0
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm ci
         working-directory: web

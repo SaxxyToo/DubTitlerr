@@ -111,16 +111,15 @@ To add a setting:
 
 Done when `tests/test_settings_registry_scan.py` (it fails on any variable the code reads that the registry lacks) and `tests/test_settings_registry.py` pass, and the row appears on its category page.
 
-CI runs Python `3.11` and `3.13`. Run the same checks locally:
+CI runs Python `3.11` and `3.13`, with pinned tool versions. Run the same checks locally:
 
 ```sh
-pip install pytest pysubs2 jellyfish
-pytest
-pip install ruff
-ruff check .
+scripts/check.sh          # ruff, then the full suite (uses uv when installed)
+scripts/check.sh --dash   # also the shell loops under dash, the image's /bin/sh (needs docker)
+scripts/install-hooks.sh  # optional: ruff on every commit, so lint fails before the commit
 ```
 
-Both finish clean before a PR. Conventions:
+Both finish clean before a PR. CI on a fork runs nothing until the owner enables workflows once in the repository's Actions tab; until then `scripts/check.sh` is the only gate, so run it. Conventions:
 
 - Write the failing test first. Tests mock HTTP and model calls and use fake credentials.
 - Write product sidecars through `common.atomic_write` (temporary file plus `os.replace`), so a failed write leaves the previous output intact.
@@ -137,6 +136,18 @@ PR checklist:
 - [ ] The description says what changed, which tests ran, and any migration or output-version consequence.
 
 Ask the maintainer first when a change touches card timing, transcript provenance, output-version migration, glossary admission policy, or anything that replaces media in place. These decide what ships into a library.
+
+### Merge a stack of PRs
+
+A stacked PR targets the branch below it. Merge from the bottom up, and keep the base branch until its child points at `main`:
+
+1. Merge the bottom PR with a merge commit (`gh pr merge N --merge`). Do not pass `--delete-branch`: deleting a branch closes every PR that targets it, and GitHub refuses to reopen them. That is how #4 and #5 were lost.
+2. Retarget the next PR: `gh pr edit N --base main`. If it now conflicts, merge `main` into its branch locally, resolve, run `scripts/check.sh`, and push (a normal push, never a force push of a branch with an open PR).
+3. Repeat. Delete merged branches only when nothing targets them.
+
+Replay the whole sequence on a scratch branch first (`git merge --no-ff` each branch in order, then `scripts/check.sh`): it surfaces every conflict before anything lands. Enabling `git config rerere.enabled true` lets the real merges reuse the resolutions.
+
+A clone made with `--depth`/`--single-branch` fetches only `main`, so `origin/<branch>` silently goes stale and a branch rebuilt from it is the wrong one. Run `git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'` once in such a clone.
 
 ## 5. Troubleshoot
 
