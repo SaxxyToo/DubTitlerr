@@ -627,6 +627,25 @@ Access is controlled by `ROUTE_ROLES`. Every route requires a specific role: `pu
 | PUT    | `/api/users/*`            | `admin`   | Update a user's role or password                                         |
 | DELETE | `/api/users/*`            | `admin`   | Delete a user account                                                    |
 
+### How a run request is filed
+
+A request (`POST /api/requests`, or a JSON file in `$CONFIG_DIR/requests`) names a show, and optionally a season, an episode pattern and `"force": true`. The generate loop serves it, then files it as `done` or `failed` from a scope report that `generate.py` writes from the files on disk, never from the exit code alone. The report is attached to the filed request as `report`.
+
+Every episode in scope lands in one bucket:
+
+| Bucket | Meaning |
+| :-- | :-- |
+| `rebuilt` | its transcript record (`.dubtitles.conf.json`) was written after the request started |
+| `delivered` | a current `.dubtitles.done` stamp, untouched by this request |
+| `awaiting_merge` | a transcript from an earlier run that the merge loop has not published yet |
+| `not_done` | counted by reason: `no-eng-dub`, `extract-failed`, `prior crash (.dubtitles.fail)`, `endpoint gave up (.dubtitles.no-speech)`, `error: <type>`, `not attempted`, or, for a forced request, `still delivered from an earlier run` |
+
+The request is `done` only when nothing is `not_done`. It fails when no episode matched, when a forced request rebuilt nothing, or when the report is missing. The error names the counts, for example `forced run rebuilt nothing (28 in scope: 28 still delivered from an earlier run)`.
+
+`"force": true` rebuilds delivered episodes too, each one once per request: a resume pass after a crash does not rebuild an episode this request already rebuilt. A `.dubtitles.fail` marker still wins and is reported.
+
+Delivery is the merge loop's job and happens after the request is filed, so `rebuilt` means a new transcript exists, not that it is published yet.
+
 ### Authentication and security
 
 Authentication uses role-based access control with two roles: `admin` and `user`.

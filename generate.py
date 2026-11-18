@@ -1081,6 +1081,83 @@ def _force_redo():
     return os.environ.get("FORCE_REDO", "").strip().lower() not in ("", "0", "false", "no", "off")
 
 
+def _request_since():
+    """REQUEST_SINCE: epoch seconds when the request being served started (gen_loop sets it
+    once per request, so it is the same across the resume passes after a crash). None when
+    generate runs outside a request."""
+    raw = os.environ.get("REQUEST_SINCE", "").strip()
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def _rebuilt_since(stem, since):
+    """True when this episode's transcript record was written at or after ``since``.
+
+    Both tiers write <stem>.dubtitles.conf.json on success and nothing else does, so its
+    mtime is the on-disk evidence that THIS request rebuilt the episode -- across resume
+    passes, and whatever the in-process counters of any one pass say."""
+    if since is None:
+        return False
+    try:
+        return os.path.getmtime(out_for(stem + ".dubtitles.conf.json")) >= since
+    except OSError:
+        return False
+
+
+def scope_report(files, since, statuses):
+    """What a request's scope looks like on disk after this pass.
+
+    Every in-scope episode lands in exactly one bucket: rebuilt by this request, delivered
+    (a current stamp, untouched), awaiting the merge pass (a transcript from an earlier run
+    that the merge loop has not published yet), or not done -- counted by reason. The
+    request's done/failed decision is made from this (review_requests.verdict), never from
+    generate's exit code alone: measured 2026-11-18, a forced request finished "done" in nine
+    minutes having produced nothing."""
+    rep = {"scope": len(files), "forced": _force_redo(), "since": since, "rebuilt": 0, "delivered": 0, "awaiting_merge": 0}
+    not_done = {}
+    for v in files:
+        stem = os.path.splitext(v)[0]
+        if _rebuilt_since(stem, since):
+            rep["rebuilt"] += 1
+            continue
+        if stamp_valid(read_stamp(stem + STAMP_SUFFIX), v):
+            key = "delivered"
+        elif os.path.exists(stem + ".eng.dubtitles.ass") or os.path.exists(stem + ".eng.dubtitles.srt"):
+            key = "awaiting_merge"
+        else:
+            key = None
+        if key and not (rep["forced"] and key == "delivered"):
+            rep[key] += 1
+            continue
+        if key == "delivered":
+            reason = "still delivered from an earlier run"
+        elif os.path.exists(stem + ".dubtitles.fail"):
+            reason = "prior crash (.dubtitles.fail)"
+        elif os.path.exists(stem + NO_SPEECH_SUFFIX):
+            reason = "endpoint gave up (.dubtitles.no-speech)"
+        else:
+            reason = statuses.get(v) or "not attempted"
+        not_done[reason] = not_done.get(reason, 0) + 1
+    rep["not_done"] = not_done
+    return rep
+
+
+def _write_run_report(rep):
+    """RUN_REPORT: where gen_loop wants the scope report for the request it is serving."""
+    path = os.environ.get("RUN_REPORT", "").strip()
+    if not path:
+        return
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(rep, f, indent=2)
+        os.replace(tmp, path)
+    except OSError as e:
+        log("  run report write failed:", e)
+
+
 def force_park_sidecars(stem):
     """FORCE_REDO: park an episode's delivered and intermediate sidecars so this run
     rebuilds them.
@@ -1614,8 +1691,18 @@ def main():
 
     # Cheap pre-filter (stat only, no ffprobe/model): drop files already done so a perpetual
     # re-scan doesn't pay the ~40s model load when there's nothing new to transcribe.
+    since = _request_since()
+    forced = _force_redo()
+
     def needs_work(v):
         stem = os.path.splitext(v)[0]
+        # Read here, not closed over: tests extract this function from main() and call it alone.
+        if _force_redo():
+            # A forced request reaches delivered episodes too -- the stamp check below is
+            # exactly what it overrides -- but only once: an episode this request already
+            # rebuilt (in an earlier resume pass) is not parked and rebuilt again. A poison
+            # marker still wins; it is reported, not silently skipped.
+            return not os.path.exists(stem + ".dubtitles.fail") and not _rebuilt_since(stem, _request_since())
         stamp = read_stamp(stem + STAMP_SUFFIX)
         if stamp_valid(stamp, v):
             return False  # muxed at the current version -> done
@@ -1635,7 +1722,10 @@ def main():
     # Split what needs doing by TIER. needs_work() stays the gate (it also honours the
     # pending-sidecar and poison-marker skips); this only decides which queue the
     # survivors land in.
-    transcribe_todo, text_todo = partition_todo(todo)
+    # Forced: a full rebuild. partition_todo would drop a delivered episode (its stamp is current
+    # in both tiers until force_park_sidecars moves it aside, just before process()).
+    transcribe_todo, text_todo = (list(todo), []) if forced else partition_todo(todo)
+    statuses = {}
     # Counted over EVERY file, not just todo: the question this answers is "how far
     # behind is the part of the library I am not watching", and that is invisible if it
     # only counts what is already queued.
@@ -1648,6 +1738,7 @@ def main():
     )
     if not todo:
         log("nothing to transcribe (all done) — skipping model load")
+        _write_run_report(scope_report(files, since, statuses))
         return
     # The model is loaded ONLY when something actually needs the decoder. A text-only
     # sweep otherwise paid a ~40s GPU model load to perform zero transcription, which
@@ -1678,8 +1769,10 @@ def main():
             break
         log("→", os.path.basename(v), "(text)")
         try:
-            log("  ", process_text(v))
+            statuses[v] = process_text(v)
+            log("  ", statuses[v])
         except Exception as e:
+            statuses[v] = f"error: {type(e).__name__}"
             log("  ERROR", type(e).__name__, e)  # one bad sidecar must not abort the show
     for v in transcribe_todo:
         if common.stop_requested():
@@ -1690,6 +1783,7 @@ def main():
             force_park_sidecars(os.path.splitext(v)[0])
         try:
             status = process(v)  # one bad episode must not abort the show
+            statuses[v] = status
             log("  ", status)
             if status == "ok":
                 transcribed += 1
@@ -1697,6 +1791,7 @@ def main():
                 for k in totals:
                     totals[k] += _LAST_STATS.get(k, 0)
         except Exception as e:
+            statuses[v] = f"error: {type(e).__name__}"
             log("  ERROR", type(e).__name__, e)
             # V2 C15: gate on the exception TYPE, not a substring match on "cuda" in the
             # message/stacktrace. faster-whisper/ctranslate2 raise RuntimeError for real
@@ -1749,6 +1844,10 @@ def main():
     # invocation, since SHOW_NAME/GLOSSARY_FILE are per-run env (see load_glossary()).
     show = os.environ.get("SHOW_NAME", "") or GLOSS.get("show", "") or "unknown_show"
     lastrun = build_lastrun(show, round(time.monotonic() - t0, 1), len(todo), transcribed, totals, census)
+    report = scope_report(files, since, statuses)
+    _write_run_report(report)
+    if isinstance(lastrun, dict):
+        lastrun["scope"] = report  # "done" carries its evidence: what was asked for vs what exists
     try:
         os.makedirs(GLOSS_DIR, exist_ok=True)
         with open(os.path.join(GLOSS_DIR, show + ".lastrun.json"), "w") as f:

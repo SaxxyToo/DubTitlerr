@@ -6,6 +6,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+# generate.py now writes a scope report (RUN_REPORT) that decides whether gen_loop files the
+# request done or failed; a stub that writes none is failed closed. Prefixed to every generate
+# stub: on exit, report one episode rebuilt. A stub that exits non-zero still fails the request
+# through its exit code.
+REPORT_OK = """\
+import atexit as _ax, json as _js, os as _os
+_ax.register(lambda: _os.environ.get("RUN_REPORT") and open(_os.environ["RUN_REPORT"], "w").write(_js.dumps(
+    {"scope": 1, "forced": False, "rebuilt": 1, "delivered": 0, "awaiting_merge": 0, "not_done": {}})))
+"""
+
+
 
 def _setup_app(tmp_path, include_exporter=True):
     app = tmp_path / "app"
@@ -72,7 +83,7 @@ def _prep_env(tmp_path, order_text, stubs):
         )
     )
     (app / "glossary_verify.py").write_text(stub("verify", "os.path.basename(sys.argv[1])[:-5]", stubs.get("verify", "")))
-    (app / "generate.py").write_text(stub("generate", "os.environ['SHOW_NAME']", stubs.get("generate", "")))
+    (app / "generate.py").write_text(REPORT_OK + stub("generate", "os.environ['SHOW_NAME']", stubs.get("generate", "")))
     config_dir = tmp_path / "config"
     (config_dir / "requests").mkdir(parents=True)
     gloss = tmp_path / "glossaries"
@@ -266,7 +277,7 @@ def _loop_env(tmp_path, app, config_dir, order_text="Show1\nShow2\n", **extra):
 
 
 def _recording_generate(app, runs_file, settings_file, on_show1, keys=("WHISPER_BEAM_SIZE", "REQUIRE_ENG", "PLEX_TOKEN")):
-    (app / "generate.py").write_text(f"""\
+    (app / "generate.py").write_text(REPORT_OK + f"""\
 import os, json, pathlib
 show = os.environ.get("SHOW_NAME", "")
 with open(r"{runs_file}", "a") as f:
@@ -328,7 +339,7 @@ def test_a_request_require_eng_still_beats_the_stored_value(tmp_path):
     config = tmp_path / "config"
     _store(config, {"REQUIRE_ENG": True})
     runs = tmp_path / "runs.jsonl"
-    (app / "generate.py").write_text(f"""\
+    (app / "generate.py").write_text(REPORT_OK + f"""\
 import os, json, pathlib
 open(r"{runs}", "a").write(json.dumps({{"require_eng": os.environ.get("REQUIRE_ENG")}}) + "\\n")
 pathlib.Path(os.environ["STOP_FLAG"]).touch()

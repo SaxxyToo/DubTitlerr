@@ -9,6 +9,9 @@ that shipped since.
 ## [Unreleased]
 
 ### Fixed
+- Run requests are filed `done` or `failed` from a scope report of what exists on disk, attached to the request, instead of from `generate.py`'s exit code. A forced request on a delivered show used to finish `done` having rebuilt nothing: `needs_work()` dropped every delivered episode before `force_park_sidecars()` could un-deliver it. Force now reaches delivered episodes, once per request across resume passes, and a request fails with the counts when no episode matched, a forced run rebuilt nothing, or any episode was not done.
+
+### Fixed
 - Merge pass: every stage, the publish gate and the end-of-pass census now get absolute paths. Relative paths broke when the library directory was replaced under a running pass: signs recorded `crashed`, the gate refused every mux, and the census printed `MERGE PASS COMPLETE` having counted nothing.
 - Endpoint transcription maps every response shape to whole words. whisper.cpp's server (llama-swap) returns sub-word tokens, which shipped as "po ch ita" and "60 , 000"; they are now merged at their word boundaries. Words at the top level of the document (OpenAI's shape) are assigned to their segments. A word with no probability takes its segment's `exp(avg_logprob)` instead of a flat 1.0, which had hidden every card from repair-target selection and the hallucination gate.
 - Endpoint transcription reads its key only from the variable named by `ASR_KEY_ENV` (it used to fall back to `OPENROUTER_API_KEY`, `OPENAI_API_KEY` and `ASR_API_KEY`), and refuses to send a key to anything but https or loopback http. Previously an empty `ASR_KEY_ENV` with a plain-http LAN `ASR_URL` sent whatever OpenRouter key the environment held to that host in clear text. **Upgrade note:** a deployment that relied on the fallback names must set `ASR_KEY_ENV` to the variable it actually uses.

@@ -237,15 +237,22 @@ EOF
 
 		attempt=0
 		rc=""
+		# One start time for the whole request, shared by every resume pass: generate counts an
+		# episode as rebuilt by THIS request when its transcript record is at least this new, and
+		# a forced request rebuilds each episode once, not once per pass. The scope report it
+		# writes is what decides done/failed below -- the exit code alone does not.
+		req_since=$(date +%s)
+		req_report="${TMPDIR:-/tmp}/dubtitlerr-request-report.$$.json"
 		while :; do
 			if stop_requested; then
 				echo "gen_loop: soft stop, not starting a generate pass on request $req_path"
 				break
 			fi
 			attempt=$((attempt + 1))
+			rm -f "$req_report" # a report left by an earlier pass must not stand in for this one
 			before=$(find "$ANIME/$req_show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
 			SHOW_NAME="$req_show" GLOSSARY_FILE="$GLOSS" REQUIRE_ENG="$req_eng" COMPUTE_TYPE="${COMPUTE_TYPE:-int8}" \
-				GENERATE_ONLY_RE="$req_gen_re" FORCE_REDO="$req_force" \
+				GENERATE_ONLY_RE="$req_gen_re" FORCE_REDO="$req_force" REQUEST_SINCE="$req_since" RUN_REPORT="$req_report" \
 				python3 "$APP_DIR"/generate.py --root "$ANIME/$req_show" </dev/null && rc=0 || rc=$?
 			after=$(find "$ANIME/$req_show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
 			[ "$rc" = "0" ] && break
@@ -266,17 +273,14 @@ EOF
 			break
 		fi
 
-		if [ "$rc" = "0" ]; then
-			if ! python3 "$APP_DIR"/review_requests.py finish "$req_path" ok </dev/null 2>&1; then
-				echo "gen_loop: failed to mark request $req_path as done — stopping drain"
-				break
-			fi
-		else
-			if ! python3 "$APP_DIR"/review_requests.py finish "$req_path" fail "generate failed (rc=$rc)" </dev/null 2>&1; then
-				echo "gen_loop: failed to mark request $req_path as failed — stopping drain"
-				break
-			fi
+		# done/failed from the scope report (review_requests.verdict), with the report attached
+		# to the request as its evidence. A missing report fails the request.
+		if ! python3 "$APP_DIR"/review_requests.py finish-report "$req_path" "$req_report" "${rc:-1}" </dev/null 2>&1; then
+			echo "gen_loop: failed to file request $req_path — stopping drain"
+			rm -f "$req_report"
+			break
 		fi
+		rm -f "$req_report"
 	done
 }
 
