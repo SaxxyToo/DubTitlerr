@@ -130,6 +130,12 @@ NO_SPEECH_SUFFIX = ".dubtitles.no-speech"
 ASR_REFERER = os.environ.get("ASR_REFERER", "https://github.com/SaxxyToo/dubtitlerr").strip()
 
 
+class EndpointConfigError(Exception):
+    """The endpoint backend is configured so that it must not be called (a key bound for a
+    clear-text URL). Neither a GPU failure nor an endpoint failure: it must not poison an
+    episode or count toward retiring one as no-speech."""
+
+
 class EndpointAsrError(Exception):
     """An endpoint transcription failed in a way that must not poison the episode.
 
@@ -993,14 +999,23 @@ def process_text(video):
 
 
 def _asr_key():
-    """Key for the endpoint backend: $ASR_KEY_ENV first, then the usual names."""
-    for name in (ASR_KEY_ENV, "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ASR_API_KEY"):
-        if not name:
-            continue
-        v = os.environ.get(name, "").strip()
-        if v:
-            return v
-    return ""
+    """Key for the endpoint backend: the variable NAMED by ASR_KEY_ENV, and nothing else.
+
+    No fallback names. A fallback made ASR_KEY_ENV="" ("this endpoint is keyless") pick up
+    whatever OPENROUTER_API_KEY / OPENAI_API_KEY the environment happened to hold and send it
+    to ASR_URL -- possibly a plain-http box on the LAN."""
+    return os.environ.get(ASR_KEY_ENV, "").strip() if ASR_KEY_ENV else ""
+
+
+def endpoint_key_problem():
+    """Why the endpoint key may not be sent to ASR_URL, or "" when it may (or no key is set).
+
+    The same rule the glossary and restore stages apply (common.openai_endpoint_problem): https,
+    or plain http to loopback only, and no credentials in the URL."""
+    if not _asr_key():
+        return ""
+    problem = common.openai_endpoint_problem(ASR_URL)
+    return f"{problem} (ASR_URL={ASR_URL!r}; set ASR_KEY_ENV= for a keyless endpoint)" if problem else ""
 
 
 def _mp3_for_upload(wav, path):
@@ -1047,6 +1062,9 @@ def endpoint_transcribe(wav):
 
     (segments: [{start,end,no_speech_prob}], words: [{text,start,end,prob,seg}])
     """
+    problem = endpoint_key_problem()
+    if problem:
+        raise EndpointConfigError(f"refusing to send the endpoint key: {problem}")
     key = _asr_key()
     if not key:
         # Keyless endpoints exist (a llama-swap whisper on the LAN). Don't refuse here:
@@ -1366,6 +1384,12 @@ def main():
         # the loops below break on their first check; do not pay the load for nothing
         log("stop requested: not loading the model")
     elif transcribe_todo and ASR_BACKEND == "endpoint":
+        problem = endpoint_key_problem()
+        if problem:
+            # A configuration error, so refuse the whole run before any episode is touched
+            # rather than failing each one in turn.
+            log(f"FATAL: refusing to send the endpoint key: {problem}")
+            sys.exit(2)
         log(f"ASR backend=endpoint model={ASR_MODEL} url={ASR_URL} — no local model load")
     elif transcribe_todo:
         globals()["WMODEL"] = WhisperModel(MODEL, device=ASR_DEVICE, compute_type=COMPUTE, download_root=MODEL_DIR)

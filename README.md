@@ -56,7 +56,7 @@ flowchart LR
 | `ASR_BACKEND` | `local` | `local` uses in-process faster-whisper; `endpoint` posts to an OpenAI-compatible transcription API |
 | `ASR_URL` | `https://openrouter.ai/api/v1/audio/transcriptions` | Endpoint URL. Must be the full `/audio/transcriptions` path |
 | `ASR_MODEL` | `openai/whisper-1` | Model name sent to the endpoint (`whisper-large-v3-turbo` for llama-swap) |
-| `ASR_KEY_ENV` | `OPENROUTER_API_KEY` | Name of the environment variable holding the key. Empty key is allowed (a keyless LAN endpoint); a key-requiring endpoint then answers 401 and the error carries it |
+| `ASR_KEY_ENV` | `OPENROUTER_API_KEY` | Name of the environment variable holding the key; only that variable is read. Set it empty for a keyless endpoint. A key is only sent over https, or plain http to loopback: any other URL refuses the run before an episode is touched |
 | `ASR_TIMEOUT` | `900` | Per-request timeout in seconds |
 | `ASR_REFERER` | fork repo URL | Sent as `HTTP-Referer` to OpenRouter only |
 
@@ -83,6 +83,7 @@ Example — a llama-swap whisper on the LAN (no key):
 ASR_BACKEND=endpoint
 ASR_URL=http://your-host:11434/v1/audio/transcriptions
 ASR_MODEL=whisper-large-v3-turbo
+ASR_KEY_ENV=          # keyless; a key is never sent over plain http to another machine
 ```
 
 Measured on an 892-episode library: local CPU int8 at beam 7 runs 3.2× realtime; llama-swap's `whisper-large-v3-turbo` on a current GPU runs ~11× realtime; OpenRouter `whisper-1` costs $0.006/min (~$0.14 per 24-minute episode).

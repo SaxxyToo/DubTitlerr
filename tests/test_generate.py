@@ -2146,3 +2146,62 @@ def test_a_schema_1_sidecar_with_no_compute_fields_still_reads(tmp_path):
     with open(path, "w") as f:
         json.dump(doc, f)
     assert common.read_words(stem) is not None
+
+
+# --- A6: the endpoint key is read from one named variable and never sent in clear text ----
+#
+# _asr_key() used to fall back to OPENROUTER_API_KEY, OPENAI_API_KEY and ASR_API_KEY, and the
+# endpoint path sent whatever it found to ASR_URL with no check on the URL. Point ASR_URL at a
+# plain-http LAN box with ASR_KEY_ENV left empty ("this endpoint is keyless") and an OpenRouter
+# key sitting in the environment went to that box in clear text. The glossary and restore stages
+# already refuse that through common.openai_endpoint_problem; this path now does too.
+
+
+def test_asr_key_reads_only_the_named_variable(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "oa-key")
+    monkeypatch.setenv("ASR_API_KEY", "asr-key")
+    monkeypatch.setattr(generate, "ASR_KEY_ENV", "MY_ASR_KEY")
+    monkeypatch.delenv("MY_ASR_KEY", raising=False)
+    assert generate._asr_key() == ""
+    monkeypatch.setenv("MY_ASR_KEY", " mine ")
+    assert generate._asr_key() == "mine"
+
+
+def test_an_empty_key_variable_name_sends_no_key(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setattr(generate, "ASR_KEY_ENV", "")
+    assert generate._asr_key() == ""
+
+
+@pytest.mark.parametrize(
+    "url,keyed,refused",
+    [
+        ("http://192.168.1.50:11434/v1/audio/transcriptions", True, True),  # LAN, clear text
+        ("http://user:pw@example.com/v1/audio/transcriptions", True, True),  # credentials in the URL
+        ("https://openrouter.ai/api/v1/audio/transcriptions", True, False),
+        ("http://127.0.0.1:11434/v1/audio/transcriptions", True, False),  # loopback
+        ("http://192.168.1.50:11434/v1/audio/transcriptions", False, False),  # keyless LAN endpoint
+    ],
+)
+def test_endpoint_key_problem(monkeypatch, url, keyed, refused):
+    monkeypatch.setattr(generate, "ASR_URL", url)
+    monkeypatch.setattr(generate, "_asr_key", lambda: "k" if keyed else "")
+    assert bool(generate.endpoint_key_problem()) is refused
+
+
+def test_a_key_is_never_posted_to_a_plain_http_lan_endpoint(monkeypatch, tmp_path):
+    wav = _stub_endpoint(monkeypatch, tmp_path, '{"segments": [{"start": 0, "end": 1, "text": "hi"}]}')
+    posted = []
+    monkeypatch.setattr(generate, "_post_multipart", lambda *a, **k: posted.append(a) or (200, "{}"))
+    monkeypatch.setattr(generate, "ASR_URL", "http://192.168.1.50:11434/v1/audio/transcriptions")
+    with pytest.raises(generate.EndpointConfigError):
+        generate.endpoint_transcribe(wav)
+    assert posted == []
+
+
+def test_an_endpoint_config_error_is_not_retried_as_an_endpoint_failure():
+    # EndpointAsrError counts toward the three attempts that retire an episode as no-speech; a
+    # misconfiguration must never retire an episode. Neither may it poison one (RuntimeError).
+    assert not issubclass(generate.EndpointConfigError, generate.EndpointAsrError)
+    assert not issubclass(generate.EndpointConfigError, RuntimeError)

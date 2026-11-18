@@ -169,7 +169,7 @@ line for review, and the stage still records `ok`.
 | `ASR_BACKEND`                        | `local`          | `local` runs Whisper in-process; `endpoint` posts the audio to an OpenAI-compatible URL        |
 | `ASR_URL`                            | OpenRouter       | Full `/audio/transcriptions` URL, used when `ASR_BACKEND=endpoint`                             |
 | `ASR_MODEL`                          | `openai/whisper-1` | Model name sent to the endpoint                                                              |
-| `ASR_KEY_ENV`                        | `OPENROUTER_API_KEY` | Name of the variable holding the endpoint key; empty sends no key (keyless LAN endpoint)   |
+| `ASR_KEY_ENV`                        | `OPENROUTER_API_KEY` | Name of the variable holding the endpoint key, and the only one read; empty sends no key. A key is sent only over https or to loopback, otherwise the run is refused |
 | `ASR_TIMEOUT`                        | `900`            | Per-request timeout in seconds for the endpoint call                                           |
 | `ENDPOINT_MAX_ATTEMPTS`              | `3`              | Consecutive endpoint failures before the episode is marked no-speech and stops retrying        |
 | `ASR_REFERER`                        | fork repo URL    | `HTTP-Referer`, sent to OpenRouter only                                                        |
