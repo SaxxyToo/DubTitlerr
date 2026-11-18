@@ -6,6 +6,7 @@ is built from: WER math, the whisper/nemo router, the judge summary, and the
 defensive NeMo transcript parser whose return shapes move between nemo versions.
 """
 
+import math
 import wave
 
 import pytest
@@ -395,3 +396,92 @@ def test_segment_from_words_keeps_contiguous_speech_together():
     words = [{"text": "a", "start": 0.0, "end": 0.5}, {"text": "b", "start": 0.6, "end": 1.0}]
     segs = ab.segment_from_words(words, max_gap=2.0)
     assert len(segs) == 1 and segs[0]["text"] == "a b"
+
+
+# --------------------------------------------------- endpoint entrant (whisper.cpp sidecar)
+
+
+def test_endpoint_spec_splits_the_url_from_its_label():
+    url, label = ab.parse_endpoint_spec(
+        "endpoint:http://127.0.0.1:11434/v1/audio/transcriptions@whispercpp-turbo-f16"
+    )
+    assert url == "http://127.0.0.1:11434/v1/audio/transcriptions"
+    assert label == "whispercpp-turbo-f16"
+
+
+def test_endpoint_spec_defaults_the_label_to_host_and_port():
+    """An unlabelled entry still needs a distinct report label -- two endpoints that
+    differ only by port must not collide as one entrant in the agreement table."""
+    url, label = ab.parse_endpoint_spec("endpoint:http://127.0.0.1:11434/v1/audio/transcriptions")
+    assert url == "http://127.0.0.1:11434/v1/audio/transcriptions"
+    assert label == "127.0.0.1:11434"
+
+
+def test_endpoint_spec_keeps_a_url_that_contains_an_at_sign_out_of_it():
+    """rpartition, not split: credentials in a URL ('user@host') must not be mistaken
+    for a label separator."""
+    url, label = ab.parse_endpoint_spec("endpoint:http://user@127.0.0.1:11434/v1/audio/transcriptions")
+    assert url == "http://user@127.0.0.1:11434/v1/audio/transcriptions"
+    assert label == "127.0.0.1:11434"
+
+
+def test_router_sends_endpoint_entries_to_the_endpoint_runner():
+    assert ab.is_endpoint_name("endpoint:http://127.0.0.1:11434/v1/audio/transcriptions@x")
+    assert not ab.is_endpoint_name("large-v3-turbo")
+    assert not ab.is_endpoint_name("nvidia/parakeet-tdt-0.6b-v3")
+
+
+def test_endpoint_shape_rebuilds_a_segment_text_from_its_own_words():
+    """endpoint_transcribe returns segments with no text -- production never needs it
+    there (reflow rebuilds cards from words), but the judge counts blocklist hits per
+    segment text, so the entrant must rebuild it."""
+    segments = [
+        {"start": 0.0, "end": 2.0, "no_speech_prob": 0.01},
+        {"start": 2.0, "end": 3.0, "no_speech_prob": 0.9},
+    ]
+    words = [
+        {"text": " Hello", "start": 0.0, "end": 0.5, "prob": 0.9, "seg": 0},
+        {"text": " there.", "start": 0.5, "end": 1.0, "prob": 0.8, "seg": 0},
+        {"text": " Music", "start": 2.0, "end": 3.0, "prob": 0.2, "seg": 1},
+    ]
+    segs, ws = ab.endpoint_run_shape(segments, words)
+    assert [s["text"] for s in segs] == ["Hello there.", "Music"]
+    assert [s["no_speech_prob"] for s in segs] == [0.01, 0.9]
+
+
+def test_endpoint_shape_derives_segment_logprob_from_word_probs_like_reflow():
+    """The endpoint path carries no per-segment avg_logprob: _map_endpoint_doc folds it
+    into word probs, and reflow.card_confidence derives card confidence back out of
+    those. Deriving the same way here means the judge sees what production sees -- and
+    it must match reflow's formula, not a re-implementation of it."""
+    import reflow
+
+    prob_a, prob_b = 0.5, 0.25
+    segments = [{"start": 0.0, "end": 2.0, "no_speech_prob": 0.0}]
+    words = [
+        {"text": " a", "start": 0.0, "end": 1.0, "prob": prob_a, "seg": 0},
+        {"text": " b", "start": 1.0, "end": 2.0, "prob": prob_b, "seg": 0},
+    ]
+    segs, ws = ab.endpoint_run_shape(segments, words)
+    expected, _nsp = reflow.card_confidence(words, segments)
+    assert segs[0]["avg_logprob"] == pytest.approx(expected)
+
+
+def test_endpoint_shape_keeps_word_prob_and_drops_the_endpoint_seg_key():
+    segments = [{"start": 0.0, "end": 1.0, "no_speech_prob": 0.0}]
+    words = [{"text": " a", "start": 0.0, "end": 1.0, "prob": 0.4, "seg": 0}]
+    _segs, ws = ab.endpoint_run_shape(segments, words)
+    # verbatim, leading space included: production stores merged whisper.cpp tokens the
+    # same way, and reflow relies on the spacing to rejoin them
+    assert ws == [{"text": " a", "start": 0.0, "end": 1.0, "prob": 0.4}]
+
+
+def test_endpoint_shape_clamps_a_zero_probability_before_the_log():
+    """prob 0 is real (a token the server scored at zero) and ln(0) is -inf, which would
+    poison every downstream median. reflow clamps at PROB_FLOOR; this must too."""
+    import reflow
+
+    segments = [{"start": 0.0, "end": 1.0, "no_speech_prob": 0.0}]
+    words = [{"text": " a", "start": 0.0, "end": 1.0, "prob": 0.0, "seg": 0}]
+    segs, _ws = ab.endpoint_run_shape(segments, words)
+    assert segs[0]["avg_logprob"] == pytest.approx(math.log(reflow.PROB_FLOOR))
