@@ -14,71 +14,89 @@
 **Run the bakeoff on debiantop.** It needs the media, the repo and a route to the endpoint,
 and debiantop has all three; omarchy has the media and the endpoint but not this branch.
 
-## T1.0 — close the config gaps (a second entry; the live one untouched)
+## T1.0 — add a large-v3 entry beside the live one
+
+The maintainer chose to move the sidecar to `large-v3` (2026-11-18): turbo's
+`no_speech_prob` is collapsed on **every** backend (see the spec's finding), and `large-v3`
+measured better WER in the wiki's own table (18.93% vs 20.76%). So the A/B is no longer a
+flag difference — it is **turbo vs large-v3**, which is the change actually being
+considered.
 
 Config: `~/stacks/ai/llama-swap.yaml` on omarchy, mounted to
-`/etc/llama-swap/config/config.yaml`. **It hot-reloads on save** —
-`/proc/1/cmdline` shows `-watch-config`, and the logs read
-`reloading configuration` → `configuration reloaded`. No restart needed.
+`/etc/llama-swap/config/config.yaml`. **It hot-reloads on save** — `/proc/1/cmdline` shows
+`-watch-config`, and the logs read `reloading configuration` → `configuration reloaded`.
+No restart.
 
-1. Back up, following the convention already in that directory:
+**1. Download the model** into the host-side model dir (`/home/saxxy/ai-models` →
+`/models` in the container). Verified sizes: `ggml-large-v3.bin` **2.88 GB**,
+`ggml-large-v3-q5_0.bin` **1.01 GB** (a cheaper middle option worth testing — quantisation
+is its own bakeoff axis). Omarchy has ~906 GB free, so size is not a constraint.
 
-   ```bash
-   cd ~/stacks/ai
-   cp llama-swap.yaml llama-swap.yaml.bak-$(date +%Y%m%d)
-   ```
+```bash
+cd ~/ai-models
+curl -fL --retry 3 -o ggml-large-v3.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
+ls -la ggml-large-v3.bin     # expect ~2.88 GB / 3093095424 bytes
+```
 
-2. Add a **second** entry directly after the existing
-   `whisper-large-v3-turbo-subs` block (currently lines 95-107). Do **not** edit the
-   existing entry: it is what production runs, and it stays that way until the gate has
-   evidence.
+**2. Back up, then add the entry** after the existing `whisper-large-v3-turbo-subs` block.
+Do **not** edit the existing entry — it is what production runs, and it stays that way
+until the gate has evidence.
 
-   ```yaml
-     whisper-large-v3-turbo-subs-v2:
-       cmd: |
-         ${whisper}
-         --model /models/ggml-large-v3-turbo.bin
-         --inference-path /v1/audio/transcriptions
-         --tmp-dir /tmp
-         --max-context 0
-         --beam-size 7
-         --best-of 7
-         --no-speech-thold 0.9
-         --logprob-thold -2.0
-       proxy: "http://127.0.0.1:${PORT}"
-       ttl: 900
-       capabilities:
-         in: [audio]
-         out: [text]
-   ```
+```bash
+cd ~/stacks/ai && cp llama-swap.yaml llama-swap.yaml.bak-$(date +%Y%m%d)
+```
 
-   `--logprob-thold -2.0` is the gap: production faster-whisper runs
-   `log_prob_threshold=-2.0` and the live entry leaves the server default of `-1.00`.
+```yaml
+  whisper-large-v3-subs:
+    cmd: |
+      ${whisper}
+      --model /models/ggml-large-v3.bin
+      --inference-path /v1/audio/transcriptions
+      --tmp-dir /tmp
+      --max-context 0
+      --beam-size 7
+      --best-of 7
+      --no-speech-thold 0.9
+      --logprob-thold -2.0
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 900
+    capabilities:
+      in: [audio]
+      out: [text]
+```
 
-3. **Add it to the `audio` group** (near line 145). The router only routes to group
-   members — without this the entry loads and is never reachable, which looks like a
-   silent failure:
+`--logprob-thold -2.0` matches production faster-whisper's `log_prob_threshold`; the
+existing turbo entry leaves the server default of `-1.00`. Take both differences or the A/B
+cannot say which one moved the numbers.
 
-   ```yaml
-           audio:
-             ...
-             - whisper-large-v3-turbo-subs
-             - whisper-large-v3-turbo-subs-v2      # <- add
-   ```
+**3. Add it to the `audio` group** (near line 145). The router only routes to group members,
+and an entry outside the group loads and is never reachable — which looks like a silent
+failure:
 
-4. Verify (both must work; save the file first so the watcher reloads):
+```yaml
+        audio:
+          ...
+          - whisper-large-v3-turbo-subs
+          - whisper-large-v3-subs            # <- add
+```
 
-   ```bash
-   # the live entry is unchanged
-   curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:11434/health
-   # the new entry answers and returns words
-   curl -s -F file=@<any short wav> -F response_format=verbose_json \
-        -F model=whisper-large-v3-turbo-subs-v2 \
-        http://127.0.0.1:11434/v1/audio/transcriptions | head -c 400
-   ```
+**4. Verify** (save the file first so the watcher reloads):
 
-   Confirm the reply has `segments[].words` with `probability`, and `avg_logprob` /
-   `no_speech_prob` per segment.
+```bash
+# the live entry is untouched and still answers
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:11434/health
+# the new entry answers, and -- the first thing to check -- whether its nsp is ALIVE
+curl -s -F file=@<a short wav> -F response_format=verbose_json \
+     -F model=whisper-large-v3-subs \
+     http://127.0.0.1:11434/v1/audio/transcriptions | head -c 400
+```
+
+The point of the whole change is the `no_speech_prob` values in that reply. turbo returns
+`~1e-10`; `large-v3` should return a range that reaches the `0.0-0.9` territory the guard
+expects. **The wiki's large-v3 evidence is from CT2, not whisper.cpp** — whisper.cpp's
+large-v3 nsp is unverified until this reply, or the bakeoff's `nsp_alive_frac`, says
+otherwise. Check it before believing the fix worked.
 
 ## Prerequisites for T1.3
 
@@ -97,25 +115,22 @@ after `@` must be the router's entry name**.
 ```bash
 cd /root/workspace/repos/DubTitlerr            # debiantop
 
-EP="/mnt/saxro-media/anime-tv/Attack on Titan (2013) [tvdbid-267440]/Season 01/Attack on Titan (2013) - S01E01 - 001 - To You in 2,000 Years The Fall of Shiganshina 1 [v2][Bluray-1080p v2][Opus 2.0][JA+EN][x265 10bit]-ZeroBuild.mkv"
-REF=/root/workspace/dubtitlerr-audit/bakeoff-refs/aot-s01e01-crunchyroll.srt
+EP="/mnt/saxro-media/anime-tv/Cyberpunk Edgerunners (2022) [tvdbid-384541]/Season 01/Cyberpunk Edgerunners (2022) - S01E01 - 001 - Let You Down [NF][WEBDL-1080p v2][EAC3 5.1][JA+EN][x264 8bit]-FLUX.mkv"
+REF=/root/workspace/dubtitlerr-audit/bakeoff-refs/edgerunners-s01e01-dub.srt
 
 .venv/bin/python tools/asr_bakeoff.py "$EP" \
-  --models "endpoint:http://omarchy:11434/v1/audio/transcriptions@whisper-large-v3-turbo-subs,endpoint:http://omarchy:11434/v1/audio/transcriptions@whisper-large-v3-turbo-subs-v2" \
+  --models "endpoint:http://omarchy:11434/v1/audio/transcriptions@whisper-large-v3-turbo-subs,endpoint:http://omarchy:11434/v1/audio/transcriptions@whisper-large-v3-subs" \
   --ref "$(basename "$EP")=$REF" \
   --out /tmp/bakeoff-aot-e1-$(date +%Y%m%d).json \
   --metrics-only
 ```
 
-**About that reference.** `REF` is AOT S01E01's Crunchyroll subtitle track, extracted from
-the episode (stream 9) — a *sub*, not the dub script. The wiki's original reference was a
-movie whose SDL track turned out to be the actual dub script; that file is not identified
-anywhere in the repo and both cards that measured it are gone. A sub reference inflates the
-absolute WER (dub and sub localise differently) but both configurations are scored against
-**the same reference**, so the **delta** is what to read, not the absolute number. Agreement
-between the two entrants is computed regardless of `--ref`, and on a config A/B that is the
-first thing to look at: if the two agree ~100%, the flag changed nothing and the question is
-moot.
+**About that reference.** This one is a genuine **dub script**, not a sub: the episode
+carries an embedded track titled `Dub` (stream 6), and 170 episodes across the library
+carry one. Verified on extraction: 329 cues, 2246 words, last cue at 1345 s. The wiki's
+original reference was the same lucky discovery (a track mislabelled SDH that was really
+the dub script) — this library simply labels them properly. So the WER here is a real
+ground-truth number, not a cross-translation proxy.
 
 - `--metrics-only` is **required for any report that leaves the machine**: the full report
   carries a commercial dub's script, and this repo does not commit transcripts.
