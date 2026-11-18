@@ -34,7 +34,7 @@ Rules: each task ≤ ~1h with a verifiable done criterion; `scripts/check.sh` gr
   measured). **Maintainer runs the write** to `~/stacks/ai/llama-swap.yaml` on omarchy; this task
   produces the exact edit and the recreate/verify commands — done when: he confirms the endpoint
   reports the new flags and a smoke transcription still returns `words`.
-- [ ] **T1.1** Add an `endpoint:` entrant to `tools/asr_bakeoff.py` — e.g.
+- [x] **T1.1** Add an `endpoint:` entrant to `tools/asr_bakeoff.py` — e.g.
   `--models large-v3-turbo,endpoint:http://127.0.0.1:11434/v1/audio/transcriptions@whispercpp-turbo-f16`.
   Reuse `generate.endpoint_transcribe` so the bakeoff exercises production code (chunking
   included); keep GPU imports lazy; fill the same `segments`/`words`/`episodes` shape as
@@ -103,6 +103,13 @@ Each item: failing test first, then code, then the registry entry (`settings_reg
 ## Done
 
 *(move tasks here as they complete, preserving the done criterion)*
+
+- **T1.1** — `endpoint:URL[@label]` entrant lands in `tools/asr_bakeoff.py`: `is_endpoint_name`,
+  `parse_endpoint_spec` (label = last `@` in the path, never authority userinfo), `endpoint_run_shape`
+  (segment text rebuilt from words; `avg_logprob` derived with reflow's own formula and `PROB_FLOOR`
+  imported, not restated), `run_endpoint` (calls `generate.endpoint_transcribe`, globals restored in
+  `finally`). Every entry records `logprob_source` (`native-segment` vs `derived-from-word-probs`).
+  49 tests pass; `scripts/check.sh` green (5072 passed, 3 skipped). No custom image built.
 
 - **T0.2** — `gh pr list` empty, 2026-11-18.
 - **T0.3** — pinned `v1.9.5`; all CMake options, server flags, `/health` semantics, DTW preset
