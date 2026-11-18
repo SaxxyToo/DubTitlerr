@@ -14,6 +14,8 @@ cd "$(dirname "$0")/.."
 
 RUFF_VERSION=0.17.5
 PYTEST_VERSION=9.2.0
+PYSUBS2_VERSION=1.8.1 # 1.9 needs Python 3.12; CI's 3.11 leg and the images use 1.8
+JELLYFISH_VERSION=1.3.0
 PY=${CHECK_PYTHON:-3.13}
 
 run_ruff() {
@@ -27,7 +29,7 @@ run_ruff() {
 run_pytest() {
 	# addopts="" so the summary line ("N passed") is printed: pyproject sets -q, and -q twice hides it.
 	if command -v uv >/dev/null 2>&1; then
-		uv run -q --python "$PY" --with "pytest==$PYTEST_VERSION" --with pysubs2 --with jellyfish --no-project \
+		uv run -q --python "$PY" --with "pytest==$PYTEST_VERSION" --with "pysubs2==$PYSUBS2_VERSION" --with "jellyfish==$JELLYFISH_VERSION" --no-project \
 			pytest -o addopts="" -q -p no:cacheprovider "$@"
 	else
 		python3 -m pytest -o addopts="" -q -p no:cacheprovider "$@"
@@ -45,7 +47,7 @@ if [ "${1:-}" = "--dash" ]; then
 	echo "== shell loops under dash"
 	docker run --rm -v "$PWD":/src:ro python:3.13-slim sh -c '
 		cp -r /src /w && cd /w &&
-		pip install -q --root-user-action=ignore "pytest=='"$PYTEST_VERSION"'" pysubs2 jellyfish >/dev/null 2>&1 &&
+		pip install -q --root-user-action=ignore "pytest=='"$PYTEST_VERSION"'" "pysubs2=='"$PYSUBS2_VERSION"'" "jellyfish=='"$JELLYFISH_VERSION"'" >/dev/null 2>&1 &&
 		python -m pytest -o addopts="" -q -p no:cacheprovider tests/test_merge_pass.py tests/test_merge_pass_app_dir.py \
 			tests/test_soft_stop.py tests/test_gen_loop_requests.py tests/test_gen_loop_runtime_env.py'
 fi
