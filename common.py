@@ -94,6 +94,18 @@ KARAOKE = re.compile(r"\\[kK][fo]?\d")
 POSITIONED = re.compile(r"\\(?:pos|move)\(|\\an[13456789]")
 DROP_STYLE = re.compile(r"warning", re.I)  # junk, never a dialogue reference
 DIALOGUE_EXCLUDE_STYLE = re.compile(r"karaoke|translat|sign|song|caption|title|credit|note|lyric|romaji|kashi|insert", re.I)
+# An opening or ending, recognised by an OP/ED TOKEN in the style name -- the one definition the
+# signs merge (song spans, dedup) and is_dialogue_event share. Releases name these every way:
+# "OP", "ED", "OP1", "OP-E", "ED_ENG", "OP_ROM3", "EDTL", "Op TL", "op trans", "OP - English",
+# "Death Note OP", "Opening-Romaji-L1", "ED1-Japanese". The old prefix pattern ("Opening-",
+# "ED<N>-") recognised one release of 27 measured (2026-11-18). A token is OP/ED/Opening/Ending,
+# optionally numbered and optionally fused with a language/role suffix (EDTL, OP_ENG1); not "Open",
+# "Editor", "Overlap", and not an "Ending Card" (the end-card illustration, which a next-episode
+# preview is often spoken over).
+SONG_FAMILY_STYLE = re.compile(
+    r"(?:^|[^a-z0-9])(opening|ending|op|ed)(?:\d+|tlt|tl|trans|romaji|rom|eng|jp|kanji|kan)?\d*(?=$|[^a-z0-9])(?![^a-z0-9]+cards?\b)",
+    re.I,
+)
 
 
 def load_extras(path="data/extras.txt"):
@@ -786,7 +798,7 @@ def is_dialogue_event(ev: "pysubs2.SSAEvent", txt: str | None = None) -> bool:
     if KARAOKE.search(t) or POSITIONED.search(t):  # sign/song, not dialogue
         return False
     style = ev.style or ""
-    if DIALOGUE_EXCLUDE_STYLE.search(style) or DROP_STYLE.search(style):
+    if DIALOGUE_EXCLUDE_STYLE.search(style) or DROP_STYLE.search(style) or SONG_FAMILY_STYLE.search(style):
         return False
     return bool(txt if txt is not None else ev.plaintext.strip())
 
