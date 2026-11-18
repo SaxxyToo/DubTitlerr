@@ -92,6 +92,7 @@ _wave('ASR_URL', 'transcription', 'Endpoint URL', 'Full /audio/transcriptions UR
 _wave('ASR_MODEL', 'transcription', 'Endpoint model', 'Model name sent to the endpoint, such as openai/whisper-1 or whisper-large-v3-turbo.', 'string', 'openai/whisper-1', 'gen', 'next_show', pattern=r"[A-Za-z0-9][A-Za-z0-9._/\-]{0,127}", pattern_help='must be a model name')
 _wave('ASR_KEY_ENV', 'transcription', 'Endpoint key variable', 'Name of the environment variable that holds the endpoint API key; empty means no key is sent.', 'string', 'OPENROUTER_API_KEY', 'gen', 'next_show', pattern=r"[A-Z][A-Z0-9_]{0,63}", pattern_help='must be an environment variable name')
 _wave('ASR_TIMEOUT', 'transcription', 'Endpoint timeout (s)', 'Per-request timeout for the endpoint transcription call.', 'int', 900, 'gen', 'next_show', min=30, max=7200)
+_wave('ENDPOINT_MAX_ATTEMPTS', 'transcription', 'Endpoint retry limit', 'Consecutive endpoint failures before an episode is marked no-speech and stops retrying.', 'int', 3, 'gen', 'next_show', min=1, max=20)
 _wave('ASR_REFERER', 'transcription', 'Endpoint referer', 'HTTP-Referer sent to OpenRouter only; other endpoints ignore it.', 'url', 'https://github.com/SaxxyToo/dubtitlerr', 'gen', 'next_show')
 _wave('ACQUIRE', 'glossary', 'Acquire missing names', 'Fill glossary names from the wiki for shows without an embedded fansub track.', 'bool', True, 'gen', 'next_show')
 _wave('ACQUIRE_APPLY', 'glossary', 'Apply acquired names', 'On: acquisition writes the names it finds. Off: it only logs proposals.', 'bool', True, 'gen', 'next_show')

@@ -21,6 +21,7 @@ FIRST_WAVE = {
         "ASR_KEY_ENV",
         "ASR_TIMEOUT",
         "ASR_REFERER",
+        "ENDPOINT_MAX_ATTEMPTS",
     ],
     "glossary": [
         "ACQUIRE",
