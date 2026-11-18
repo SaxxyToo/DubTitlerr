@@ -6,6 +6,21 @@ version history (they say what changed in the _output_, and only a stamp bump pu
 already-processed files); the entries below summarize that history alongside everything else
 that shipped since.
 
+## Fork additions
+
+This repository is a fork of [XenaRathon/DubTitlerr](https://github.com/XenaRathon/DubTitlerr).
+The released versions below are upstream's; everything under `[Unreleased]` includes the fork's own
+work, and three additions are the fork's alone — the README leads with them:
+
+- **Endpoint ASR backend** (`ASR_BACKEND=endpoint`) — transcribe through any OpenAI-compatible
+  `/audio/transcriptions` endpoint (OpenRouter, a llama-swap whisper, a Nous gateway), so a node
+  needs no model, no torch, no GPU and no CUDA.
+- **Lite image** (`Dockerfile.lite`, ~930 MB against the full image's ~13 GB) — the pipeline and
+  the review UI without a baked Whisper model.
+- **Sidecar delivery and adoption** (`OUTPUT_MODE=sidecar`, `ADOPT_DUB_EN=1`) — publish
+  `<episode>.dub.en.ass` beside the video instead of rewriting it, and run an existing sidecar
+  from another pipeline through repair + signs merge.
+
 ## [Unreleased]
 
 ### Fixed
@@ -506,7 +521,7 @@ COMPLETE`. It prints `MERGE PASS INCOMPLETE: failed-stage scan error`. Counts fr
 
 Release-integrity and fail-closed hardening driven by the v0.2.0 adversarial release review
 (findings B1–B9; the original review file is missing — a labeled reconstruction plus a
-post-review evidence log in `docs/Adversarial Reviews/` document the findings and this
+post-review evidence log documented the findings and this
 remediation).
 
 ### Fixed
@@ -556,9 +571,8 @@ Sanitized evidence recorded 2026-09-24/25 (no secrets; no live mutation accompan
 
 ## 0.2.0 - 2026-09-23
 
-Scope boundary for the v0.2.0 hardening pass, set 2026-09-21. The scope ids S-1 through
-S-22 are defined in `.procoder/specs/v0-2-0-hardening.md`; the tasks that deliver them are
-in `.procoder/plans/v0-2-0-hardening.md` (sprints 010-015).
+Scope boundary for the v0.2.0 hardening pass, set 2026-09-21. The scope ids S-1 through S-22
+were defined by that pass; the tasks that delivered them ran as sprints 010-015.
 
 ### Included
 
@@ -589,7 +603,7 @@ in `.procoder/plans/v0-2-0-hardening.md` (sprints 010-015).
   checked without inferring it from an idle-looking container (S-16).
 - S-17 through S-20 (sprint 014, Measurement): tools/timing_compare.py's real-media
   validation (T12) runs on 3 representative shows with a written go/no-go report, and
-  specs/timing-compare/tasks.md's stale checklist is reconciled with what already shipped
+  the timing-compare task checklist is reconciled with what already shipped
   on main (S-17); the queue/publish operational checklist (timers, order-file drift,
   manifest policy) is verified live (S-18); the storage/host checklist is closed and
   FFMPEG_TIMEOUT's default is raised from 600 s to 1800 s, measured too short against a
@@ -774,8 +788,8 @@ episode already in your library is stale.
 - **v2** (2026-07-27) — fixed a signs-merge bug that rendered captions as solid black
   and duplicated signs across tracks.
 
-[0.2.1]: https://github.com/XenaRathon/DubTitlerr/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/XenaRathon/DubTitlerr/compare/v0.1.0...v0.2.0
-[0.3.0]: https://github.com/XenaRathon/DubTitlerr/compare/v0.2.2...v0.3.0
-[0.2.2]: https://github.com/XenaRathon/DubTitlerr/compare/v0.2.1...v0.2.2
-[Unreleased]: https://github.com/XenaRathon/DubTitlerr/compare/v0.3.0...HEAD
+[0.2.1]: https://github.com/SaxxyToo/DubTitlerr/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/SaxxyToo/DubTitlerr/compare/v0.1.0...v0.2.0
+[0.3.0]: https://github.com/SaxxyToo/DubTitlerr/compare/v0.2.2...v0.3.0
+[0.2.2]: https://github.com/SaxxyToo/DubTitlerr/compare/v0.2.1...v0.2.2
+[Unreleased]: https://github.com/SaxxyToo/DubTitlerr/compare/v0.3.0...HEAD

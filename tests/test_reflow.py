@@ -570,7 +570,7 @@ def test_orphan_is_never_merged_backward():
     # NOTE: with merges == [] the output group count can only equal the input
     # count (3) -- merge_runts never drops groups, it only merges or keeps them.
     # The brief's draft asserted len(out) == 2, which is unreachable whenever
-    # merges == [] on a 3-group input; see task-6-report.md.
+    # merges == [] on a 3-group input.
     assert len(out) == 3 and merges == []
 
 

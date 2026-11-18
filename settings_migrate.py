@@ -1,4 +1,4 @@
-"""One-time migration from the pre-0.3.0 runtime.env and REPAIR_PROFILES (specs/webui-full-settings, S-4).
+"""One-time migration from the pre-0.3.0 runtime.env and REPAIR_PROFILES.
 
 On the first start with no `runtime.env.migrated` next to the old runtime file:
   * the keys of an existing runtime.env become stored values (REQUIRE_ENG, ACQUIRE_APPLY, REPAIR_MODEL, VERIFY_BACKEND,

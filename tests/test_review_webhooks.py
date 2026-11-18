@@ -1,4 +1,4 @@
-"""Sonarr/Radarr webhook receiver (specs/arr-webhooks): mapping, auth, show resolve, dedup, dispatch.
+"""Sonarr/Radarr webhook receiver: mapping, auth, show resolve, dedup, dispatch.
 
 Pure helpers with injected inputs (environ dicts, fake create/list_requests); no server needed.
 Fixtures under tests/fixtures/webhooks/ are hand-written, not captured."""

@@ -1,4 +1,4 @@
-"""Sonarr/Radarr webhook receiver helpers (specs/arr-webhooks).
+"""Sonarr/Radarr webhook receiver helpers.
 
 Turns Download/Upgrade events into run-request queue files; the loop stays the sole
 executor. Pure functions with injected inputs (environ dicts, create/list_requests

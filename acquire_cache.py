@@ -18,8 +18,7 @@ state, so there is no verdict a dry run may safely skip: a cached `apply` never 
 `--apply`, and a cached `flag` never reaches the human review queue it exists to feed.
 Measured 2026-08-29: two byte-identical dry runs over One Pace reported `proposed 641`
 then `proposed 0`, and five accumulated cache files held 10,708 `flag` verdicts that would
-never have surfaced for a human to review. See
-`.procoder/todo/20260829-acquire-cache-suppresses-every-verdict.md`.
+never have surfaced for a human to review.
 
 The fix is to cache the expensive INTERMEDIATE instead: `adjudicate_merge()`'s answer to
 "are `variant` and `canonical` the same entity", keyed on that pair. Every token still flows

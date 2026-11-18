@@ -236,8 +236,7 @@ ANIMATED = re.compile(r"\\t\(|\\fade?\(|\\move\(")
 # of a sign, \fad softens a scene change. See keep_event()'s mixed_track rule.
 HARD_SIGN_TAG = re.compile(r"\\(?:pos|move|t)\(")
 # KEEP the Japanese romaji karaoke (top) + signs/credits + the fansub's own English song
-# TRANSLATION. Reversed 2026-09-02 (.procoder/todo/20260830-drop-transcribed-song-lyrics-
-# restore-fansub-translation.md): the translation used to be dropped on the assumption that
+# TRANSLATION. Reversed 2026-09-02: the translation used to be dropped on the assumption that
 # whisper's transcribed English-dub lyrics would replace it, which only holds if the dub
 # re-sings the song in English. Measured on SAO S01E02 (opening sung in Japanese): whisper
 # mangles the Japanese into pseudo-romaji and then invents English outright (avg_logprob

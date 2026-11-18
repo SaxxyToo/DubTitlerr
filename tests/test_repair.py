@@ -1906,7 +1906,7 @@ def test_accept_repair_never_splits_a_machine_proposal():
 
 
 def test_a_correct_too_wide_for_one_line_but_splittable_ships_as_two_cues(tmp_path, monkeypatch):
-    """.procoder/todo/20260829-split-a-card-so-a-human-correction-fits.md: an over_line_len
+    """An over_line_len
     refusal (NOT over_cps -- that stays out of scope and unsplittable, see
     test_a_correct_that_does_not_fit_the_card_is_refused_and_recorded) now ships as two
     cues instead of being thrown away. Fixture verified directly against reflow: at 10.0s

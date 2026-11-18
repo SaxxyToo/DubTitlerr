@@ -82,7 +82,7 @@ WORKDIR /app
 # before mux, so a missing file made the pass print "MERGE PASS COMPLETE" having delivered
 # nothing -- the in-loop `exit 1` only ended that piped subshell. It sits in ENTRYPOINTS in
 # tests/test_dockerfile_copy.py now, so its own imports are checked against this list too.
-COPY generate.py reflow.py glossary.py glossary_verify.py glossary_acquire.py hallucination.py ordering.py atomic_file.py common.py common_words.txt \
+COPY generate.py reflow.py glossary.py glossary_verify.py glossary_acquire.py hallucination.py ordering.py atomic_file.py common.py \
      repair.py dub_signs_merge.py mux.py plex_refresh.py mine_glossary.py recreate_srt.py merge_pass.sh card_split.py publish_gate.py \
      qc.py punctuation.py unresolved.py decisions.py review_apply.py review_server.py review_glossary.py review_auth.py settings_registry.py settings_store.py settings_api.py settings_connections.py settings_migrate.py review_users.py review_status.py review_requests.py review_settings.py review_settings_write.py review_webhooks.py watch_queue.py acquire_cache.py adjudication_journal.py decision_client.py glossary_decision.py glossary_lock.py wiki_scope.py gen_loop.sh container_run.sh /app/
 COPY data/ /app/data/

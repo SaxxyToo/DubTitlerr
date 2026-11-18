@@ -1,4 +1,4 @@
-"""Accounts, sessions, the API key and the route-role table for the review server (specs/webui-login-roles).
+"""Accounts, sessions, the API key and the route-role table for the review server.
 
 Stdlib only: hashlib.scrypt for passwords, secrets for ids and keys. Nothing here imports review_server; the server
 hands in the one thing it owns (the legacy review token) through set_token_fallback().

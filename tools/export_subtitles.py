@@ -4,8 +4,7 @@
 export_reviewed.py's manifest gates on decision 11 (every queued line has a human verdict).
 Measured 2026-08-31 against the real library: 255 One Pace episodes carry a review queue,
 7,222 queued lines have no verdict, and ZERO episodes qualify -- Season 31, the set believed
-reviewed, does not either (docs/superpowers/specs/2026-08-31-public-beta-design.md,
-Workstream C). Shipping under that gate means shipping nothing.
+reviewed, does not either. Shipping under that gate means shipping nothing.
 
 This tool gates on completion instead: a valid `.dubtitles.done` stamp (common.stamp_valid)
 that matches the episode's current video is the same claim mux.py itself relies on to skip

@@ -4,8 +4,7 @@
 Standalone, read-only analytics tool (GPU-free -- no faster_whisper import anywhere)
 that compares Whisper-generated dubtitle card timing against the embedded, human-timed
 English subtitle track, to measure alignment and quantify how many "kept" cards leak
-past B1's hallucination gate into a subtitle gap. See specs/timing-compare/spec-v3.md
-for the full spec/schema and specs/timing-compare/tasks.md for the task breakdown.
+past B1's hallucination gate into a subtitle gap.
 
 This module (U2, tasks T2-T6; U3, T7's wiring half; U4, T9-T10) builds the analytical core
 and the report:
@@ -83,7 +82,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="timing_compare.py",
         description="Compare Whisper dubtitle card timing against the embedded English "
-        "subtitle track (read-only, GPU-free). See specs/timing-compare/spec-v3.md.",
+        "subtitle track (read-only, GPU-free).",
     )
     ap.add_argument("show_dir", nargs="+", help="one or more show/library directories to walk for episodes")
     ap.add_argument(

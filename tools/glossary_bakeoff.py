@@ -4,8 +4,7 @@
 Two glossary stages ask a local LLM one small question per term: `glossary_verify.adjudicate` (which
 wiki title is the same entity as this mined term) and `glossary_acquire.adjudicate_merge` (are these two
 spellings one entity). This tool turns a COPY of the glossaries, the acquire caches and the wiki title
-caches into `items.jsonl`, the fixed question set a later `run` / `score` will put to other models. See
-specs/glossary-decision-bakeoff/spec.md.
+caches into `items.jsonl`, the fixed question set a later `run` / `score` will put to other models.
 
   python3 tools/glossary_bakeoff.py build-set --glossaries DIR --wiki-cache DIR --out items.jsonl [--show TEXT ...]
   python3 tools/glossary_bakeoff.py run --items items.jsonl --arm NAME --out results/NAME.jsonl

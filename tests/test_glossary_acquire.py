@@ -529,7 +529,7 @@ def test_acquire_dry_run_does_not_write(tmp_path, monkeypatch):
     # dominate the CANONICAL, which R3 (dominance) correctly flags rather than applies --
     # verified against decide()/wilson_lower directly. Swapped to mirror the 56-vs-2 case
     # from test_wilson_lower_matches_spec_values / test_propose_emits_one_proposal_..., which
-    # is the shape the design doc's dominance rule actually applies on. See task-10-report.md.
+    # is the shape the design doc's dominance rule actually applies on.
     _write_conf(tmp_path, "Ep01", ["I saw Shirahoshi today."] * 56 + ["I fear Syrahose."] * 2)
     monkeypatch.setattr(ga.glossary_verify, "resolve_wiki", lambda *a, **k: "https://x/api.php")
     monkeypatch.setattr(ga.glossary_verify, "fetch_titles", lambda *a, **k: ["Shirahoshi"])
@@ -744,7 +744,7 @@ def test_acquire_reports_tier_b_adjudications(tmp_path, monkeypatch):
     # NOTE: brief's literal fixture puts "Zunesha" sentence-initial in every line, so it never
     # enters `midsentence` (see mine_glossary.mine_text) and unmatched() -- which gates on
     # midsentence exactly like decide() does for tier A -- would never see it. Reworded so the
-    # token is genuinely mid-sentence. See task-11-report.md.
+    # token is genuinely mid-sentence.
     # C1: tier B's canonical is now re-validated against the title set, so the fixture must
     # use a genuine dub-rename pair (like the spec's own Kasumi/Misty example) -- similarity
     # is too low for tier A to catch it (0.456 < MIN_SIM), but it is a real, comparable-length

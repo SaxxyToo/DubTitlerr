@@ -14,8 +14,6 @@ ACQUIRE_BACKEND=decision). Settings: the VERIFY_* variables and ACQUIRE_DECISION
 model (openai) or a decision model (decision). A
 decision call that fails leaves the pair "unavailable" (never cached) and the term without a tier-B entry; the run reports its
 decision counters. See glossary_decision.
-
-See docs/superpowers/specs/2026-08-19-glossary-name-acquisition-design.md.
 Built with help of Claude (Anthropic).
 """
 

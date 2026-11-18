@@ -47,8 +47,7 @@ def test_keep_event_keeps_animated_fade():
 
 
 def test_keep_event_keeps_the_fansub_translation_style():
-    # Reversed 2026-09-02 (.procoder/todo/20260830-drop-transcribed-song-lyrics-restore-
-    # fansub-translation.md): a "Song Translation" style used to be dropped on the
+    # Reversed 2026-09-02: a "Song Translation" style used to be dropped on the
     # assumption whisper's transcribed lyrics would replace it, which only holds if the
     # dub re-sings the song in English. On a Japanese-sung opening nothing replaces it, and
     # what lands instead is hallucination -- so the fansub's own translation is kept now,
@@ -613,7 +612,6 @@ def test_build_still_dedups_the_same_sign_carried_by_two_tracks(tmp_path, monkey
 
 # --- song-span drop: whisper's OP/ED hallucinations dropped, fansub lyrics kept --------
 #
-# .procoder/todo/20260830-drop-transcribed-song-lyrics-restore-fansub-translation.md.
 # Measured on SAO S01E02: whisper mangles a Japanese-sung opening into pseudo-romaji and
 # then invents English outright (avg_logprob -1.7 to -4.1 against -0.3/-0.7 for ordinary
 # dialogue). The fansub's own Romaji/Kanji/English lyrics are kept (KEEP_STYLE/
@@ -1454,8 +1452,7 @@ def test_bisect_window_gives_the_same_survivors_as_a_full_scan(tmp_path, monkeyp
 
 # --- mixed dialogue+signs track: a bare \an / \fad is not sign evidence on a dialogue style ---
 #
-# Measured 2026-11-16 over the first episode of 27 shows (docs/beta-feedback/2026-09-23-sns-
-# extract-fp-inventory.md). Fansub DIALOGUE carries a bare {\an8} (moved up, clear of a sign)
+# Measured 2026-11-16 over the first episode of 27 shows. Fansub DIALOGUE carries a bare {\an8} (moved up, clear of a sign)
 # or a bare {\fad}: Berserk (1997) and JUJUTSU KAISEN, both read as ONE mixed track, leaked
 # ten such lines into the output as "signs" -- the fansub's translation of the Japanese script
 # at the top of the screen, over the dub. The very same bare \fad is the ONLY thing that keeps

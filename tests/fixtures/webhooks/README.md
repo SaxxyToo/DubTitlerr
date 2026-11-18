@@ -1,8 +1,7 @@
 # Webhook fixtures (hand-written, not captured)
 
 These payloads are hand-written for `tests/test_review_webhooks.py`. They were not
-captured from a live Sonarr/Radarr instance. Field names follow the spec
-(`specs/arr-webhooks/spec.md`) and the Sonarr v4 / Radarr v5 Connect > Webhook shape
+captured from a live Sonarr/Radarr instance. Field names follow the spec and the Sonarr v4 / Radarr v5 Connect > Webhook shape
 (`eventType`, `isUpgrade`, `series{title,path,tvdbId}`,
 `episodes[]{seasonNumber,episodeNumber}`, `episodeFiles[]{relativePath,path}` or the
 older singular `episodeFile{}`, `movie{title,folderPath,tmdbId}`,

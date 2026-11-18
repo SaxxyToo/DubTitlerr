@@ -2,7 +2,7 @@
 
 `accept_repair` states the acceptance bar and its own docstring says nothing below it
 enforces that. The enforcement is a person reading the lines, and until this module the
-verdicts lived only as prose in `docs/Adversarial Reviews/`. These tests cover the store
+verdicts lived only as prose in review notes. These tests cover the store
 that makes them software.
 """
 

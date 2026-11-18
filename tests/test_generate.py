@@ -3,13 +3,12 @@ guards. No CUDA/model needed -- the faster_whisper import is stubbed so generate
 be imported without the CUDA stack that only exists in the subgen runtime image it's
 meant to run in (see generate.py's module docstring).
 
-DIVERGENCE from specs/v1-polish/tasks.md T18 / spec.md Phase 4, case 7 ("ffprobe says
+DIVERGENCE from the v1-polish spec (phase 4, case 7: "ffprobe says
 a Dubtitles track present but no stamp -> False (backstop)"): that backstop no longer
 exists. needs_work() is a *stat-only* pre-filter -- its own comment in generate.py says
 so explicitly ("Cheap pre-filter (stat only, no ffprobe/model)") -- and never called
 ffprobe; the ffprobe "already muxed" check that lived one level down in process() was
-REMOVED by the strip-at-mux change (see
-docs/superpowers/specs/2026-07-26-strip-and-isolate-old-dubtitles-design.md), because
+REMOVED by the strip-at-mux change, because
 mux.py now REPLACES the old Dubtitles track instead of refusing to touch the file.
 Cases 1-6 below are tested against the real needs_work(); case 7 is inverted into
 test_process_no_longer_skips_on_an_embedded_dubtitles_track.

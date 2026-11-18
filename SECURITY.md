@@ -51,7 +51,7 @@ seconds, with two concurrent extraction slots and bounded probe/decode timeouts.
 select English-tagged non-commentary audio and reject media paths outside the configured
 roots. No whole-file media-serving endpoint is provided. Responses are marked `no-store`.
 The configured `REVIEW_AUTH=off` opt-out also disables audio authorization; do not expose
-that mode outside a trusted network. See [workspace security details](docs/review-workspace.md#authentication-and-media-safety).
+that mode outside a trusted network.
 
 ## Optional password login for the review workspace
 

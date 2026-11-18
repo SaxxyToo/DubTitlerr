@@ -1,4 +1,4 @@
-"""Settings page probes (specs/webui-settings): read the builder's effective.env, and probe a backend with a strict timeout.
+"""Settings page probes: read the builder's effective.env, and probe a backend with a strict timeout.
 
 The settings API itself (schema, values, writes) is settings_api.py. This module keeps what is not about stored settings: the
 effective.env reader, the connectivity probe every Test button uses, and the probe of a stage that is still configured from the

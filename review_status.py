@@ -1,4 +1,4 @@
-"""Read-only episode status dashboard backend (specs/webui-status-dashboard/spec.md).
+"""Read-only episode status dashboard backend.
 
 GET /api/status returns pipeline progress per episode without performing filesystem tree walks.
 Stems are sourced from the existing _STEMS_CACHE in review_server.py.

@@ -225,7 +225,7 @@ def test_format_model_block_survives_fewer_outputs_than_targets():
 # --- scoring: the computable half of the judgment -----------------------------
 #
 # The candidate pool is ~19 models; at --limit 15 that is ~285 line pairs to read by
-# hand. docs/model-candidates-4-5gb-vram.md names three judging signals -- safe-fix
+# hand. Three judging signals matter -- safe-fix
 # count, name-edit count and inertness -- and only safe-fix genuinely needs a human.
 # The rest are computed here so the owner hand-judges a shortlist instead of the pool.
 # No live inference is exercised: score_model is pure over (targets, outputs, glossary).

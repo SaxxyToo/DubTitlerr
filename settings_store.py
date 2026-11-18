@@ -1,4 +1,4 @@
-"""The settings store (specs/webui-full-settings, S-2): CONFIG_DIR/settings.json and CONFIG_DIR/secrets.json.
+"""The settings store: CONFIG_DIR/settings.json and CONFIG_DIR/secrets.json.
 
 settings.json holds the plain values, the Connections and the stage choices; secrets.json (mode 0600) holds the secrets. Both are
 written atomically under one lock, with one `.prev` copy of each file per save and one audit log line that names keys but never

@@ -1847,7 +1847,7 @@ def _process_episode(conf_path):
             # `_split` is set ONLY by the card_split path above and never written back to
             # conf.json -- it is a transient in-memory marker for this run's write, not a
             # durable card shape. Two cues here, one there; conf.json stays one row either
-            # way (.procoder/todo/20260829-split-a-card-so-a-human-correction-fits.md).
+            # way.
             for p in c.get("_split") or ({"start": c["start"], "end": c["end"], "text": c["text"]},):
                 i += 1
                 f.write(f"{i}\n{ts_srt(p['start'])} --> {ts_srt(p['end'])}\n{reflow.wrap_balance(p['text'])}\n\n")

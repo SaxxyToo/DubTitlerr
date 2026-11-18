@@ -246,7 +246,7 @@ def test_the_nsp_gated_rules_are_not_reintroduced():
     relaxation destroys more real dialogue than it saves (precision peaks near 20%).
 
     If this test fails, someone re-added a rule on the intuition that an unreachable
-    threshold is a bug. Read .procoder/adr/0002 before changing it: the precision ceiling
+    threshold is a bug. Read docs/adr/0002 before changing it: the precision ceiling
     is the thing to beat, not the threshold."""
     import hallucination as h
 

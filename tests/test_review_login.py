@@ -1,4 +1,4 @@
-"""Account login: POST /api/login, /api/logout, GET /api/me and the cookie they hand out (specs/webui-login-roles S-3, S-4)."""
+"""Account login: POST /api/login, /api/logout, GET /api/me and the cookie they hand out."""
 
 import hashlib
 import http.client

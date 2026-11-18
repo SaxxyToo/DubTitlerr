@@ -1,4 +1,4 @@
-"""The exporter the shell loops and the container entrypoint call (specs/webui-full-settings, S-5).
+"""The exporter the shell loops and the container entrypoint call.
 
 Nothing ever `source`s settings.json or secrets.json. The shell runs
 

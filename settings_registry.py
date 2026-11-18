@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""The settings registry (specs/webui-full-settings, S-1): the single source for validation, the API and the UI.
+"""The settings registry: the single source for validation, the API and the UI.
 
 One entry per setting the pipeline reads from the environment. An entry carries its category, label, help text, type, range,
 default, `advanced` flag, when a change `applies`, and its `scope`: the process that reads it (gen: gen_loop.sh and its children;

@@ -1,5 +1,4 @@
-"""Punctuation restoration (R1-R7 of
-docs/superpowers/specs/2026-08-20-punctuation-restoration-design.md).
+"""Punctuation restoration (rules R1-R7).
 
 No test here may reach a model: every one either exercises a pure function or stubs
 ``punctuation.llm_chat``. The end-to-end case runs the restored words through the real

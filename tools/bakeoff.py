@@ -14,8 +14,8 @@ subtitle track), which the two-step --dump-refs / --refs mode reproduces: the vi
 needed for the first step, so the model runs can happen on a machine without the media.
 
 Why the scores exist: the candidate pool is ~19 models, and at --limit 15 that is ~285
-line pairs for a human to read. docs/model-candidates-4-5gb-vram.md names three judging
-signals -- safe-fix count, name-edit count, and inertness ("a model that changes nothing
+line pairs for a human to read. Three judging signals matter -- safe-fix count, name-edit
+count, and inertness ("a model that changes nothing
 is as bad as one that rewrites everything"). Only safe-fix genuinely needs human eyes, so
 the rest are computed here (see score_model): inert rate, the rate at which
 repair.accept_repair -- production's OWN gate, not a re-implemented bar -- would admit the
@@ -600,7 +600,7 @@ def _card_duration(card):
 def score_model(model, targets, outs, total_s, gloss, ref=""):
     """The computable half of the bake-off judgment for ONE model. Pure: no network.
 
-    docs/model-candidates-4-5gb-vram.md judges candidates on safe-fix count, name-edit
+    Candidates are judged on safe-fix count, name-edit
     count and inertness. Only safe-fix needs human eyes; the rest are counted here so the
     ~19-model pool can be narrowed before anyone reads 285 line pairs.
 

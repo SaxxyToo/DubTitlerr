@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""S&S extract-only prototype (docs/beta-feedback/2026-09-07-r-animedubs.md): pull just
+"""S&S extract-only prototype: pull just
 the signs/songs/credits events out of a full English subtitle track, no Whisper involved.
 
 Two independent classifiers decide KEEP, either is enough:

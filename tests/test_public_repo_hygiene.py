@@ -72,19 +72,12 @@ def test_the_wiki_discloses_when_repair_unanchored_was_deployed():
 
 
 def test_repair_backend_secondary_is_retired_not_referenced_outside_history():
-    """REPAIR_BACKEND_SECONDARY was proposed in docs/IMPROVEMENTS.md, never implemented,
-    and retired 2026-09-22 (docs/REVIEW.md's outstanding-issues list, `.procoder/specs/
-    v0-2-0-hardening.md`'s S-13). A name that keeps reappearing in ACTIVE docs after
-    retirement is exactly the kind of drift docs/IMPROVEMENTS.md and docs/REVIEW.md used to
-    carry themselves."""
-    allowed_prefixes = (
-        "docs/Adversarial Reviews/",
-        "docs/superpowers/plans/2026-08-22-observability-and-dead-path-cleanup.md",
-        ".procoder/specs/v0-2-0-hardening.md",
-        ".procoder/plans/v0-2-0-hardening.md",
-        ".procoder/backlog/",
-        "CHANGELOG.md",
-    )
+    """REPAIR_BACKEND_SECONDARY was proposed, never implemented, and retired 2026-09-22 (S-13 of
+    the v0.2.0 hardening pass). A name that keeps reappearing in ACTIVE docs after retirement is
+    exactly the kind of drift the retired review notes used to carry themselves.
+
+    CHANGELOG.md is the one allowed home: it is history, and history is allowed to name it."""
+    allowed_prefixes = ("CHANGELOG.md",)
     offenders = []
     for path in _tracked("*.md"):
         if any(path.startswith(p) for p in allowed_prefixes):

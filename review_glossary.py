@@ -1,4 +1,4 @@
-"""The glossary editor backend: GET/POST /api/glossary (specs/webui-glossary-editor/spec.md).
+"""The glossary editor backend: GET/POST /api/glossary.
 
 Edits only ``names``, ``phrases``, ``hard_fixes`` and the ``wiki`` override of a deployed glossary; every other key (the
 machine-owned verified/flagged/acquired/known/_curated, any underscore key, initial_prompt, ...) is

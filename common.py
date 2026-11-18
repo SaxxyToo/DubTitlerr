@@ -2,8 +2,8 @@
 """Shared stdlib-only helpers for the DubTitlerr pipeline stages (generate.py, mux.py,
 repair.py, dub_signs_merge.py, mine_glossary.py, recreate_srt.py).
 
-Single source of truth for the helpers that used to be duplicated per-module (see
-specs/v1-polish/spec.md, Phase 1 — Foundation). Stdlib + pysubs2, plus atomic_file (the
+Single source of truth for the helpers that used to be duplicated per-module.
+Stdlib + pysubs2, plus atomic_file (the
 dependency-free atomic-write leaf, re-exported below): no imports back from the rest of
 the pipeline, so any stage can import this without dragging the pipeline in and without
 risking a circular import.
@@ -107,8 +107,7 @@ SONG_FAMILY_STYLE = re.compile(
 def load_extras(path="data/extras.txt"):
     """Load the EXTRA_DIRS set (Plex "local extras" subfolders + creditless/scene clips --
     never real episodes, often mismatched junk from the scraper -- pruned from library
-    walks) from the single-source-of-truth data file (see specs/v2-models-ops/spec.md,
-    "EXTRA_DIRS consolidation"). Falls back to the pre-consolidation hardcoded set if the
+    walks) from the single-source-of-truth data file. Falls back to the pre-consolidation hardcoded set if the
     file is missing/unreadable, so the pipeline still runs correctly without it (e.g. a
     dev checkout, or an image built before the data file existed)."""
     try:
@@ -174,7 +173,7 @@ TRACK_NAME = "Dubtitles"
 # a state worth keeping -- hence a bump rather than a targeted stamp deletion.
 # v5 (2026-08-24): the single version becomes TWO, because one number made a glossary
 # fix cost the same as a decoder change -- a full re-transcribe of the library. See
-# .procoder/adr/0001-idempotency-is-keyed-on-two-tiers-not-one-version.md.
+# docs/adr/0001-idempotency-is-keyed-on-two-tiers-not-one-version.md.
 # v6 (2026-08-26): repair.py gained the phonetic name guard -- it rejects an LLM repair
 # that substitutes a proper noun found in neither the glossary nor the original
 # (Syrahose -> Shyarros, Hirohoshi -> Hihohi). Text produced before it can carry names
@@ -190,8 +189,7 @@ TRACK_NAME = "Dubtitles"
 #
 # v7 (2026-08-26): the phonetic name guard widens from substitutions to any GAINED name.
 # A fabrication conjured from nothing was invisible to it -- measured on the hotwords spike,
-# where `jester` became `Dester` and neither direction fired. See
-# docs/Adversarial Reviews/RESULTS-2026-08-26-ab-prompt-comparison.md.
+# where `jester` became `Dester` and neither direction fired.
 #
 # v8 (2026-08-29): two reflow character-welding fixes. `_text` joined every token starting
 # ",N"/".N" onto the previous one with a space that was never in the audio, breaking every

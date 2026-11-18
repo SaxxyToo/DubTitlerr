@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """VAD probe (Timing Compare U3, T7-T8): independent acoustic check of the dub audio at
 each in-gap card, so tools/timing_compare.py can split "kept, in a subtitle gap" into a
-confident hallucination (silence) vs a real dub-only line the subs omit (speech). See
-specs/timing-compare/spec-v3.md's "[v3] VAD probe of in-gap cards" acceptance criterion.
+confident hallucination (silence) vs a real dub-only line the subs omit (speech). This is the
+"[v3] VAD probe of in-gap cards" acceptance criterion.
 
 Two backends, selected by `vad_probe(..., backend=...)`:
   - "webrtcvad" (default): frames a 16 kHz mono PCM window into 10/20/30 ms chunks and

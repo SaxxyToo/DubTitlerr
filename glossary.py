@@ -12,8 +12,8 @@ mis-capitalized ordinary words like pirates->Pirate, along->Arlong):
 Recall for far mishears (spondum->Spandam) comes from curated hard_fixes; the rest is
 left to the C3 LLM repair stage. ``name_suspect`` flags lines the LLM should look at.
 
-Pure stdlib + a wordlist file — unit-testable without CUDA/LLM. See
-specs/c1-glossary-precision/spec.md.  Built with help of Claude (Anthropic).
+Pure stdlib + a wordlist file — unit-testable without CUDA/LLM.
+Built with help of Claude (Anthropic).
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def fuzzy_cutoff(n: int) -> float:
 # Wordlist for the English-word gate: the apt `wamerican` dict in the image, plus a
 # bundled fallback shipped next to this module (also what the tests use).
 WORDLIST_PATH = os.environ.get("WORDLIST_PATH", "/usr/share/dict/american-english")
-_BUNDLED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "common_words.txt")
+_BUNDLED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "common_words.txt")
 _WORDS: set[str] | None = None
 
 

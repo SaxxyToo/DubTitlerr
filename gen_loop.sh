@@ -122,8 +122,7 @@ prep_show() {
 		esac
 		# acquire_cache only memoises escalate()'s LLM adjudication now, never a
 		# proposal's final verdict, so a dry run and a later --apply run always
-		# propose the same terms -- no ACQUIRE_NO_CACHE workaround needed. See
-		# .procoder/todo/20260829-acquire-cache-suppresses-every-verdict.md for the bug
+		# propose the same terms -- no ACQUIRE_NO_CACHE workaround needed. The bug
 		# this replaced (a dry run's cached verdict used to fold into `settled` and skip
 		# the term on every later run, suppressing 22 apply, 1,654 known and 10,708 flag
 		# verdicts -- that last group being review-queue entries that would never have

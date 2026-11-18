@@ -1,4 +1,4 @@
-"""Connections (specs/webui-full-settings, S-8): named LLM connections and the stage each one serves.
+"""Connections: named LLM connections and the stage each one serves.
 
 A Connection is {name, kind, url, model, extra_body, timeout_connect, timeout_read} in settings.json plus an optional write-only
 API key in secrets.json. A stage (repair, restore, verify, decision, acquire) picks one by name. The exporter turns the choice

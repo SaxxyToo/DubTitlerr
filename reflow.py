@@ -17,7 +17,7 @@ Card    : {"start": float, "end": float,               # DISPLAY timing (after t
 
 The cards satisfy the A1 spec: Netflix readability profile, start pinned to the
 spoken onset, never gluing across a >0.5 s pause, end extended into trailing
-silence for readability. See specs/a1-reflow-timing/spec.md.
+silence for readability.
 Built with help of Claude (Anthropic).
 """
 

@@ -1,8 +1,7 @@
 # shellcheck shell=sh  # sourced by merge_pass.sh, which is #!/bin/sh
 # Shared shell helpers for the DubTitlerr pipeline stages (merge_pass.sh, post_show.sh).
 # The Python-side single source of truth is common.py::load_extras(); this is its shell
-# counterpart, both reading data/extras.txt (see specs/v2-models-ops/spec.md, "EXTRA_DIRS
-# consolidation"). Meant to be `source`d, not executed.
+# counterpart, both reading data/extras.txt. Meant to be `source`d, not executed.
 
 # extras_grep_pattern [path] — reads data/extras.txt (one dir name per line, `#` comments
 # allowed, default path "data/extras.txt") and prints a grep -iE alternation pattern, e.g.
@@ -14,8 +13,8 @@
 # always prints even a hollow "()" would make `grep -ivE` match (and thus exclude) every
 # line, since an empty alternation matches the empty string in any input.
 # Returns 1 (prints nothing) if the file is missing/empty/unreadable so callers can
-# detect the failure via `||` on the command substitution -- see B9 in
-# specs/v2-models-ops/tasks.md for the source/fallback pattern this is designed for.
+# detect the failure via `||` on the command substitution. That source/fallback shape is
+# deliberate: a missing extras file must never turn into an empty pattern that matches everything.
 extras_grep_pattern() {
 	dir="${1:-data/extras.txt}"
 	pattern=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$dir" 2>/dev/null |

@@ -4,7 +4,7 @@ export_reviewed.py gates on decision 11 (every queued line has a human verdict);
 2026-08-31 against the real library, zero One Pace episodes qualify under that gate. This
 tool gates on completion instead (a valid .dubtitles.done stamp matching the current video)
 so a first "unreviewed, subject to improve" batch can ship while decision 11 stays intact
-for a future reviewed release. See docs/superpowers/specs/2026-08-31-public-beta-design.md,
+for a future reviewed release,
 Workstream C.
 
 TDD entry point. These tests are written against synthetic temp dirs before the tool

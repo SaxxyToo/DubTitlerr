@@ -1,4 +1,4 @@
-"""Settings API (specs/webui-full-settings, S-3, S-6, S-7): the registry's schema, the effective values with their sources, and
+"""Settings API: the registry's schema, the effective values with their sources, and
 the validated, all-or-nothing writes. Pure functions over an environ mapping and the store; review_server.py only routes.
 
 The role of the caller (user or admin) is enforced before these functions run, by the role table in review_auth.py: the routes

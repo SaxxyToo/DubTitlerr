@@ -7,7 +7,7 @@ DubTitlerr transcribes English-dub anime audio into subtitles, repairs them with
 ## Working rules
 
 - **Commits** follow Conventional Commits with a scope where one fits: `fix:`, `feat:`, `docs:`, `test(web):`, `chore:`.
-- **Issues and specs** live in GitHub issues on `XenaRathon/DubTitlerr`. Command shapes: [issue tracker](https://github.com/SaxxyToo/DubTitlerr/blob/main/docs/agents/issue-tracker.md). Domain docs: [domain](https://github.com/SaxxyToo/DubTitlerr/blob/main/docs/agents/domain.md).
+- **Issues and specs** live in GitHub issues on `XenaRathon/DubTitlerr` — this fork has issues disabled, so the tracker is upstream's. File one with `gh issue create`, read one with `gh issue view <n> --comments`.
 - **Validate on a spread of shows**, never one: one with a fansub track and one without, one whose glossary came from acquisition and one that was only mined. One Pace is the least representative title, because it holds nearly all the curated `hard_fixes` and its seasons differ in whether a fansub track exists.
 - **One worker per library.** Nothing in the code locks across workers. Two workers on one library race on `<stem>.muxtmp.mkv` and re-transcribe each other's episodes. Building a real claim/lock is open work; a change that assumes a lock exists is a bug.
 - **Persist incrementally** in any expensive stage: write per item or per batch (append-only JSONL is the house idiom; see `unresolved.py`), so a killed run keeps the work it finished. A longer timeout can unblock a run, but the fix is incremental writes.

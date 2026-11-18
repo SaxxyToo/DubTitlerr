@@ -14,8 +14,8 @@ qwen3:8b by default, a hosted OpenAI-compatible text model, or a decision model 
 opt-in; a misconfigured or unresolvable backend refuses the run (`note: refused: ...`) instead of marking terms "no match".
 
 Reusable module + CLI — called by the mining hook in gen_loop, a standalone command, and
-future community-repo front-ends. Source of truth = wiki/publisher (dub-preferred). See
-specs/glossary-wiki-verify/spec.md.  Built with help of Claude (Anthropic).
+future community-repo front-ends. Source of truth = wiki/publisher (dub-preferred).
+Built with help of Claude (Anthropic).
 """
 
 from __future__ import annotations
@@ -731,8 +731,7 @@ def apply_results(gloss: dict, results: dict) -> dict:
     A corpus-corroboration guard was designed and REJECTED for this: scored against the real
     463-episode transcript corpus it lands 2 of 8, and it fails toward APPLYing wrong names
     (`Arabasta` outnumbers `Alabasta` 108 to 35 in the transcripts). The corpus is Whisper's
-    own output, so it votes for its own mishearing. See
-    docs/superpowers/specs/2026-08-21-glossary-integrity-design.md."""
+    own output, so it votes for its own mishearing."""
     g = json.loads(json.dumps(gloss))
     names, phrases = g.setdefault("names", []), g.setdefault("phrases", [])
     verified = set(g.get("verified", []))

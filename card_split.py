@@ -2,7 +2,7 @@
 """Split a human correction across two cards when the one it is repairing is too
 narrow to hold it, but a legal split exists.
 
-.procoder/todo/20260829-split-a-card-so-a-human-correction-fits.md. `repair.fits_card`
+`repair.fits_card`
 refuses a correction that cannot be displayed on the card it is repairing -- correct for
 a MACHINE proposal, but a reviewer has listened to the line and typed what they heard,
 and a card one character too narrow throws that transcription away. Two live cases

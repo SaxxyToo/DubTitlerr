@@ -1,4 +1,4 @@
-"""The glossary editor backend (specs/webui-glossary-editor/spec.md): handlers only, no socket.
+"""The glossary editor backend: handlers only, no socket.
 
 GLOSSARY_DIR is always a tmp_path -- these tests write glossary files and must never see /config."""
 

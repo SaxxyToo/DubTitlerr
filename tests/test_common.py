@@ -6,8 +6,7 @@ synthetic pysubs2 fixtures (no media, no ffmpeg) plus a hermetic extraction-pipe
 test that monkeypatches eng_sub_streams/extract_sub the same way
 tests/test_dub_signs_merge.py does for dsm.build().
 
-Also covers the strip-at-mux/context-isolation additions (see
-docs/superpowers/specs/2026-07-26-strip-and-isolate-old-dubtitles-design.md): the
+Also covers the strip-at-mux/context-isolation additions: the
 TRACK_NAME marker + stream_title()/is_our_track() helpers, eng_sub_streams()'s exclusion of our own
 "Dubtitles" track, and the pipeline-version field on the .dubtitles.done stamp."""
 

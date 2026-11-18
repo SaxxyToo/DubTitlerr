@@ -1,4 +1,4 @@
-"""Settings page backend helpers (specs/webui-settings): allow-listed reads, secret masking, backend probes.
+"""Settings page backend helpers: allow-listed reads, secret masking, backend probes.
 
 Pure functions with injected inputs (environ dicts, fake openers); no server needed."""
 

@@ -2,7 +2,7 @@
 over a block of subtitle plaintext that main() runs per-episode, before its own
 COMMON-word + MIN_COUNT + already-known filtering of the accumulated results.
 
-DIVERGENCE from specs/v1-polish/tasks.md T19 / spec.md Phase 4 ("word in the COMMON
+DIVERGENCE from the v1-polish spec (phase 4, T19: "word in the COMMON
 deny-set -> ignored"): mine_text() itself does NOT consult COMMON at all -- it counts
 and tracks every capitalized candidate word unconditionally. The COMMON exclusion is
 applied downstream in main(): `t.lower() not in COMMON` (mine_glossary.py). The case

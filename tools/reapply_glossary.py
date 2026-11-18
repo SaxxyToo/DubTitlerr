@@ -17,9 +17,8 @@ What it CANNOT do, and why
 --------------------------
 Card boundaries are fixed. ``conf.json`` stores ``word_probs`` -- a list of floats -- not
 the word list with timings, so ``reflow()`` and ``punctuation.restore()`` cannot be
-re-run from it. Both operate on the word list BEFORE cards are split (see
-``docs/superpowers/specs/2026-08-20-punctuation-restoration-design.md``: "Splitting must
-be DOWNSTREAM of the fix"). Anything that changes how text is DIVIDED needs a full
+re-run from it. Both operate on the word list BEFORE cards are split -- splitting must be
+DOWNSTREAM of the fix. Anything that changes how text is DIVIDED needs a full
 regenerate; this tool only changes what the text SAYS.
 
 Flow per episode

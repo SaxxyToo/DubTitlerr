@@ -1,8 +1,7 @@
 """card_split: split a human correction across two cards when the single card it is
 repairing is too narrow to hold it, but a legal split exists.
 
-.procoder/todo/20260829-split-a-card-so-a-human-correction-fits.md. Scope settled
-2026-09-02: human `correct`/`force` verdicts only (never a machine repair proposal,
+Scope settled 2026-09-02: human `correct`/`force` verdicts only (never a machine repair proposal,
 which stays refused by fits_card exactly as today); `over_cps` refusals (the card was
 already too fast before the human touched it) are explicitly OUT of scope and never
 reach this module -- only `over_line_len`/`over_chars` shapes are fixed by splitting."""

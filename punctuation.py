@@ -28,7 +28,6 @@ Env:
   RESTORE_BACKEND / RESTORE_MODEL / RESTORE_LLAMACPP_URL / OLLAMA_URL
                         default to the REPAIR_* values, as glossary_verify.py does
   RESTORE_MAX_TOKENS    default "2048" -- ceiling on the per-run answer budget
-See docs/superpowers/specs/2026-08-20-punctuation-restoration-design.md.
 Built with help of Claude (Anthropic).
 """
 
