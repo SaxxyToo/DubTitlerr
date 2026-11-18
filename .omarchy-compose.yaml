@@ -1,6 +1,8 @@
 services:
   dubtitlerr:
-    # build: docker build -f Dockerfile.fork -t dubtitlerr:sidecar-fork ~/src/DubTitlerr
+    # build: docker build -f Dockerfile.builder -t dubtitlerr:sidecar-fork ~/src/DubTitlerr
+    # (Dockerfile.builder is the full image — model baked, review UI built. Dockerfile.fork is
+    #  a thin overlay on the released ghcr image for exercising the fork without a full build.)
     image: ${DUBTITLERR_IMAGE:-dubtitlerr:sidecar-fork}
     container_name: dubtitlerr
     healthcheck:
