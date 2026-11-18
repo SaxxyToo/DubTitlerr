@@ -53,3 +53,16 @@ docs/asr-bakeoff/*-report.json
 
 # lychee (markdown link checker) cache -- regenerated per run, host-local.
 .lycheecache
+
+# Per-harness copies of the agent notes. AGENTS.md is the single source; these mirrors
+# were ten near-identical copies of the same file and are not tracked.
+.agents/
+.claude/
+.clinerules/
+.cursor/
+.kilo/
+.kilocode/
+.kiro/
+.qoder/
+.roo/
+.windsurf/
