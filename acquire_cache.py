@@ -65,13 +65,18 @@ def load(gloss_path: str) -> dict:
 
 
 def save(gloss_path: str, cache: dict) -> bool:
-    """Atomic replace, group-writable so a non-root writer can update it later."""
-    p = path_for(gloss_path)
-    return atomic_write(
-        p,
-        lambda f: json.dump(cache, f, ensure_ascii=False, indent=1, sort_keys=True),
-        quiet=True,
-    )
+    """Atomic replace, group-writable so a non-root writer can update it later.
+
+    A cache that will not serialise is a miss here, not a crash: this is a memo, and the
+    caller re-mines without it. That is a wider catch than atomic_file's ``quiet`` (which
+    leaves a TypeError alone), so the verdict is spelled out at the call site."""
+    try:
+        return atomic_write(
+            path_for(gloss_path),
+            lambda f: json.dump(cache, f, ensure_ascii=False, indent=1, sort_keys=True),
+        )
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def escalation_for(cache: dict, variant: str, canonical: str) -> dict | None:

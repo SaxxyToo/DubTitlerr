@@ -16,6 +16,7 @@ import os
 import types
 
 import pysubs2
+import pytest
 
 import common
 
@@ -151,6 +152,57 @@ def test_atomic_write_applies_the_sidecar_mode(tmp_path):
     target = tmp_path / "x.json"
     common.atomic_write(str(target), lambda f: f.write("new"))
     assert os.stat(target).st_mode & 0o777 == common.SIDECAR_MODE
+
+
+def test_atomic_write_bytes_writes_a_str_as_utf8_with_the_sidecar_mode(tmp_path):
+    target = tmp_path / "b.bin"
+    assert common.atomic_write_bytes(str(target), "h\u00e9llo") is True
+    assert target.read_bytes() == "h\u00e9llo".encode("utf-8")
+    assert os.stat(target).st_mode & 0o777 == common.SIDECAR_MODE
+
+
+def test_atomic_write_mode_keep_reuses_the_bits_and_defaults_when_the_target_is_new(tmp_path):
+    existing = tmp_path / "keep.json"
+    existing.write_text("{}")
+    os.chmod(existing, 0o640)
+
+    common.atomic_write(str(existing), lambda f: f.write("x"), mode=common.MODE_KEEP)
+
+    assert os.stat(existing).st_mode & 0o777 == 0o640, "a replace must not change who can read the glossary"
+    fresh = tmp_path / "fresh.json"
+    common.atomic_write(str(fresh), lambda f: f.write("x"), mode=common.MODE_KEEP)
+    assert os.stat(fresh).st_mode & 0o777 == common.SIDECAR_MODE
+
+
+def test_atomic_write_fsync_replaces_the_file_and_leaves_no_temp(tmp_path):
+    target = tmp_path / "f.json"
+    target.write_text("OLD")
+
+    assert common.atomic_write(str(target), lambda f: f.write("NEW"), fsync=True) is True
+
+    assert target.read_text() == "NEW"
+    assert sorted(os.listdir(tmp_path)) == ["f.json"]
+
+
+def test_atomic_write_quiet_returns_false_for_a_write_that_cannot_land(tmp_path):
+    # The target is a directory, so the os.replace cannot land: a False the caller reports.
+    target = tmp_path / "adir"
+    target.mkdir()
+
+    assert common.atomic_write(str(target), lambda f: f.write("x"), quiet=True) is False
+
+    assert sorted(os.listdir(tmp_path)) == ["adir"], "the temp file must not survive"
+
+
+def test_atomic_write_quiet_still_raises_on_a_bug_in_the_renderer(tmp_path):
+    # A TypeError is a programming error, not a write that could not land. Returning False
+    # would make a lost decisions.save verdict look like a disk problem.
+    target = tmp_path / "x.json"
+
+    with pytest.raises(TypeError):
+        common.atomic_write(str(target), lambda f: f.write(object()), quiet=True)
+
+    assert sorted(os.listdir(tmp_path)) == []
 
 
 def test_write_stamp_render_failure_leaves_the_previous_stamp_byte_identical(tmp_path, monkeypatch):

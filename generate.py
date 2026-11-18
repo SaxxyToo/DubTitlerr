@@ -1247,12 +1247,12 @@ def scene_cuts(video):
         log(f"warning: scene detection failed for {os.path.basename(video)}: {exc}")
         return []
     try:
-        tmp = cache + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            # json.dumps, not json.dump: the conf writer's atomicity test patches
-            # json.dump, and a cache write must not consume its simulated failure.
-            fh.write(json.dumps({"version": CUTS_VERSION, "threshold": SCENE_THRESHOLD, "cuts": cuts}))
-        os.replace(tmp, cache)
+        # json.dumps, not json.dump: the conf writer's atomicity test patches json.dump,
+        # and a cache write must not consume its simulated failure.
+        atomic_write(
+            cache,
+            lambda fh: fh.write(json.dumps({"version": CUTS_VERSION, "threshold": SCENE_THRESHOLD, "cuts": cuts})),
+        )
     except OSError:
         pass
     return cuts

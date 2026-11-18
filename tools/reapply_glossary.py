@@ -56,7 +56,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import glossary  # noqa: E402
-from common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, read_words, ts_srt  # noqa: E402
+from common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, atomic_write, read_words, ts_srt  # noqa: E402
 
 CONF_SUFFIX = ".dubtitles.conf.json"
 SRT_SUFFIX = ".eng.dubtitles.srt"
@@ -144,17 +144,11 @@ def process(conf_path: str, apply: bool, samples: list) -> dict:
     # Write conf first: it is the record of truth. If we die between the two writes the
     # episode still has a valid stamp and its old muxed track -- consistent, just not yet
     # improved. The reverse order would leave a corrected sidecar next to a stale conf.
-    tmp = conf_path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(cards, f)
-    os.replace(tmp, conf_path)
+    atomic_write(conf_path, lambda f: json.dump(cards, f))
     _chown(conf_path)
 
     srt = stem + SRT_SUFFIX
-    tmp = srt + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(render_srt(cards))
-    os.replace(tmp, srt)
+    atomic_write(srt, lambda f: f.write(render_srt(cards)))
     _chown(srt)
 
     # Drop the stamp LAST, and only once the sidecar is on disk. mux.py treats a valid

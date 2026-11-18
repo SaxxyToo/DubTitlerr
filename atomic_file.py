@@ -54,9 +54,12 @@ def atomic_write(path, render, mode=SIDECAR_MODE, newline=None, fsync=False, qui
     itself durable. Set it where a lost write is a lost account or setting (the config
     volume), not for per-episode sidecars the next sweep rewrites anyway.
 
-    ``quiet`` returns False instead of raising, for callers that own a verdict path and
-    need a False they can report (decisions.save, unresolved._rewrite). The default is to
-    raise: an episode's product must not go missing silently.
+    ``quiet`` returns False instead of raising when the write cannot LAND -- an OSError or
+    a ValueError -- for callers that own a verdict path and need a False they can report
+    (decisions.save, unresolved._rewrite). A TypeError (a payload that is not serialisable)
+    is a programming error in the caller and still raises: silently returning False would
+    make the lost verdict look like a disk problem. The default is to raise: an episode's
+    product must not go missing silently.
 
     Returns True on success. Either way the previous file survives and no temp remains.
 """
@@ -121,7 +124,7 @@ def _atomic_replace(path, write, mode, fsync, quiet, binary, newline):
         if fsync:
             _fsync_dir(d)
         return True
-    except Exception:
+    except (OSError, ValueError):
         if quiet:
             return False
         raise
