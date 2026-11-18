@@ -342,6 +342,26 @@ def _iqr(sorted_values: list):
     return q3 - q1
 
 
+def resolve_vad_backend(requested: str) -> str:
+    """The VAD backend that will ACTUALLY run, resolved once before any episode is walked.
+
+    A backend that cannot run here yields ``in_gap_vad_error`` for every card, so the report
+    reads ``false_in_gap_rate`` as unmeasured (null) rather than zero -- which is honest but
+    useless. webrtcvad is a C extension with no wheel for the dev venv, so the shipped
+    default silently produced a null on every local run; in the image it generally works, so
+    falling back (rather than changing the default) keeps the better backend where it exists.
+    The caller records THIS value, not the requested one.
+    """
+    if vad.backend_available(requested):
+        return requested
+    fallback = "ffmpeg-silencedetect"
+    if requested != fallback and vad.backend_available(fallback):
+        log(f"VAD: {requested!r} is unavailable on this host -- falling back to {fallback!r}")
+        return fallback
+    log(f"VAD: {requested!r} is unavailable and no fallback applies; in-gap cards will be unmeasured")
+    return requested
+
+
 def ransac_offset_drift(
     pairs: list,
     threshold_s: float = RANSAC_INLIER_THRESHOLD_S,
@@ -373,6 +393,7 @@ def ransac_offset_drift(
         "matched_pairs_count": matched,
         "inlier_count": 0,
         "residual_median_s": None,
+        "residual_abs_median_ms": None,
         "residual_iqr_s": None,
         "look_for_drift": False,
     }
@@ -432,6 +453,13 @@ def ransac_offset_drift(
     if inlier_count >= RANSAC_MIN_RESIDUAL_N:
         resid_sorted = sorted(_residuals(ix, iy, a, b))
         result["residual_median_s"] = statistics.median(resid_sorted)
+        # The SIGNED median above is ~0 by construction (a least-squares fit is centred on
+        # it), so it cannot answer "how far off are card onsets?". The absolute median can:
+        # it is the median onset error in milliseconds, which is what the acceptance
+        # criterion asks for.
+        result["residual_abs_median_ms"] = round(
+            statistics.median(sorted(abs(r) for r in _residuals(ix, iy, a, b))) * 1000.0, 3
+        )
         result["residual_iqr_s"] = _iqr(resid_sorted)
         iqr_drift = result["residual_iqr_s"] is not None and result["residual_iqr_s"] > LOOK_FOR_DRIFT_IQR_S
         slope_drift = result["drift_b"] is not None and abs(result["drift_b"]) > LOOK_FOR_DRIFT_SLOPE
@@ -839,6 +867,9 @@ def build_episode_report(res: dict) -> dict:
         "matched_pairs_count": fit["matched_pairs_count"],
         "inlier_count": fit["inlier_count"],
         "residual_median_s": fit["residual_median_s"],
+        # .get, not []: build_episode_report also takes saved/synthetic res dicts that
+        # predate this field, and a missing key must not crash a report.
+        "residual_abs_median_ms": fit.get("residual_abs_median_ms"),
         "residual_iqr_s": fit["residual_iqr_s"],
         "look_for_drift": fit["look_for_drift"],
         "pct_cards_on_cue": pct_cards_on_cue,
@@ -999,12 +1030,15 @@ def main(argv=None):
 
     # Group by CLI show_dir root (not a single combined find_episodes(a.show_dir) walk) so
     # the report's "shows" key can name each root -- see show_name_for_root().
+    # Resolve ONCE, before walking: the report records what actually ran.
+    vad_backend = resolve_vad_backend(a.vad)
+
     show_results: dict = {}
     results = []
     for root in a.show_dir:
         show_name = show_name_for_root(root)
         for video in find_episodes([root]):
-            res = process_episode(video, lang, tolerance, vad_backend=a.vad, vad_aggressiveness=a.vad_aggressiveness)
+            res = process_episode(video, lang, tolerance, vad_backend=vad_backend, vad_aggressiveness=a.vad_aggressiveness)
             results.append(res)
             show_results.setdefault(show_name, []).append(res)
             if not a.summary_only:
@@ -1015,7 +1049,7 @@ def main(argv=None):
         "min_cues": min_cues,
         "min_plain_share": min_plain_share,
         "pair_radius_s": PAIR_RADIUS_DEFAULT_S,
-        "vad_backend": a.vad,
+        "vad_backend": vad_backend,
         "vad_aggressiveness": a.vad_aggressiveness,
     }
     report = build_report(show_results, config)

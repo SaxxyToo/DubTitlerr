@@ -80,18 +80,40 @@ well inside the 2 pp tolerance, and `false_in_gap_rate` — the share of kept ca
 subtitle gap with no speech in it, i.e. hallucinated into silence — is slightly *better* on
 large-v3.
 
-**Two caveats, both about the criterion rather than the result:**
+### Both caveats closed (2026-11-18, before merge)
 
-1. **The criterion's second half cannot be evaluated.** It asks for "median absolute onset
-   error ≤ +50 ms", and `timing_compare` does not produce that metric — it fits a RANSAC
-   offset+drift and reports the on-cue classification, with no median onset-error field in its
-   report. Either the criterion should drop that clause or the tool should grow the field; it
-   has been left unevaluated rather than guessed at.
-2. **The default VAD backend is unusable here.** With the shipped default (`webrtcvad`) every
-   in-gap card errors (`in_gap_vad_error: 124`) and `false_in_gap_rate` is `null`, because
-   `webrtcvad` never installs — no wheel for this venv, and its best-effort install in the
-   image fails too. The numbers above use `--vad ffmpeg-silencedetect`, which works. Worth
-   noting for anyone reading a `timing_compare` report that shows `null`: that is what it means.
+**1. The criterion's second clause is now measurable — and passes.** `ransac_offset_drift`
+already computed residuals, but exposed only their SIGNED median, which a least-squares fit
+centres on zero by construction. It now also reports `residual_abs_median_ms` (the median of
+|residual| over inlier pairs — the actual onset error), surfaced per episode and recorded with
+`RANSAC_MIN_RESIDUAL_N`'s null-below-floor rule like its siblings.
+
+| Episode | turbo on-cue / abs-err | large-v3 on-cue / abs-err |
+|---|---|---|
+| Attack on Titan S01E01 | 87.96% / 135.1 ms | 90.36% / 147.6 ms |
+| Death Note S01E01 | 96.58% / 138.3 ms | 94.67% / 141.4 ms |
+| FMA Brotherhood S01E02 | 94.29% / 134.8 ms | 95.15% / 164.9 ms |
+| Vinland Saga S01E01 | 88.14% / 138.1 ms | 86.12% / 142.9 ms |
+| **median** | **136.6 ms** | **145.2 ms** |
+
+"Median absolute onset error ≤ turbo + 50 ms" → **145.2 ≤ 186.6, PASS**. Per-episode the two
+trade places (turbo better on Death Note and Vinland, large-v3 better on AOT and FMA), which is
+why the aggregate and the median are the numbers to read. The ~140 ms absolute figure is a
+property of the method — nearest-onset pairing of card boundaries against cue boundaries — and
+is essentially the same for both configs, so it is context rather than a regression.
+
+**2. The VAD backend now falls back instead of silently measuring nothing.** `webrtcvad` is a C
+extension with no wheel for the dev venv, and its install in the image is best-effort — so the
+shipped default produced `in_gap_vad_error` for every card and a `null` rate on any host
+without it. The default is unchanged (in the image it generally works, and it is the better
+backend); instead the tool now resolves the backend **once, before walking**, falls back to
+`ffmpeg-silencedetect` when the requested one cannot run, logs the substitution, and records
+the backend that **actually ran** in the report's config — previously it recorded the one that
+was *requested*. `false_in_gap_rate` is therefore 6.82% / 6.45% in this run rather than null.
+
+Both changes are covered by tests (the absolute residual: exact, noisy, and below-floor; the
+backend resolution: kept, fell back, and no-fallback-available), and the fit's shape-pinning
+test was updated for the new field rather than the field being hidden from it.
 
 ## Verdict against the spec's acceptance criteria
 
@@ -99,7 +121,7 @@ large-v3.
 |---|---|---|
 | 1 | WER ≤ current + 0.5 pp | **PASS** — better on 3/4, mean −2.42 pp, worst +0.12 pp |
 | 2 | Historical context | WER 10–30%, in the range the wiki's CT2 table reports (18–21%) |
-| 4 | Timing: on-cue ≥ −2 pp | **PASS** — 91.57% vs 91.79%, −0.22 pp; `false_in_gap_rate` also slightly better (6.45% vs 6.82%). The criterion's second clause (median onset error) is not produced by the tool and is left unevaluated |
+| 4 | Timing: on-cue ≥ −2 pp **and** median onset error ≤ +50 ms | **PASS on both clauses** — 91.57% vs 91.79% (−0.22 pp), and median absolute onset error 145.2 ms vs 136.6 ms (+8.6 ms, tolerance +50 ms). `false_in_gap_rate` also slightly better (6.45% vs 6.82%) |
 | 3 | Pipeline QC | **Mixed** — see the pipeline section; layout counters improve, one hallucination signal rises |
 | 5 | Confidence calibration | **Reported, not gated** — nsp is on a different scale by design (that is the finding); evaluated on word `probability` |
 | 6 | Hallucination gate | **FLAGGED** — blocklist hits 15 (large-v3) vs 9 (turbo), i.e. 0.84% vs 0.48% of segments. Not "comparable"; unexplained |
