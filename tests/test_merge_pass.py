@@ -174,6 +174,19 @@ for suffix in (".dubtitles.conf.json", ".eng.dubtitles.srt", ".mkv", ".mp4"):
         break
 with open(os.environ["CALLLOG"], "a") as f:
     f.write(name + " " + os.path.basename(stem) + "\\n")
+if os.environ.get("ARGLOG"):  # the path exactly as the stage received it
+    with open(os.environ["ARGLOG"], "a") as f:
+        f.write(arg + "\\n")
+if os.environ.get("STUB_REPLACE_ROOT_IN") == name:
+    # The library root is swapped for a fresh directory at the same path while this stage
+    # runs (a rename, a restore from backup, an NFS remount): the pass's working directory
+    # is now a deleted inode, and only a path that starts from "/" still reaches the files.
+    root = os.environ["MERGE_ROOTS"]
+    os.rename(root, root + ".old")
+    os.mkdir(root)
+    for n in os.listdir(root + ".old"):
+        os.rename(os.path.join(root + ".old", n), os.path.join(root, n))
+    os.rmdir(root + ".old")
 if os.environ.get("STUB_STOP_AFTER") == name:  # the window closes while this stage runs
     open(os.environ["STOP_FLAG"], "w").close()
 mode = os.environ.get("STUB_" + name.upper(), "ok")
@@ -667,3 +680,58 @@ def test_dropping_the_stamp_reassembles_the_episode_once(tmp_path):
 
     res, calls = _gated_run(tmp_path, root, extra_env=env)
     assert calls == ["repair ep01", "signs ep01", "mux ep01"], (calls, res.stdout, res.stderr)
+
+
+# --- the pass hands every stage an absolute path ------------------------------------------
+#
+# merge_pass.sh cd's into MERGE_ROOTS and used to pass every stage a path relative to it
+# ("./Show/Season 01/ep"). Measured 2026-11-17 on a live node: once that directory was replaced
+# under a running pass, dub_signs_merge's write_stage died in os.replace with FileNotFoundError
+# (recorded as "signs: crashed") and publish_gate's os.path.abspath() died in os.getcwd(),
+# refusing every mux. A relative path is only as good as the working directory it was made
+# against; an absolute one survives the directory being swapped out.
+
+
+def test_every_stage_and_the_gate_receive_absolute_paths(tmp_path):
+    root, stem = _episode(tmp_path)
+    log = tmp_path / "args.log"
+    res, calls = _gated_run(tmp_path, root, extra_env={"ARGLOG": str(log)})
+    assert calls == ["repair ep01", "signs ep01", "mux ep01"], (calls, res.stdout, res.stderr)
+    args = log.read_text().split("\n")[:-1]
+    assert args and all(os.path.isabs(a) for a in args), args
+    assert all(a.startswith(str(root) + os.sep) for a in args), args
+
+
+def test_a_library_root_replaced_mid_pass_does_not_lose_stage_records(tmp_path, monkeypatch):
+    monkeypatch.setattr(common, "OUTPUT_ROOT", "")
+    root, stem = _episode(tmp_path)
+    res, calls = _gated_run(tmp_path, root, extra_env={"STUB_REPLACE_ROOT_IN": "repair"})
+    assert calls == ["repair ep01", "signs ep01", "mux ep01"], (calls, res.stdout, res.stderr)
+    stages = common.read_stages(stem)
+    assert {k: v["outcome"] for k, v in stages.items()} == {"repair": "ok", "signs": "ok", "mux": "ok"}, stages
+    assert "MERGE PASS COMPLETE" in res.stdout, res.stdout
+
+
+def test_a_failed_stage_is_still_counted_after_the_root_is_replaced(tmp_path, monkeypatch):
+    # The census at the end of the pass is the line an operator reads. Run from a dead working
+    # directory it found nothing, counted 0 failures and printed COMPLETE: it must fail closed.
+    monkeypatch.setattr(common, "OUTPUT_ROOT", "")
+    root, stem = _episode(tmp_path)
+    res, calls = _gated_run(tmp_path, root, signs="build-error", extra_env={"STUB_REPLACE_ROOT_IN": "repair"})
+    assert common.read_stages(stem)["signs"]["outcome"] == "build-error", (res.stdout, res.stderr)
+    assert "MERGE PASS INCOMPLETE: 1 episodes with a failed stage" in res.stdout, res.stdout
+
+
+def test_an_extras_folder_is_still_skipped_when_the_root_itself_contains_an_extras_name(tmp_path):
+    # Paths are absolute now, so the extras filter must look only below the root: a library
+    # mounted at .../Other/Anime must not have every episode filtered out as an "Other" extra.
+    root = tmp_path / "Other" / "library"
+    stem = root / "Show" / "ep01"
+    extra = root / "Show" / "Extras" / "clip"
+    for p in (stem, extra):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        (p.parent / (p.name + ".mkv")).write_text("")
+        (p.parent / (p.name + ".eng.dubtitles.srt")).write_text("")
+    (tmp_path / "calls.log").write_text("")
+    res, calls = _gated_run(tmp_path, root)
+    assert [c for c in calls if c.startswith("repair")] == ["repair ep01"], (calls, res.stdout, res.stderr)
