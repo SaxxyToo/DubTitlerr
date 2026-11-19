@@ -12,6 +12,7 @@ re-derivation. Ollama calls are not exercised here (no network in tests).
 import json
 
 import pytest
+import repair_ref_stub
 
 import tools.bakeoff as bo
 
@@ -1347,7 +1348,7 @@ def _differential(tmp_path, monkeypatch, capsys, arc=None):
     ivals = [(0.0, 2.0, "Zoro drew his blade."), (4.0, 6.0, "He saw Spandam there.")]
     monkeypatch.setattr(_prod, "find_video", lambda s: video)
     monkeypatch.setattr(_prod, "glossary_for", lambda v: gloss)
-    monkeypatch.setattr(_prod, "dialogue_intervals", lambda v: ivals)
+    monkeypatch.setattr(_prod, "reference_tracks", repair_ref_stub.stub(ivals))
     monkeypatch.setattr(_common, "dialogue_intervals", lambda v: ivals)
     monkeypatch.setattr(_glossary, "arc_for", lambda v: arc)
     prod_prompts = []

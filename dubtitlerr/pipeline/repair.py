@@ -108,7 +108,7 @@ import threading
 import time
 import urllib.parse
 
-from dubtitlerr.core import decisions, unresolved
+from dubtitlerr.core import decisions, reftracks, unresolved
 from dubtitlerr.core.common import (
     MEDIA_GID,
     MEDIA_UID,
@@ -509,6 +509,81 @@ def build_prompt(asr, sub, gloss, prev_text="", next_text="", arc=None, episode=
 def overlap_ref(ivals, a, b):
     hits = [t for (s, e, t) in ivals if e > a and s < b]  # any time overlap
     return " ".join(hits)[:300]
+
+
+# --- R2: one classified reference track per card ------------------------------
+#
+# Pre-R2 the reference was ``overlap_ref`` over EVERY English subtitle stream merged
+# together, so a card landing where a dub-caption track and a translation track both
+# speak got both wordings concatenated into one string (observed on DAN DA DAN: the
+# prompt quoted the dub caption and the fansub line back to back). The repair prompt
+# frames the reference as "a DIFFERENT translation of this moment", which is only true
+# of one of the two, so the joined string was wrong material for either role.
+#
+# From R2 on, ``reftracks.classify`` decides each track's role and one track is chosen
+# per card: dub captions first (they carry the dub's own wording), translation second,
+# and only that track's overlapping cues. ``REPAIR_REF_CLASSIC=1`` restores the merged
+# pool exactly, for rollback and for A/B replay.
+
+REF_WINDOW_CAP = 300  # chars of reference text the prompt sees and the queue records
+REF_ROLE_RANK = {reftracks.ROLE_DUB: 0, reftracks.ROLE_TRANSLATION: 1}
+
+
+def _ref_classic() -> bool:
+    """REPAIR_REF_CLASSIC=1: use the legacy merged-pool reference (rollback / A/B). Read per call."""
+    return os.environ.get("REPAIR_REF_CLASSIC", "") not in ("", "0")
+
+
+def reference_tracks(video, conf=None):
+    """The episode's classified repair-reference tracks (one classify() pass per episode).
+
+    ``conf`` is the episode's ASR card list; its (pre-repair) text is the dub transcript
+    that lets the classifier confirm or override a track's title-derived role. A
+    classifier failure is not an episode failure -- the episode is treated as unanchored,
+    which is exactly what a video with no readable English subtitles already does.
+    """
+    try:
+        sample = " ".join(str(c.get("text") or "") for c in (conf or ()))
+        return reftracks.references(video, sample_text=sample)
+    except Exception as e:  # noqa: BLE001 - observability must never fail the episode
+        log("  WARNING reference classification failed; treating this episode as unanchored:", e)
+        return []
+
+
+def select_reference(tracks, a, b):
+    """Pick ONE reference track for the card whose audio spans ``[a, b)``.
+
+    Candidates are reference tracks (native, not signs) with at least one dialogue cue
+    overlapping the window. Role wins first (dub > translation), then the track holding
+    the most overlapping characters, then the lowest stream index so the choice is
+    deterministic. Returns ``(Track, text)`` with that track's overlapping cues joined and
+    capped at REF_WINDOW_CAP, or ``None`` when nothing overlaps -- never a cross-track join.
+    """
+    best = None
+    for t in tracks or ():
+        if not t.is_reference or t.role not in REF_ROLE_RANK:
+            continue
+        hits = [ev.text for ev in t.events if ev.end > a and ev.start < b]
+        if not hits:
+            continue
+        key = (REF_ROLE_RANK[t.role], -sum(len(h) for h in hits), t.index)
+        if best is None or key < best[0]:
+            best = (key, t, " ".join(hits)[:REF_WINDOW_CAP])
+    return None if best is None else (best[1], best[2])
+
+
+def anchor_mode(roles_used):
+    """Summary-level ``anchor_mode`` from the roles actually used across this episode's cards.
+
+    ``native-dub`` / ``native-translation`` when every anchored card used that one role,
+    ``mixed`` when cards genuinely used both, ``none`` when no card had a reference.
+    """
+    used = {r for r in roles_used if r}
+    if not used:
+        return "none"
+    if len(used) > 1:
+        return "mixed"
+    return "native-dub" if reftracks.ROLE_DUB in used else "native-translation"
 
 
 def _request_deadline():
@@ -1489,7 +1564,15 @@ def _process_episode(conf_path):
     targets = [(i, c) for i, c in enumerate(conf) if is_target(c, gloss)]
     if not targets:
         return "clean"  # nothing to repair (e.g. S15E01)
-    ivals = dialogue_intervals(video)
+    # R2: one classified reference track per card (see select_reference), or the legacy
+    # merged pool under REPAIR_REF_CLASSIC=1. Classification reads every text subtitle
+    # track once per episode; a video with none yields [] and every card skips exactly as
+    # it did before this change.
+    if _ref_classic():
+        ivals, ref_tracks = dialogue_intervals(video), None
+    else:
+        ivals, ref_tracks = [], reference_tracks(video, conf)
+    roles_used = set()
     audit, fixed, skipped_no_ref, rejected = [], 0, 0, 0
     rec = qc.Recorder()  # S-6 liveness counters, merged into the summary below
     llm_empty = 0
@@ -1549,9 +1632,24 @@ def _process_episode(conf_path):
         # No reference, not the display window: on 99% of gated cards display == source,
         # so falling back reproduces the window just declared implausible.
         if hallucination.bad_source_window(c, rec=rec):
-            ref = ""
+            ref, ref_track = "", None
+        elif ref_tracks is None:
+            ref, ref_track = overlap_ref(ivals, c.get("source_start", c["start"]), c.get("source_end", c["end"])), None
         else:
-            ref = overlap_ref(ivals, c.get("source_start", c["start"]), c.get("source_end", c["end"]))
+            # R2: one track, one role. `None` means nothing overlapped this card's audio,
+            # which skips it below unless the show declares unanchored repair.
+            choice = select_reference(ref_tracks, c.get("source_start", c["start"]), c.get("source_end", c["end"]))
+            ref, ref_track = (choice[1], choice[0]) if choice else ("", None)
+        # Recorded per queue entry and summarised as anchor_mode: which role the reference
+        # came from. Optional fields on the queue (absent = unclassified, i.e. legacy runs).
+        ref_fields = {}
+        if ref_track is not None:
+            roles_used.add(ref_track.role)
+            ref_fields = {
+                "ref_role": ref_track.role,
+                "ref_provenance": ref_track.provenance,
+                "ref_track_title": ref_track.title or None,
+            }
         if skips_unanchored(ref, gloss):
             bucket = apply_human_text(c, store, stem, words_doc)
             if bucket == "rescued":
@@ -1633,7 +1731,13 @@ def _process_episode(conf_path):
                 continue
             llm_empty += 1
             unresolved.record(
-                stem, "repair", "llm_empty", original_text=c["text"], reference=ref[:120], avg_logprob=c.get("avg_logprob")
+                stem,
+                "repair",
+                "llm_empty",
+                original_text=c["text"],
+                reference=ref[:REF_WINDOW_CAP] or None,
+                avg_logprob=c.get("avg_logprob"),
+                **ref_fields,
             )
             continue
         # [S-4] A human already ruled on this exact (original, proposal) pair. Consulted
@@ -1749,6 +1853,7 @@ def _process_episode(conf_path):
                     avg_logprob=c.get("avg_logprob"),
                     guard=guard_name,
                     **dismissed_fields,
+                    **ref_fields,
                 )
             else:
                 # `new` is non-empty (the `if not new` above returned), so this is exactly
@@ -1811,8 +1916,9 @@ def _process_episode(conf_path):
                     _queued,
                     c["text"],
                     new,
-                    reference=ref[:120] or None,
+                    reference=ref[:REF_WINDOW_CAP] or None,
                     avg_logprob=c.get("avg_logprob"),
+                    **ref_fields,
                 )
             c["text"] = new
             fixed += 1
@@ -1933,6 +2039,11 @@ def _process_episode(conf_path):
         "p95_latency_ms": round(_p95(lat_values)) if lat_values else 0,
         "model": MODEL,
         "model_secondary": MODEL_SECONDARY,
+        # R2: which reference axis anchored this episode's cards -- native-dub,
+        # native-translation, genuinely mixed across cards, or none. "unclassified" is
+        # only written by the REPAIR_REF_CLASSIC rollback path, whose merged pool has no
+        # per-track roles to report.
+        "anchor_mode": "unclassified" if ref_tracks is None else anchor_mode(roles_used),
         # evaluated>0 with activated==0 across a season is the dead-rule signal. Carried
         # here because repair writes its own summary rather than a qc sidecar.
         "rules": dict(rec.counters),

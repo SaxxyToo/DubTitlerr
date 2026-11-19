@@ -5,6 +5,7 @@ Synthetic names; no network."""
 import json
 
 import pytest
+import repair_ref_stub
 
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import repair
@@ -122,7 +123,7 @@ def test_the_summary_counts_the_name_part_rejection_under_its_own_key(tmp_path, 
     )
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_parts.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl())
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 6.0, "Momonosuke is going to Wano.")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 6.0, "Momonosuke is going to Wano.")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "Kouzuki Momonosuke is going to Wano.")
     recorded = []
     monkeypatch.setattr(repair.unresolved, "record", lambda stem, *a, **k: recorded.append(a))
@@ -144,7 +145,7 @@ def test_without_the_flag_the_summary_key_is_zero(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_off.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl())
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 6.0, "Momonosuke is going to Wano.")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 6.0, "Momonosuke is going to Wano.")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "Kouzuki Momonosuke is going to Wano.")
     repair.process(conf_path)
     summary = json.load(open(stem + ".dubtitles.repair-summary.json"))

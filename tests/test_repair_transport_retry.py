@@ -7,6 +7,7 @@ import socket
 import urllib.error
 
 import pytest
+import repair_ref_stub
 
 from dubtitlerr.pipeline import repair
 
@@ -170,7 +171,7 @@ def test_the_summary_reports_transport_retries_only_when_the_budget_is_set(tmp_p
         test_repair._write_conf(conf, stem + repair.SRT_SUFFIX, segs)
         monkeypatch.setattr(repair, "find_video", lambda s: str(sub / "ep.mkv"))
         monkeypatch.setattr(repair, "glossary_for", lambda video: glossary.load_dict({}))
-        monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 80.0, "the official sub")])
+        monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 80.0, "the official sub")]))
         monkeypatch.setattr(repair, "REPAIR_BACKEND", "openai")
         script(monkeypatch, ConnectionResetError("reset"), OK)
         repair.process(conf)
