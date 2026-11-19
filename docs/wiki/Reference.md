@@ -74,7 +74,7 @@ All are written beside the video, sharing its basename. The merged `.ass` keeps 
 | `.dubtitles.crash.json`          | `generate.py`                                                | -                                            | Exception type, message and time from that crash                                                                    |
 | `.dubtitles.qc.json`             | `generate.py`                                                | `mux.py`                                     | Quality counters, cps quantiles, layout violations, and duration flags (schema version 5: overlong and drip_chain)  |
 | `.dubtitles.repair.csv`          | `repair.py`                                                  | -                                            | Audit trail: original, repaired, reference, latency                                                                 |
-| `.dubtitles.repair-summary.json` | `repair.py`                                                  | `mux.py`                                     | Targets, repaired, skipped, latency, model, rules                                                                   |
+| `.dubtitles.repair-summary.json` | `repair.py`                                                  | `mux.py`                                     | Targets, repaired, skipped, latency, model, rules, and `anchor_mode`                                                |
 | `.dubtitles.unresolved.jsonl`    | `unresolved.py`                                              | `unresolved.py`, `review_server.py`          | Rejections awaiting human triage (the review queue)                                                                 |
 | `.dubtitles.mux.log`             | `mux.py`                                                     | -                                            | Tracks dropped, defaults set                                                                                        |
 
@@ -93,7 +93,9 @@ and `<glossary>.json.review-pending.bad` (a pending file that did not parse; kep
 `.dubtitles.unresolved.jsonl` holds one JSON object per line. Entries stay in the file after they
 are resolved; the review view filters them. Keys: `stage`, `reason`, `original_text`,
 `proposed_text`, `avg_logprob`, `resolved`, and since this release `guard` (the check that refused
-a repair) and, for dismissed entries, `dismissed` and `changes`.
+a repair) and, for dismissed entries, `dismissed` and `changes`. A repair entry whose card had an
+anchored reference also carries `ref_role`, `ref_provenance` and `ref_track_title`; its
+`reference` holds at most 300 characters. See [Repair references](#repair-references).
 
 | Reason                   | Stage       | Meaning                                                                                                                                                                                    |
 | ------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -142,6 +144,99 @@ repair stopped for a soft stop: the next pass clears the `stopped` record and re
 `llm-empty` is a name in the code's outcome list, but repair never writes it. When a model
 answers a target with nothing, repair counts it as `llm_empty` in the repair summary, queues the
 line for review, and the stage still records `ok`.
+
+---
+
+## Repair references
+
+A **reference** is native release text the repair stage may consult for one card. Two independent
+axes decide whether a track can serve that role; both are classified in
+`dubtitlerr/core/reftracks.py`.
+
+| Axis       | Values                        | Rule                                                                                                                                       |
+| ---------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Provenance | `native`, `ours`              | `ours` is a track whose title is exactly `common.TRACK_NAME` (`"Dubtitles"`), the marker this pipeline muxes itself. `is_reference` requires `native` and a role other than `signs`, so our own output is never a reference |
+| Role       | `dub`, `translation`, `signs` | `dub` is captions of the English dub itself; `translation` is a separate localisation; `signs` is signs/songs/forced and is never dialogue |
+
+Only English tracks are considered (`SUB_LANGS`). `ass`, `ssa`, `subrip` and `mov_text` are read;
+bitmap codecs (PGS, VobSub) are not text and are ignored.
+
+### Role classification
+
+The title is the prior; the content is the evidence. `title_role` (`reftracks.py:320`) maps a
+title to a role. When the episode's ASR text is supplied, word-bigram overlap (`classify`,
+`reftracks.py:339`) confirms or overrides it.
+
+| Title evidence                                         | Role          | Confirmed from the title? |
+| ------------------------------------------------------ | ------------- | ------------------------- |
+| `common.SIGNS_TITLE` match (`Signs & Songs`, `S&S`, `Forced`, `Songs`) | `signs`       | yes                       |
+| explicit dub marker (`dub`, `dubtitle`, `dubbed`)      | `dub`         | yes                       |
+| `SDH` / `CC` / `dialog(ue)` only                       | `dub`         | no — provisional          |
+| any other title, or an empty title                     | `translation` | no — provisional          |
+
+Measured word-bigram overlap decides the provisional rows:
+
+| Constant           | Value  | Effect                                                                                       |
+| ------------------ | ------ | -------------------------------------------------------------------------------------------- |
+| `OVERLAP_MIN`      | `0.55` | A provisional title becomes `dub` at or above this, `translation` below it                    |
+| `OVERLAP_KEEP_MIN` | `0.30` | An explicit dub title is only overturned below this, so measurement must be decisive to beat it |
+| `MIN_SAMPLE_TOKENS`| `40`   | Below this many distinct sample words the score is noise and the title prior stands           |
+
+`role_confirmed` records whether the role came from an explicit title or from measurement;
+`role_overlap` holds the score (`null` when unmeasured). A classifier failure is never an episode
+failure: the episode is treated as unanchored (`repair.py:537`).
+
+### Selection, per card
+
+Repair picks **one** reference track per card from those whose dialogue cues overlap the card's
+audio window (`select_reference`, `repair.py:553`). The order is fixed:
+
+1. role, `dub` before `translation`;
+2. the track holding the most overlapping characters;
+3. the lowest stream index.
+
+Only that one track's overlapping cues are joined, capped at `REF_WINDOW_CAP` = `300` characters
+(`repair.py:528`). There is no cross-track join: a dub caption and a fansub line are never
+concatenated into one reference.
+
+`REPAIR_REF_CLASSIC=1` restores the pre-classification merged pool (`overlap_ref` over every English subtitle
+stream) exactly. It is a rollback and A/B switch, not a stored setting; the classifier is not
+called on that path, and the summary reports `anchor_mode: "unclassified"`.
+
+### What each role does to the gates
+
+`accept_repair` and `rejecting_guard` (`repair.py:1195`) take the recorded `ref_role`. For
+`translation`, and for a reference with no recorded role, every gate behaves exactly as measured
+before this change.
+
+For `dub`, a proposal whose **every added word** appears in that card's dub-caption window is
+**all-vouched** (`dub_vouches`, `repair.py:722`). That changes three checks:
+
+| Check                | Classic                        | All-vouched, `ref_role=dub`                                                          |
+| -------------------- | ------------------------------ | ------------------------------------------------------------------------------------ |
+| `ref_borrow`         | `MAX_REF_BORROW` borrowed words refuse | Skipped — the same words are attestation, not leakage                        |
+| `length_ratio` upper | `LEN_RATIO_MAX` = `1.5`        | `REPAIR_GATE_DUB_VOUCHED_MAX_RATIO` = `3.0`                                          |
+| `invents_name`       | A fabricated proper noun refuses | A gained name core that appears in the dub window is exempt (`dub_name_exemption`, `repair.py:709`) |
+
+Everything else still applies, unchanged for both roles: `empty`, `unchanged`, `terminal_punct`,
+`name_part`, `vouched_name`, the `LEN_RATIO_MIN` lower bound and `fits_card`. If **any** added
+word is absent from the dub window, the proposal falls back to the classic gates unchanged.
+`REPAIR_GATE_DUB_VOUCHED=0` restores classic semantics everywhere; like `REPAIR_REF_CLASSIC` it is
+a rollback switch, not a stored setting.
+
+### Recording
+
+| Where                                   | Fields                                                                                                                                  |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Queue entry (`.dubtitles.unresolved.jsonl`) | `ref_role`, `ref_provenance`, `ref_track_title` (absent or null when the card had no anchored reference); `reference` holds at most 300 characters |
+| `repair-summary.json`                   | `anchor_mode`: `native-dub`, `native-translation`, `mixed`, `none`, or `unclassified` (rollback path only)                              |
+| Review server entry                     | the three fields above plus a normalised `ref_class`: `dub`, `translation`, `unanchored`, `unclassified`                                |
+| Shared pairs (`/api/shared`)            | `ref_class` only when every episode in the pair agrees; otherwise `null`                                                                |
+
+`ref_class` is `unanchored` only when the entry has no reference text at all. An entry that has
+reference text but no recorded role — every entry queued before this change — is `unclassified`,
+which is a different question: the anchor exists, its role is unknown. Older queue entries without
+these fields still read.
 
 ---
 
@@ -222,6 +317,9 @@ model to point an endpoint at.
 | `NSP_MAX`                            | `0.5`                                              | Above this no-speech probability, a line is skipped                                                                                                                                                                                                                                                                 |
 | `LEN_RATIO_MIN` / `LEN_RATIO_MAX`    | `0.6` / `1.5`                                      | Accepted length change                                                                                                                                                                                                                                                                                              |
 | `MAX_REF_BORROW`                     | `3`                                                | Words a repair may take from the reference                                                                                                                                                                                                                                                                          |
+| `REPAIR_REF_CLASSIC`                 | _(unset)_                                          | `1` restores the classic merged reference pool instead of one classified track per card. Rollback and A/B only: the classifier is not called and `anchor_mode` reports `unclassified`. Not a stored setting                                                                                                         |
+| `REPAIR_GATE_DUB_VOUCHED`            | `1`                                                | `0` restores the classic gates everywhere, so a native dub-caption reference no longer vouches for added words. Rollback switch only, not a stored setting. See [Repair references](#repair-references)                                                                                                             |
+| `REPAIR_GATE_DUB_VOUCHED_MAX_RATIO`  | `3.0`                                              | Longest repair ratio allowed when a native dub-caption reference attests every added word. The lower bound is still `LEN_RATIO_MIN`, and `fits_card` still decides displayability                                                                                                                                   |
 | `REPAIR_PHONETIC_MIN`                | `0.75`                                             | Phonetic similarity floor for a name correction                                                                                                                                                                                                                                                                     |
 | `REPAIR_TIMEOUT_CONNECT` / `_READ`   | `10` / `120`                                       | Seconds. `_READ` applies to each socket read, not to the whole request; see `REPAIR_REQUEST_DEADLINE`                                                                                                                                                                                                               |
 | `REPAIR_OPENAI_URL`                  | _(unset)_                                          | Full chat-completions URL of an OpenAI-compatible API. Used when `REPAIR_BACKEND=openai`                                                                                                                                                                                                                            |

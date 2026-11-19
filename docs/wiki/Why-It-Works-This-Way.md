@@ -43,17 +43,59 @@ hear `Doflamingo` and write `Dothamingo`. No amount of audio quality fixes this:
 is not in any dictionary the model has.
 
 So a repair stage takes the low-confidence and name-suspect lines and asks a small language
-model to fix them. That model needs to know what it is allowed to write.
+model to fix them. That model needs to know what it is allowed to write. The **reference** is
+the native subtitle text it may consult for one line.
 
-**Anchored repair** happens when your copy of the episode carries an English subtitle track
-for the Japanese audio. The repair model gets the overlapping reference line as context. It
-can see that the scene involves a character called Doflamingo, and correct the name without
-inventing anything.
+### Three kinds of anchor, not two
 
-**Unanchored repair** happens when there is no such track — a dub-only release. The model
+It used to be a yes-or-no question: did the episode carry an English subtitle track? The
+library holds three answers, and they are not equally useful.
+
+- **Native dub captions.** A track that transcribes the English dub itself — titles such as
+  `Dub`, `Dubtitle`, `English (SDH Dubtitle)`, sometimes SubRip rather than `.ass`. This is the
+  closest available record of what the audio says, and the only text that resembles an answer
+  key rather than a commentary on one. Measured word-bigram overlap against the episode's own
+  dub transcript separates it from a translation cleanly: DAN DA DAN 0.70 versus 0.17, Death
+  Note 0.78 versus 0.20–0.26, Vinland 0.87 versus 0.42.
+- **Native translations.** A subtitle track for the _Japanese_ audio, written by a fansub group
+  or a licensor. Usually excellent prose, and a **different translation of the same scene** —
+  different word choices, different sentence breaks, sometimes a different meaning where the
+  dub script was rewritten for lip flap. It is a disambiguation anchor: it tells the model which
+  character and which scene a garbled line belongs to, not what the line says.
+- **Neither.** A dub-only release. The model gets only the show's glossary. That is
+  **unanchored repair**, described below.
+
+Repair decides which of the first two an episode has by classifying every English text track on
+two independent axes: **provenance** (`native`, or `ours`) and **role** (`dub`, `translation`,
+`signs`). The title is the prior and the content is the evidence: an explicit `Dub`/`Dubtitle`
+title is believed; `SDH`, `CC` or a bare `English` stays provisional until bigram overlap against
+the episode's own transcript confirms or overturns it. Signs and songs are never dialogue, and
+are never a reference.
+
+When an episode has both kinds, repair prefers the dub captions for every card. Not because they
+are always right — a dub-caption track can disagree with the audio it claims to transcribe — but
+because a repair that borrows its wording is borrowing the dub's wording instead of a stranger's.
+The preference is a ranking, not a verdict: the audio still decides.
+
+### Our own output is never a reference
+
+The pipeline writes `.dub.en.*` sidecars and muxes a track titled `"Dubtitles"`. Neither is ever
+a reference, and neither is ever a verification oracle.
+
+They are the artifact. Judging a line against the copy this pipeline produced last time would
+make it agree with itself: a mistake would be confirmed by the file that contains the mistake,
+and drift would become indistinguishable from correctness. So the classifier tags them `ours`,
+`is_reference` refuses them, and the mux-side exclusion of the `"Dubtitles"` marker stays even
+though none exist in the library today — the discipline is cheaper than rediscovering the bug.
+
+The correctness oracle is the **dub audio**. Text is only ever a witness to it.
+
+### Unanchored repair
+
+Unanchored repair happens when there is no native track at all — a dub-only release. The model
 gets only the show's glossary. This is more dangerous, and the danger is measured, not
-theoretical: on an earlier model, glossary-only repair turned `Oimo` into `Zoro`. A
-confident, fluent, entirely fabricated name.
+theoretical: on an earlier model, glossary-only repair turned `Oimo` into `Zoro`. A confident,
+fluent, entirely fabricated name.
 
 ### Why the default is off, and why you may still want it on
 
@@ -120,6 +162,14 @@ not what the dub says.
 
 The old gate was a length band, which a same-length rewrite passes without slowing down. The
 check now counts words taken from the reference.
+
+That check assumes the reference is a **different translation**. When the reference is the dub's
+own captions, the same words are the answer rather than a leak, so the rule would refuse exactly
+the corrections it should accept. A proposal whose every added word appears in the dub-caption
+window is therefore *vouched*: the borrowing count stops applying, and the upper length band
+widens. Every other guard still runs — including the one that refuses text that does not fit the
+card. The measurement behind that exception, and what it costs, is in
+[Design decisions](Design-decisions.md#6-role-aware-gate-semantics-for-dub-caption-references).
 
 ### Why a repair that does not fit is rejected rather than accommodated
 

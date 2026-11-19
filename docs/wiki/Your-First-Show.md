@@ -171,7 +171,8 @@ In the log you will see, in order:
    `~/dubtitlerr/glossaries/Show Name (Year).json`.
 2. **Verification** — those names checked against the show's Fandom wiki.
 3. **Transcription** — Whisper on the English dub audio. This is the slow part.
-4. **Repair** — the low-confidence and name-suspect lines sent to your model.
+4. **Repair** — the low-confidence and name-suspect lines sent to your model, each anchored on
+   one native subtitle track where the episode has one.
 5. **Merge and mux** — signs and songs folded in, then written into the MKV as a default
    track named _Dubtitles_.
 
@@ -190,7 +191,7 @@ On your first visit, the server opens the setup wizard at `/review/setup`. Creat
 
 If you provided `REVIEW_USERNAME` and `REVIEW_PASSWORD` in your Compose environment, the setup page is skipped and you can sign in directly.
 
-After signing in, open your episode in the review workspace. You are looking at only the lines the pipeline was unsure about, not the whole episode. Each row shows what was transcribed, what the repair model proposed, and the lines either side for context.
+After signing in, open your episode in the review workspace. You are looking at only the lines the pipeline was unsure about, not the whole episode. Each row shows what was transcribed, what the repair model proposed, the lines either side for context, and a chip naming what the repair was anchored on — **Dub-anchored**, **Translation-anchored**, **Unanchored** or **Unclassified**. Follow the dub audio, not the chip; the chip tells you how reliable the reference is.
 
 For each one, choose:
 
