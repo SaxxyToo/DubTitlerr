@@ -20,7 +20,9 @@ ffprobe -v error -select_streams s \
 ```
 
 An English track carrying full dialogue means you are anchored and should **not** do this. A
-_Signs and Songs_ track only counts as no reference.
+_Signs and Songs_ track only counts as no reference. A track that turns out to be **native dub
+captions** is better than an anchor: that episode can be sourced rather than generated — see
+[See which episodes can be sourced](#see-which-episodes-can-be-sourced-instead-of-generated).
 
 > Seasons of one show can differ. Check the season you are about to process.
 
@@ -49,6 +51,51 @@ install**: it is committed to git and reviewable, where the global flag is host
 configuration that a `git pull` cannot show you. If an unanchored repair ships
 something wrong, the recovery is a `reject` verdict recorded with `decisions.record`
 followed by `review_apply.py`, not disabling the flag.
+
+---
+
+## See which episodes can be sourced instead of generated
+
+**Problem:** an episode whose release already carries native English **dub captions** does not
+need Whisper at all: that text can stand as the deliverable, checked against the dub audio, rather
+than being produced from scratch. An episode with only a translation needs the full ASR and repair
+path. Knowing which is which before a run decides where your GPU hours go, and `ffprobe`-ing a
+library by hand does not scale.
+
+**Do it.** Run the read-only route report over your media root:
+
+```sh
+python3 tools/references_report.py --root "/media/Anime Library" \
+  --json /config/reports/references.json
+```
+
+It prints per-show counts and writes the JSON. Each episode gets one **axis** and one **route**:
+
+| Axis                 | Meaning                                                        | Route      |
+| -------------------- | -------------------------------------------------------------- | ---------- |
+| `native-dub`         | a native track classified as dub captions                      | `sourced`  |
+| `both`               | both a dub-caption and a translation track                     | `sourced`  |
+| `native-translation` | only a native translation                                      | `generate` |
+| `none`               | no native English dialogue text (PGS-only, signs/ours only)    | `generate` |
+
+`unfillable` is a third route, for an episode with no readable audio stream to transcribe. For a
+`none` episode the reason string also says whether the show declares `unanchored_repair`, which
+tells you if repair can contribute anything after ASR.
+
+**What the route does not do.** Nothing is routed automatically. The pipeline does not read this
+report and the sourcing step is still run by hand; the report is a planning input so you can order
+the library and see where the GPU is spent. It is strictly read-only — the only file it writes is
+its own report, and it refuses a `--json` path inside a scanned root.
+
+**Depth.** By default the report runs on **metadata**: one `ffprobe` per episode, with roles from
+the title rules and an explicit `Dub`/`Dubtitle` title confirmed. That is fast enough for a whole
+library and is the right first pass. `--verify-content` runs the full classifier — every text
+stream extracted and parsed, the episode's own ASR text confirming or overturning the title prior
+— which is the measured role, but costs roughly 40 s per track on a 1.4 GB episode. Use it for a
+show you are about to source, not for 900 episodes.
+
+`--show` filters to one show, `--limit` caps episodes per show for a smoke run, and `--jobs`
+sets the parallelism (default 4).
 
 ---
 
@@ -416,6 +463,22 @@ is skipped and the log says so.
 kept in the file but hidden from the default view, because in a blind sample of 100 real
 rejections no acceptable fix needed more than that. Show them with the all-reasons view. Raise
 `REPAIR_AUTO_DISMISS_WORDS` to see more by default, or set it to `off` to see all.
+
+**Read the anchor chip first.** Each row carries a chip naming what its repair was anchored on,
+and a **Filter by reference anchor** control selects one class:
+
+| Chip                     | What it means                                                                                                   |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| **Dub-anchored**         | The reference was the release's own dub captions. The closest record of the dub wording — but follow the audio.   |
+| **Translation-anchored** | The reference was a separate translation. A strong hint for who and what the line is about, not the wording.      |
+| **Unanchored**           | No reference was kept. Nothing downstream can repair this line again without a guess.                            |
+| **Unclassified**         | Queued before roles were recorded. The anchor exists; its role is unknown, so treat it as a reference.           |
+
+A chip also shows the provenance when one was recorded (`Dub-anchored · native`). Use the class to
+decide how hard a row is worth reading: a translation-anchored proposal that reads beautifully may
+still be the fansub's line rather than the dub's, while an unanchored row is the only one where
+invention has no upper bound. Legacy entries with no role are `Unclassified`, never `Unanchored` —
+they do have a reference, which is a different question from having none.
 
 **What to expect.** On the Wano run, about four in five rejections were right, so the queue is
 mostly confirming a guard. The ones worth finding are casing, punctuation and single-name

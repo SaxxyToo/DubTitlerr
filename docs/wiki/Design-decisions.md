@@ -6,7 +6,7 @@ plainly where evidence is still owed, so a future change can be argued against t
 than against a comment.
 
 If you are about to reverse one of these, read the evidence first. The first two were made after an
-earlier instinct turned out to be wrong. The last three were made against a measured gap, and the
+earlier instinct turned out to be wrong. The rest were made against a measured gap, and the
 Jellyfin entry is marked as a reason rather than a measurement.
 
 ---
@@ -355,3 +355,111 @@ has been recorded yet, and two behaviours — whether `Filters=IsPlayed,IsResuma
 the deployed server, and whether `GET /Users` succeeds with the configured API key — are confirmed
 only against mocked HTTP. `TODO(deploy)` in the module docstring records exactly what the deploy phase
 must measure before this section can cite a number.
+
+---
+
+## 6. Role-aware gate semantics for dub-caption references
+
+**Accepted 2026-11-19.** The switch is `REPAIR_GATE_DUB_VOUCHED` and the cap is
+`REPAIR_GATE_DUB_VOUCHED_MAX_RATIO`, both in `repair.py`. The acceptance evidence is
+`tools/gate_replay.py`.
+
+### The problem
+
+Every repair guard was built on one assumption: the reference is **a different translation of
+this moment**. `ref_borrow` counts the words a proposal takes from it and refuses three or more,
+because a model that copies the reference is writing the fansub's line, not the dub's. That is
+correct when the track paraphrases the scene.
+
+It is backwards when the track **transcribes the dub**. Once repair preferred native dub captions
+over translations, the guards began refusing repairs that were exactly right: the words they
+counted as leakage were the dub's own words.
+
+Three misfires were verified on DAN DA DAN, each refused by a guard the dub captions should have
+satisfied:
+
+| Case                                          | Guard that refused it | What made it correct                                  |
+| --------------------------------------------- | --------------------- | ----------------------------------------------------- |
+| A line the model lengthened from 8 to 21 characters | `length_ratio` (ratio 2.6, above the 1.5 band) | Every added word appears in the dub captions |
+| A contraction the model restored               | `invents_name`        | The word appears in the dub captions                   |
+| A character's full name the model spelled out  | `invents_name`        | The gained name core appears in the dub captions       |
+
+None of the three is a fabrication. All three were refused by a rule that could not tell a
+transcript from a translation.
+
+### The decision
+
+For `ref_role='dub'` only, a proposal whose **every added word** appears in that card's
+dub-caption window is **all-vouched**:
+
+- `ref_borrow` is replaced by the positive signal — the added words are attestation, not leakage,
+  so the borrowing count is not applied;
+- the upper `length_ratio` band becomes `REPAIR_GATE_DUB_VOUCHED_MAX_RATIO` (`3.0`) instead of
+  `LEN_RATIO_MAX` (`1.5`); the lower bound stays `LEN_RATIO_MIN`;
+- a gained proper-noun core that appears in the dub window is exempt from `invents_name`.
+
+Every other guard is unchanged and still runs: `empty`, `unchanged`, `terminal_punct`,
+`name_part`, `vouched_name`, `fits_card`. If any added word is **absent** from the dub window the
+proposal falls back to the classic gates exactly. `translation` and an unrecorded role keep the
+classic gates, so every show measured before this decision behaves as it did.
+`REPAIR_GATE_DUB_VOUCHED=0` restores classic semantics everywhere.
+
+Rejected alternatives:
+
+- **Trust a dub-caption reference outright.** It would admit any length and any added name, which
+  removes the only mechanical check between a correct borrow and a hallucinated continuation. The
+  all-vouched rule keeps the requirement that the *specific* added words be attested.
+- **Leave the gates alone and let a human `force` each case.** This is what the queue already
+  does, and it is why the three cases were visible at all. But it puts a whole class of correct
+  repair into permanent human review, on every dub-caption show, forever.
+- **Widen the length band globally.** It would relax translation-role cards too, where the
+  measured 84.1% reference-import rate says the band is doing real work.
+
+### The evidence
+
+The acceptance replay re-judged proposals the live repair stage had **already refused**, using
+only the stored queue entries and their recorded reference windows — no model, no pipeline run,
+nothing written. On the live library's queue:
+
+| Show                  | Cards re-judged | Newly admissible | Regressions |
+| --------------------- | --------------- | ---------------- | ----------- |
+| DAN DA DAN (dub role) | 40              | 10 (8 `invents_name`, 2 `length_ratio`) | n/a |
+| Chainsaw Man (translation role) | 142   | 0                | 0           |
+| Frieren (translation role)      | 418   | 0                | 0           |
+
+A translation-role regression — any card whose verdict the role-aware path changed — would have
+failed the replay. None occurred. The dub-role gain is confined to the show with native dub
+captions, which is the point.
+
+Two limits on that evidence, stated rather than smoothed over:
+
+- **Two of the three cases are admitted end to end; the third is not.** The full-name case now
+  passes the name guard that was refusing it, but its real card is 1.34 s and the corrected line
+  is 20.1 characters per second against a 17 cps limit, so `fits_card` still refuses it.
+  `fits_card` was deliberately left unchanged: card timing comes from the audio, and a repair that
+  does not fit is a different problem from a repair the reference misjudged. The acceptance target
+  for this change named all three; the full gate path admits two of them.
+- The replay ran the name guards with an **empty glossary**, because the deployed glossary volume
+  was not reachable from the replay host. An empty glossary makes `invents_name` stricter, so the
+  refusal counts are, if anything, pessimistic; the regression count is unaffected because both
+  sides of that comparison saw the same empty glossary.
+
+### What it costs
+
+Easier: a correct borrow from dub captions is no longer refused for being a borrow, and a
+correction that legitimately lengthens a line has room. Ten live refusals on one show became
+admissible, with no measurable change anywhere else.
+
+Harder, accepted:
+
+- The dub-role path is **more permissive** than the classic one. It leans on the human review
+  stage for the plausibly-wrong, exactly as the classic gates do, and it leans slightly less on
+  the mechanical checks. The all-vouched requirement is what keeps that bounded.
+- `fits_card` still binds. A correct repair can be refused for want of room, and the third
+  verified case shows it. Splitting a card to make room is still out of scope.
+- There are now **two rollback switches** — `REPAIR_REF_CLASSIC` and `REPAIR_GATE_DUB_VOUCHED` —
+  and neither is a stored setting, so turning one off is a container environment change rather
+  than a UI toggle. That is deliberate: they exist for A/B replays and emergencies, not tuning.
+- The evidence is one show with a native dub-caption track plus two regression controls. A library
+  where every show has dub captions would exercise this path far more; re-run `gate_replay.py`
+  there before assuming the ratio cap is generous enough.
