@@ -11,7 +11,7 @@ earlier instinct turned out to be wrong.
 
 ## 1. Idempotency is keyed on two version tiers, not one
 
-**Accepted 2026-08-24.** The constants are `TRANSCRIBE_VERSION` and `TEXT_VERSION` in `common.py`.
+**Accepted 2026-08-24.** The constants are `TRANSCRIBE_VERSION` and `TEXT_VERSION` in `dubtitlerr/core/common.py`.
 
 ### The problem
 

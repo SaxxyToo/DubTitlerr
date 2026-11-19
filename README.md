@@ -20,9 +20,9 @@ Upstream DubTitlerr bakes a Whisper model into a ~13 GB image, needs an NVIDIA G
 
 | Addition | Why | Where |
 | --- | --- | --- |
-| **Endpoint ASR backend** (`ASR_BACKEND=endpoint`) | Transcribe through any OpenAI-compatible `/audio/transcriptions` — OpenRouter, a llama-swap whisper, a Nous gateway — so a node needs no model, no torch, no GPU and no CUDA | `generate.py` |
+| **Endpoint ASR backend** (`ASR_BACKEND=endpoint`) | Transcribe through any OpenAI-compatible `/audio/transcriptions` — OpenRouter, a llama-swap whisper, a Nous gateway — so a node needs no model, no torch, no GPU and no CUDA | `dubtitlerr/pipeline/generate.py` |
 | **Lite image** (`Dockerfile.lite`) | 936 MB instead of 13.1 GB. The full image's runtime packages and review UI, no model baked in | `Dockerfile.lite` |
-| **Sidecar delivery and adoption** (`OUTPUT_MODE=sidecar`, `ADOPT_DUB_EN=1`) | Publish `<episode>.dub.en.ass` beside the video instead of rewriting it, and run an existing sidecar from another pipeline through repair + signs merge | `merge_pass.sh`, `mux.py`, `publish_gate.py` |
+| **Sidecar delivery and adoption** (`OUTPUT_MODE=sidecar`, `ADOPT_DUB_EN=1`) | Publish `<episode>.dub.en.ass` beside the video instead of rewriting it, and run an existing sidecar from another pipeline through repair + signs merge | `merge_pass.sh`, `dubtitlerr/pipeline/mux.py`, `dubtitlerr/pipeline/publish_gate.py` |
 
 Everything downstream of transcription — reflow, glossary correction, LLM repair, hallucination gate, signs/songs merge, QC — is unchanged and runs identically on both backends.
 

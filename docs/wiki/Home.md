@@ -110,7 +110,7 @@ is a thin overlay for exercising a change on a host that already has a release i
   is the shared repository of per-show glossaries. Planned for v1.0.0 or a later 1.x release:
   downloading glossaries from it and uploading yours back, from inside the app. Downloads will
   never overwrite your own fixes or a wiki you set. Today it is a `git clone` into your
-  `GLOSSARY_DIR` and a `git pull` to update, which `decisions.py` already documents as the
+  `GLOSSARY_DIR` and a `git pull` to update, which `dubtitlerr/core/decisions.py` already documents as the
   intended flow.
 
   **This repository's `glossaries/` directory is a snapshot**, used by the tests and by the
