@@ -29,6 +29,9 @@ def _setup_app(tmp_path, include_exporter=True):
         (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / "dubtitlerr" / pkg / "__init__.py", app / "dubtitlerr" / pkg / "__init__.py")
     shutil.copy(REPO / "dubtitlerr" / "review" / "review_requests.py", app / "dubtitlerr" / "review" / "review_requests.py")
+    # gen_loop.sh reports at pass boundaries through the notify CLI; notify is stdlib-only by
+    # design, and copying it here is what keeps that promise honest.
+    shutil.copy(REPO / "dubtitlerr" / "core" / "notify.py", app / "dubtitlerr" / "core" / "notify.py")
     if include_exporter and (REPO / "dubtitlerr" / "review" / "review_settings_write.py").exists():
         shutil.copy(
             REPO / "dubtitlerr" / "review" / "review_settings_write.py",

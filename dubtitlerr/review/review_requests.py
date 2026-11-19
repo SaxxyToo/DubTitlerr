@@ -17,7 +17,42 @@ from dubtitlerr.core.atomic_file import atomic_write, atomic_write_bytes
 REQUESTS_DIR = os.environ.get("REQUESTS_DIR", "/config/requests")
 ANIME_ROOT = os.environ.get("ANIME_ROOT", "/media/Anime Library")
 
+# The review queue's on-disk file (see dubtitlerr/core/unresolved.py:SUFFIX). Restated instead of
+# imported because unresolved.py imports common (pysubs2) and this module must stay importable in
+# a minimal app directory -- the same rule atomic_file.py and notify.py follow.
+UNRESOLVED_SUFFIX = ".dubtitles.unresolved.jsonl"
+
 ALLOWED_BODY_KEYS = frozenset(("show", "season", "episode_re", "require_eng", "webhook", "force"))
+
+
+def unresolved_pending_count(root: str) -> int:
+    """Unresolved review items under ``root``, from the review queue's per-episode JSONL files.
+
+    The loops' digest for ``review.pending``: called once per show the sweep already walked, so it
+    never adds a second pass over the library. The predicate is unresolved.pending()'s -- an entry
+    without ``resolved`` is still open -- and records exactly as that writer emits them, tolerant of
+    a torn final line. An unreadable file or entry counts as nothing rather than raising.
+    """
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            if not name.endswith(UNRESOLVED_SUFFIX):
+                continue
+            try:
+                with open(os.path.join(dirpath, name), encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except ValueError:
+                            continue
+                        if isinstance(entry, dict) and not entry.get("resolved"):
+                            total += 1
+            except OSError:
+                continue
+    return total
 
 
 class Refused(Exception):
@@ -397,6 +432,32 @@ def derive_generate_only_re(show: str, season: int | None = None, episode_re: st
 
 
 
+def _emit_run_requested(doc: dict) -> None:
+    """Tell the notification providers a run request was queued.
+
+    Lazy import on purpose: the review server runs from an app directory that may not ship notify
+    (and a provider config may be broken), and neither may cost a request. Anything that goes wrong
+    here is logged to stderr and swallowed -- creation has already succeeded on disk.
+    """
+    try:
+        from dubtitlerr.core import notify
+
+        summary = f"run requested: {doc['show']}"
+        if doc.get("season") is not None:
+            summary += f" S{int(doc['season']):02d}"
+        if doc.get("episode_re"):
+            summary += f" {doc['episode_re']}"
+        notify.emit(
+            "run.requested",
+            summary,
+            counts={"requests": 1},
+            loop="review",
+            detail={"request_id": doc.get("id"), "show": doc.get("show")},
+        )
+    except Exception as exc:  # noqa: BLE001 -- a notification must never fail a request
+        print(f"review_requests: run.requested notification failed ({type(exc).__name__})", file=sys.stderr)
+
+
 def create(
     body: dict,
     anime_root: str | None = None,
@@ -474,12 +535,17 @@ def create(
         dest_path = os.path.join(rdir, f"{req_id}.json")
         atomic_write_bytes(dest_path, json.dumps(doc, indent=2) + "\n", fsync=True)
 
-        return 201, {"id": req_id, "status": "pending"}
+        created = {"id": req_id, "status": "pending"}
 
     finally:
         with contextlib.suppress(OSError):
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
+
+    # Outside the lock and after the file is durable: delivery can spend a timeout or two and the
+    # queue must never wait for it. _emit_run_requested never raises, so this cannot fail a 201.
+    _emit_run_requested(doc)
+    return 201, created
 
 
 def list_requests(requests_dir: str | None = None, now: Any = None) -> list[dict]:
@@ -1073,13 +1139,14 @@ def handle(
 
 
 def main() -> None:
-    """CLI for shell loops (next | unpack | start | finish | recover | prune | shows | window-open | write-effective-env)."""
+    """CLI for shell loops (next | unpack | start | finish | recover | prune | shows | window-open | write-effective-env |
+    unresolved-count)."""
     args = sys.argv[1:]
     if not args:
         print(
             "Usage: review_requests.py next [DIR]|unpack JSON|start PATH|requeue PATH|"
             "finish PATH ok|fail [reason]|recover [DIR]|prune [DIR] [DAYS]|"
-            "shows [DIR] [DAYS]|window-open [FILE]|write-effective-env [FILE]",
+            "shows [DIR] [DAYS]|window-open [FILE]|write-effective-env [FILE]|unresolved-count DIR",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1194,6 +1261,13 @@ def main() -> None:
             print(f"error finishing request: {e}", file=sys.stderr)
             sys.exit(1)
         print(f"request {'done' if ok else 'failed'}" + (f": {reason}" if reason else ""))
+
+    elif cmd == "unresolved-count":
+        # gen_loop: one show's open review items, for the review.pending digest at sweep end.
+        if len(args) < 2:
+            print("Usage: review_requests.py unresolved-count DIR", file=sys.stderr)
+            sys.exit(1)
+        print(unresolved_pending_count(args[1]))
 
     elif cmd == "recover":
         target_dir = args[1] if len(args) > 1 else None

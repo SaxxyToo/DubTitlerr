@@ -35,10 +35,14 @@ only), and inventing one here would be a lie downstream consumers cannot check.
 
 CLI:
   python3 -m dubtitlerr.core.notify send --event E --summary S [--loop L] [--counts JSON] [--detail JSON]
+  python3 -m dubtitlerr.core.notify subscribed --event E
   python3 -m dubtitlerr.core.notify test --name N
 
 Exit 0 even when delivery fails (logged); exit 2 only for usage errors (unknown event, bad JSON,
-unknown provider name).
+unknown provider name). ``subscribed`` is the pass-level gate the loops use: exit 0 when at least
+one enabled provider triggers that event, 1 otherwise. It reads settings.json and nothing else, no
+network, so a per-episode emitter can decide ONCE per pass whether the per-episode CLI calls are
+worth a subprocess at all (``episode.delivered`` is off by default).
 """
 
 from __future__ import annotations
@@ -178,20 +182,27 @@ def _read_json(path: str):
         return None
 
 
-def _load(config_dir=None):
-    """(providers, secrets) from settings.json/secrets.json. Never raises; unusable parts are ignored."""
+def _providers(config_dir=None):
+    """The provider list from settings.json alone. Never raises; an unusable document is a no-op."""
     base = config_dir if config_dir is not None else (os.environ.get("CONFIG_DIR") or "/config")
     settings = _read_json(os.path.join(base, "settings.json"))
     if not isinstance(settings, dict):
-        return [], {}
+        return []
     raw = settings.get("notifications")
     if raw is None:
-        return [], {}
+        return []
     if not isinstance(raw, list):
         _log("notify: settings.json notifications is not a list; not sending")
-        return [], {}
-    providers = [item for item in raw if isinstance(item, dict)]
+        return []
+    return [item for item in raw if isinstance(item, dict)]
 
+
+def _load(config_dir=None):
+    """(providers, secrets) from settings.json/secrets.json. Never raises; unusable parts are ignored."""
+    providers = _providers(config_dir)
+    if not providers:
+        return [], {}
+    base = config_dir if config_dir is not None else (os.environ.get("CONFIG_DIR") or "/config")
     secrets: dict = {}
     secrets_doc = _read_json(os.path.join(base, "secrets.json"))
     if isinstance(secrets_doc, dict):
@@ -354,6 +365,17 @@ def _wanted(item: dict, event: str) -> bool:
     return isinstance(triggers, list) and event in triggers
 
 
+def subscribed(event: str, *, config_dir=None) -> bool:
+    """True when at least one enabled provider's triggers include ``event``.
+
+    The pass-level gate for per-episode events: settings.json only, no secrets read, no network.
+    Unknown events and missing configuration are False (nothing is subscribed to nothing).
+    """
+    if event not in EVENTS:
+        return False
+    return any(_wanted(item, event) for item in _providers(config_dir))
+
+
 def emit(event, summary, *, counts=None, loop=None, host=None, detail=None, config_dir=None) -> list[dict]:
     """Send ``summary`` to every enabled provider whose triggers include ``event``.
 
@@ -437,6 +459,9 @@ def main(argv=None) -> int:
     test = commands.add_parser("test", help="send one test event to one provider")
     test.add_argument("--name", required=True, help="provider name from settings.json")
 
+    subscribed_cmd = commands.add_parser("subscribed", help="exit 0 when some enabled provider triggers an event")
+    subscribed_cmd.add_argument("--event", required=True, help="one of: " + ", ".join(EVENTS))
+
     args = parser.parse_args(argv)
     if args.command == "send":
         if args.event not in EVENTS:
@@ -445,6 +470,10 @@ def main(argv=None) -> int:
         detail = _json_object(parser, "--detail", args.detail)
         _print_results(emit(args.event, args.summary, counts=counts, loop=args.loop, detail=detail))
         return 0
+    if args.command == "subscribed":
+        if args.event not in EVENTS:
+            parser.error("--event must be one of: " + ", ".join(EVENTS))
+        return 0 if subscribed(args.event) else 1
     try:
         result = test_provider(args.name)
     except LookupError:

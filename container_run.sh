@@ -60,6 +60,14 @@ else # lib missing (misbuilt image): never stop, plain sleeps
 	sleep_unless_stopped() { sleep "$1"; }
 fi
 
+# Notifications are REPORTING ONLY: failures are swallowed, so a broken notify can never change this
+# supervisor's exit code or the fate of a loop. merge_pass.sh reports its own preflight failures and
+# pass results, so this file emits only the fence no other component can see: the generate loop
+# dying on its own (which is what takes the container down).
+notify_send() {
+	python3 -m dubtitlerr.core.notify send "$@" >/dev/null 2>&1 || true
+}
+
 # merge loop in the background. It checks the flag at the top of each iteration; the merge
 # pass in flight finishes first (merge_pass.sh stops starting new stems on its own).
 (
@@ -135,4 +143,7 @@ fi
 
 # gen_loop died on its own: fail loud (container exits, the restart policy restarts it).
 kill "$merge_pid" "$review_pid" 2>/dev/null
+notify_send --event pass.failed --loop generate \
+	--summary "generate loop exited (rc=$rc) — the container is restarting" \
+	--detail '{"stage":"generate","reason":"loop-exited"}'
 exit "$rc"

@@ -15,6 +15,13 @@
 #      MIN_FREE_GB, KEEP_LANGS.
 ROOT="${MERGE_ROOTS:-/media/Anime Library}"
 APP="${APP_DIR:-$(cd "$(dirname "$0")" 2>/dev/null && pwd)}"
+
+# Notifications are REPORTING ONLY, exactly as in gen_loop.sh: every call is failure-swallowed, so a
+# missing module, a broken config or an unreachable destination can never change this pass's exit
+# code, its stage records, or whether an episode is muxed. Emissions sit at pass boundaries.
+notify_send() {
+	python3 -m dubtitlerr.core.notify send "$@" >/dev/null 2>&1 || true
+}
 # Fail as a CONFIGURATION error before the per-stem loop, not as a "crashed" repair on the
 # first episode it touches: a missing $APP/dubtitlerr/pipeline/repair.py used to record {"repair": "crashed"}
 # against that stem, which then blocked every later pass until someone cleared the stage.
@@ -28,10 +35,17 @@ fi
 for _f in $_preflight; do
 	if [ ! -f "$APP/$_f" ]; then
 		echo "FATAL: $_f not found under APP=$APP — set APP_DIR to the directory holding the pipeline scripts"
+		notify_send --event pass.failed --summary "merge pass cannot start: $_f is missing under APP" \
+			--loop merge --detail '{"stage":"preflight","reason":"module-missing"}'
 		exit 1
 	fi
 done
 export PYTHONPATH="$APP${PYTHONPATH:+:$PYTHONPATH}" # so the `python3 -m dubtitlerr...` stages and the inline snippets resolve
+
+# One settings read per pass decides whether the per-episode delivery event is worth a subprocess:
+# episode.delivered is off by default, and with no subscriber the per-stem loop pays nothing at all.
+_notify_episodes=0
+python3 -m dubtitlerr.core.notify subscribed --event episode.delivered >/dev/null 2>&1 && _notify_episodes=1
 # Stored settings (settings.json / secrets.json, written by the web UI): applied at the start of EVERY pass, so a change takes
 # effect at the next pass boundary and never mid-episode. NOT `source`d: review_settings_write.py parses and re-validates the
 # files and prints only registered, shell-quoted `export` lines. The guard is the exporter, not a settings file: once the old
@@ -48,20 +62,34 @@ if [ -d "${CONFIG_DIR:-/config}" ] && [ -f "$APP/dubtitlerr/review/review_reques
 fi
 command -v ffmpeg >/dev/null 2>&1 || {
 	echo "FATAL: ffmpeg not found — image is misbuilt"
+	notify_send --event pass.failed --summary "merge pass cannot start: ffmpeg is missing (image is misbuilt)" \
+		--loop merge --detail '{"stage":"preflight","reason":"ffmpeg-missing"}'
 	exit 1
 }
 command -v mkvmerge >/dev/null 2>&1 || {
 	echo "FATAL: mkvmerge not found — image is misbuilt"
+	notify_send --event pass.failed --summary "merge pass cannot start: mkvmerge is missing (image is misbuilt)" \
+		--loop merge --detail '{"stage":"preflight","reason":"mkvmerge-missing"}'
 	exit 1
 }
 python3 -c "import pysubs2" >/dev/null 2>&1 || {
 	echo "FATAL: pysubs2 not found — image is misbuilt"
+	notify_send --event pass.failed --summary "merge pass cannot start: pysubs2 is missing (image is misbuilt)" \
+		--loop merge --detail '{"stage":"preflight","reason":"pysubs2-missing"}'
 	exit 1
 }
 cd "$ROOT" || {
 	echo "merge_pass: missing $ROOT"
+	notify_send --event pass.failed --summary "merge pass cannot start: library root $ROOT is missing" \
+		--loop merge --detail '{"stage":"preflight","reason":"root-missing"}'
 	exit 1
 }
+# mux's OUTPUT_MODE decides what "delivered" means; the per-episode event names it (muxed / sidecar).
+# Read AFTER the stored settings above, so a mode set in the UI is the one the event reports.
+case "$(printf '%s' "${OUTPUT_MODE:-mux}" | tr '[:upper:]' '[:lower:]')" in
+sidecar*) _delivery_mode=sidecar ;;
+*) _delivery_mode=mux ;;
+esac
 # Every path this pass hands a stage starts from here, never from ".". A relative path is only
 # as good as the working directory it was made against, and that directory can be replaced
 # under a running pass (a rename, a restore, an NFS remount): measured 2026-11-17, the stages'
@@ -220,6 +248,15 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 			if [ $rc -ne 0 ]; then
 				python3 -c "import sys; from dubtitlerr.core import common; s=sys.argv[1]; rc=sys.argv[2]; sys.exit(0 if 'mux' in common.read_stages(s) else common.write_stage(s, 'mux', 'crashed', 'rc='+rc) or 1)" "$stem" "$rc" </dev/null >/dev/null 2>&1 || true
 			fi
+			# Per-episode delivery event, ONLY when a provider subscribed to it: the whole pass already
+			# asked once, so an unsubscribed install pays nothing here. mux --delivered is the pass's own
+			# definition of delivered (it is what the skip above uses), so the event never claims an
+			# episode the stamp does not.
+			if [ "$_notify_episodes" -eq 1 ] &&
+				python3 -m dubtitlerr.pipeline.mux --delivered "$stem" </dev/null >/dev/null 2>&1; then
+				notify_send --event episode.delivered --summary "delivered $(basename "$stem")" \
+					--loop merge --detail "{\"mode\":\"$_delivery_mode\"}"
+			fi
 			break
 		}
 	done
@@ -263,3 +300,10 @@ else
 	echo "MERGE PASS INCOMPLETE: $failed_count episodes with a failed stage"
 fi
 echo "MERGE_PASS_DONE new=$((after - before)) total_done=$after $(date)"
+# Pass boundary report. Counts are the ones this pass already printed above (new stamps = delivered,
+# the failed-stage census, and the library-wide delivered total); reporting only, after the work.
+merge_new=$((after - before))
+merge_failed=${failed_count:-0}
+notify_send --event merge.completed \
+	--summary "merge pass: $merge_new delivered, $merge_failed failed, $after total done" \
+	--loop merge --counts "{\"delivered\": $merge_new, \"failed\": $merge_failed, \"total_done\": $after}"

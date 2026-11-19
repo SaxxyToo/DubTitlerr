@@ -81,6 +81,9 @@ def run_server_function(tmp_path, secrets, env=None):
         ("glossary", "glossary_lock.py"),
         ("core", "common.py"),
         ("core", "atomic_file.py"),
+        # container_run.sh reports a dying generate loop through the notify CLI; notify must
+        # import from this app copy like the image's does (stdlib only, no common/pysubs2).
+        ("core", "notify.py"),
     ):
         (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
         shutil.copy(os.path.join(REPO, "dubtitlerr", pkg, name), app / "dubtitlerr" / pkg / name)

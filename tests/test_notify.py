@@ -432,6 +432,52 @@ def test_cli_test_delivery_failure_still_exits_zero(tmp_path, monkeypatch):
     assert notify.main(["test", "--name", "disc"]) == 0
 
 
+# --- the pass-level subscription gate -------------------------------------------------------------------------------------
+
+
+def test_subscribed_true_for_an_enabled_provider_that_triggers_the_event(tmp_path):
+    write_config(tmp_path, [provider()])
+    assert notify.subscribed("sweep.completed", config_dir=tmp_path) is True
+
+
+def test_subscribed_false_for_an_event_the_triggers_do_not_name(tmp_path):
+    write_config(tmp_path, [provider(triggers=["merge.completed"])])
+    assert notify.subscribed("sweep.completed", config_dir=tmp_path) is False
+
+
+def test_subscribed_false_for_a_disabled_provider(tmp_path):
+    write_config(tmp_path, [provider(enabled=False)])
+    assert notify.subscribed("sweep.completed", config_dir=tmp_path) is False
+
+
+def test_subscribed_false_without_config_or_for_an_unknown_event(tmp_path, capsys):
+    assert notify.subscribed("episode.delivered", config_dir=tmp_path / "absent") is False
+    write_config(tmp_path, [provider()])
+    assert notify.subscribed("not.an.event", config_dir=tmp_path) is False
+    assert capsys.readouterr().err == ""
+
+
+def test_subscribed_reads_no_secrets(tmp_path):
+    # The gate must stay a one-file read: a broken secrets.json is irrelevant to who is subscribed.
+    write_config(tmp_path, [provider()])
+    (tmp_path / "secrets.json").write_text("{not json")
+    assert notify.subscribed("sweep.completed", config_dir=tmp_path) is True
+
+
+def test_cli_subscribed_exits_zero_when_subscribed_one_when_not(tmp_path, monkeypatch):
+    write_config(tmp_path, [provider()])
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    assert notify.main(["subscribed", "--event", "sweep.completed"]) == 0
+    assert notify.main(["subscribed", "--event", "merge.completed"]) == 1
+
+
+def test_cli_subscribed_unknown_event_is_a_usage_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    with pytest.raises(SystemExit) as excinfo:
+        notify.main(["subscribed", "--event", "not.an.event"])
+    assert excinfo.value.code == 2
+
+
 # --- the minimal app-dir rule ---------------------------------------------------------------------------------------------
 
 

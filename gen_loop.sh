@@ -25,6 +25,13 @@ APP_DIR="${APP_DIR:-/app}"
 PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONPATH
 
+# Notifications are REPORTING ONLY: every call below is failure-swallowed, so a missing module, an
+# unreachable destination or a broken config can never change this loop's exit status, write a stage
+# outcome or stop a sweep. Emissions happen at show/sweep boundaries, never mid-episode.
+notify_send() {
+	python3 -m dubtitlerr.core.notify send "$@" >/dev/null 2>&1 || true
+}
+
 # What this loop saw at start (the container environment), generated from the settings registry: the _INIT_ values and a
 # restore_runtime_env() that puts every key of the scope back. apply_runtime_env calls it first, so a reset reaches this
 # long-running loop without a restart and a crashing exporter cannot leave the previous show's stored value in force.
@@ -292,6 +299,11 @@ while :; do
 	pruned_this_sweep=0
 	_EXPORTER_LOGGED_THIS_SWEEP=0
 	_WINDOW_WARN_LOGGED=0
+	# What this sweep reports at its end. All three are counted where the loop already knows the
+	# answer -- the show read loop is a redirect, not a pipe, so these survive to the summary.
+	sweep_shows=0
+	sweep_failed=0
+	sweep_review_pending=0
 	if stop_requested; then
 		echo "gen_loop: soft stop, not starting the next sweep"
 		exit 0
@@ -355,6 +367,7 @@ while :; do
 		echo "#### GENERATE $show $(date)"
 		# crash-resume: re-run until clean exit or no progress (poison files get a .fail marker)
 		attempt=0
+		rc=1 # until a generate pass below exits 0, this show counts as failed in the sweep summary
 		while :; do
 			if stop_requested; then
 				echo "gen_loop: soft stop, not starting a generate pass on $show"
@@ -371,6 +384,9 @@ while :; do
 			[ "$rc" = "0" ] && break
 			if [ "$after" -le "$before" ]; then
 				echo "GENERATE stalled on $show (rc=$rc) — moving on"
+				# A stall is a pass failure the loop already detects; report it, then behave exactly as before.
+				notify_send --event pass.failed --summary "generate stalled on $show (rc=$rc): a pass produced no episode" \
+					--loop generate --detail '{"stage":"generate","reason":"stalled"}'
 				break
 			fi
 			[ "$attempt" -ge 40 ] && {
@@ -379,8 +395,23 @@ while :; do
 			}
 			echo "GENERATE crashed on $show (rc=$rc) — resume pass $((attempt + 1)) $(date)"
 		done
+		sweep_shows=$((sweep_shows + 1))
+		[ "$rc" -eq 0 ] || sweep_failed=$((sweep_failed + 1))
+		# Review items this show left open -- read from the queue files the review side already writes
+		# for this show alone, so the digest never adds a second walk of the library.
+		_show_pending=$(python3 -m dubtitlerr.review.review_requests unresolved-count "$ANIME/$show" 2>/dev/null) || _show_pending=0
+		case "$_show_pending" in '' | *[!0-9]*) _show_pending=0 ;; esac
+		sweep_review_pending=$((sweep_review_pending + _show_pending))
 	done <"$ORDER"
 	echo "==== SWEEP COMPLETE — idle ${RESCAN_INTERVAL:-21600}s $(date) ===="
+	notify_send --event sweep.completed --loop generate \
+		--summary "sweep complete: $sweep_shows show(s), $sweep_failed failed, $sweep_review_pending review item(s) pending" \
+		--counts "{\"shows\": $sweep_shows, \"failed\": $sweep_failed, \"review_pending\": $sweep_review_pending}"
+	if [ "$sweep_review_pending" -gt 0 ]; then
+		notify_send --event review.pending --loop generate \
+			--summary "$sweep_review_pending unresolved review item(s) waiting for a human" \
+			--counts "{\"pending\": $sweep_review_pending}"
+	fi
 	idle_target="${RESCAN_INTERVAL:-21600}"
 	elapsed=0
 	last_check=0
