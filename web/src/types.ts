@@ -19,6 +19,12 @@ export interface Entry {
   reason: string;
   risk: Risk;
   reference?: string;
+  // R5. Recorded by repair.py (R2) on new queue entries; absent on legacy ones, where
+  // `ref_class` is the normalised label the page chips and filters on.
+  ref_role?: 'dub' | 'translation' | null;
+  ref_provenance?: string | null;
+  ref_track_title?: string | null;
+  ref_class?: 'dub' | 'translation' | 'unanchored' | 'unclassified' | null;
   starts: number[];
   context: { before: string[]; after: string[] }[];
   offered: Verdict[];
@@ -32,6 +38,8 @@ export interface Shared extends Omit<
   show: string;
   episodes: number;
   pair: number;
+  // null when the episodes carrying this pair disagree about their anchor.
+  ref_class: 'dub' | 'translation' | 'unanchored' | 'unclassified' | null;
 }
 export interface Draft {
   verdict: Verdict;

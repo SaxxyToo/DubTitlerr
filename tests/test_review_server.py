@@ -193,6 +193,130 @@ def test_forcing_an_unanchored_card_is_labelled_permanent(tmp_path, monkeypatch)
     assert entries[1]["permanent"] is True, "an unanchored one cannot"
 
 
+def test_a_classified_repair_is_labelled_with_the_role_of_its_reference(tmp_path, monkeypatch):
+    """R5. r2 records WHICH track a repair's reference came from. Without the label the
+    reviewer cannot tell a dub-caption anchor -- near-certain, the dub's own words -- from a
+    separate translation, which is a judgement call. Both are "a reference" in the old view."""
+    stem = str(tmp_path / "ep_roles")
+    cards = ["I saw spondum", "the ship sailed", "he went thataway"]
+    with open(stem + ".dubtitles.conf.json", "w") as f:
+        json.dump([{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(cards)], f)
+    unresolved.record(
+        stem,
+        "repair_applied",
+        "accepted",
+        original_text=cards[0],
+        proposed_text="I saw Spandam",
+        reference="I saw Spandam",
+        ref_role="dub",
+        ref_provenance="native",
+        ref_track_title="English Dub",
+    )
+    unresolved.record(
+        stem,
+        "repair",
+        "rejected_guard",
+        original_text=cards[1],
+        proposed_text="the ship has sailed",
+        reference="the ship has sailed",
+        ref_role="translation",
+        ref_provenance="native",
+        ref_track_title="Full Subtitles",
+    )
+    # No reference at all: nothing downstream can repair this card again.
+    unresolved.record(stem, "repair", "rejected_guard", original_text=cards[2], proposed_text="he went that way")
+    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
+
+    by_text = {e["original_text"]: e for e in review_server.handle_episode(stem)["entries"]}
+
+    dub = by_text[cards[0]]
+    assert dub["ref_class"] == "dub"
+    assert (dub["ref_role"], dub["ref_provenance"], dub["ref_track_title"]) == ("dub", "native", "English Dub")
+    assert by_text[cards[1]]["ref_class"] == "translation"
+    assert by_text[cards[2]]["ref_class"] == "unanchored"
+
+
+def test_a_legacy_entry_with_a_reference_is_unclassified_not_unanchored(tmp_path, monkeypatch):
+    """The items already open when r2 shipped carry no role fields. They DID have an anchor,
+    so reporting them as unanchored would tell the reviewer a repairable card can never be
+    repaired again -- the one claim that changes what a force means."""
+    stem = str(tmp_path / "ep_legacy")
+    cards = ["a legacy anchored line", "a legacy bare line"]
+    with open(stem + ".dubtitles.conf.json", "w") as f:
+        json.dump([{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(cards)], f)
+    unresolved.record(
+        stem,
+        "repair",
+        "rejected_guard",
+        original_text=cards[0],
+        proposed_text="a legacy anchored line.",
+        reference="the fansub line",
+    )
+    unresolved.record(stem, "repair", "rejected_guard", original_text=cards[1], proposed_text="a legacy bare line.")
+    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
+
+    by_text = {e["original_text"]: e for e in review_server.handle_episode(stem)["entries"]}
+
+    legacy = by_text[cards[0]]
+    assert legacy["ref_class"] == "unclassified"
+    assert (legacy["ref_role"], legacy["ref_provenance"], legacy["ref_track_title"]) == (None, None, None)
+    assert legacy["permanent"] is False, "it is anchored, its role is just unknown"
+    assert by_text[cards[1]]["ref_class"] == "unanchored"
+
+
+def test_the_ref_block_is_additive_and_present_on_every_entry(tmp_path, monkeypatch):
+    """Existing consumers must keep every field they already read, and a legacy entry must
+    carry the new keys as nulls rather than being a special shape the page has to detect."""
+    stem = _episode(tmp_path)
+    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
+
+    entries = review_server.handle_episode(stem, all_reasons=True)["entries"]
+
+    assert entries, "the fixture must produce rows or this proves nothing"
+    for e in entries:
+        assert {"id", "index", "risk", "starts", "context", "offered", "permanent"} <= set(e)
+        assert {"ref_role", "ref_provenance", "ref_track_title", "ref_class"} <= set(e)
+        assert e["ref_class"] in review_server.REF_CLASSES
+
+
+def test_a_shared_line_reports_an_anchor_only_when_its_episodes_agree(tmp_path, monkeypatch):
+    """A repeated song is one question, but the episodes carrying it can each have been
+    anchored on a different track. Reporting whichever episode the walk found first would be
+    a claim about all the others that nothing checked."""
+    same = ("same anchor line here", "Same anchor line here.")
+    mixed = ("mixed anchor line here", "Mixed anchor line here.")
+    for name, roles in (("e01", ("dub", "dub")), ("e02", ("dub", "translation"))):
+        stem = str(tmp_path / name)
+        with open(stem + ".dubtitles.conf.json", "w") as f:
+            json.dump(
+                [
+                    {"start": 100.0, "end": 102.0, "text": same[0]},
+                    {"start": 300.0, "end": 302.0, "text": mixed[0]},
+                ],
+                f,
+            )
+        for (o, p), role in zip((same, mixed), roles):
+            unresolved.record(
+                stem,
+                "repair_applied",
+                "accepted",
+                original_text=o,
+                proposed_text=p,
+                reference=p,
+                ref_role=role,
+                ref_provenance="native",
+            )
+    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
+    monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
+    monkeypatch.setattr(review_server.decisions, "DECISIONS_DIR", str(tmp_path))
+    monkeypatch.setattr(review_server, "show_for", lambda s: "One Pace")
+
+    rows = {r["original_text"]: r for r in review_server.handle_shared()["pairs"]}
+
+    assert rows[same[0]]["ref_class"] == "dub"
+    assert rows[mixed[0]]["ref_class"] is None, "the episodes disagree, so there is no single answer"
+
+
 def test_duplicate_queue_entries_from_a_rerun_collapse_to_one_row(tmp_path, monkeypatch):
     """Reported 2026-09-01 on a real review page: the same line, same reason, same
     timestamp, rendered four times in a row. Root cause is real and not itself a bug --
