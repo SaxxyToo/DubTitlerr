@@ -468,7 +468,9 @@ def test_an_exporter_that_raises_cannot_leave_the_previous_shows_stored_value_in
     config = tmp_path / "config"
     _store(config, {"WHISPER_BEAM_SIZE": 5})
     runs = tmp_path / "runs.jsonl"
-    break_exporter = f"pathlib.Path(r'{app}/dubtitlerr/review/review_settings_write.py').write_text('raise RuntimeError(\"boom\")')"
+    break_exporter = (
+        f"pathlib.Path(r'{app}/dubtitlerr/review/review_settings_write.py').write_text('raise RuntimeError(\"boom\")')"
+    )
     _recording_generate(app, runs, config / "settings.json", break_exporter)
     env = _loop_env(tmp_path, app, config, WHISPER_BEAM_SIZE="7")
     proc = subprocess.run(

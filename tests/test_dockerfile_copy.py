@@ -219,7 +219,8 @@ def test_healthcheck_targets_healthz():
 def test_every_module_reachable_from_an_entrypoint_is_copied_into_the_image():
     """One hop deeper than the check above: a helper that a helper imports is just as absent from the image."""
     copied = _copied()
-    seen, queue, missing = set(), [_entry_path(ep) for ep in ENTRYPOINTS if os.path.exists(os.path.join(ROOT, _entry_path(ep)))], {}
+    seen, missing = set(), {}
+    queue = [rel for rel in (_entry_path(ep) for ep in ENTRYPOINTS) if os.path.exists(os.path.join(ROOT, rel))]
     while queue:
         rel = queue.pop()
         if rel in seen:
