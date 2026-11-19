@@ -34,6 +34,10 @@ Script stems are shorthand for the pipeline package: `generate.py` is `dubtitler
 `dubtitlerr/review/`, `settings_*` in `dubtitlerr/settings/`. The shells drive stages as
 `python3 -m dubtitlerr.<sub>.<module>`.
 
+`mine_glossary.py --bootstrap` is the one manual exception to that order: it re-mines a show's
+already-delivered episodes to create a first glossary, and gen_loop never passes it. See
+[Bootstrap a glossary for a show that shipped without one](How-To-Guides.md#bootstrap-a-glossary-for-a-show-that-shipped-without-one).
+
 A failed repair or signs stage skips mux for that episode. The episode is retried on the next
 pass. See [Stage outcomes](#stage-outcomes).
 

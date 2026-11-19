@@ -483,6 +483,58 @@ and Water Seven's page is named `Water 7`.
 
 ---
 
+## Bootstrap a glossary for a show that shipped without one
+
+**Problem:** a show was transcribed and delivered with no glossary at all, so every episode so far
+went out with no name protection — no cast list in the decoder prompt, no `hard_fixes`, no anchors
+for repair. Its `glossaries/<Show>.lastrun.json` says `"glossary_version": "none"` and there is no
+`<Show>.json` beside it.
+
+**Why it stays broken on its own:** mining is the only stage that creates a glossary, and mining
+skips any episode that carries a delivery stamp or an `.eng.dubtitles.*` file — that skip is what
+stops a re-mining loop, and it never expires. A delivered show is past the mining window forever.
+ACQUIRE and VERIFY both require the glossary file to already exist.
+
+**Check the gap first.**
+
+```sh
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("show"), d.get("glossary_version"), d.get("no_glossary"))' \
+  /config/glossaries/<Show>.lastrun.json
+```
+
+**Bootstrap it.** One command, from the app directory, with the same `GLOSSARY_DIR` the pipeline
+uses (`/config/glossaries` by default):
+
+```sh
+GLOSSARY_DIR=/config/glossaries \
+  python3 -m dubtitlerr.glossary.mine_glossary /anime/<Show> --bootstrap
+```
+
+It mines the show's **delivered** episodes too — their embedded English subtitle tracks are still
+there — and writes `<Show>.json` only if it admits at least one term. It refuses (exit 2) and reads
+nothing when a glossary file already exists: bootstrap creates a first glossary, it is not a way to
+widen the normal mining window.
+
+**What it does not change:** the same gates as normal mining (deny-list, `MINE_MIN_COUNT`, the
+lowercase-share gate, mid-sentence), still purely additive, and it writes only the glossary file —
+never the media tree. It is bounded to the **12 most recent episodes that carry an English subtitle
+track**: newest first, and an episode with nothing to mine costs a track probe, not an extraction.
+On DAN DA DAN that distinction is the whole run — the newest 12 files are season 2, which ships no
+English track, so a bound counted in *files* would have mined nothing and looked finished.
+
+```sh
+# a longer look (the value is a floor of 1; 0 or junk falls back to 12)
+python3 -m dubtitlerr.glossary.mine_glossary /anime/<Show> --bootstrap --bootstrap-limit 24
+```
+
+**Read the result before trusting it.** Terms that only crossed the recurrence floor on possessive
+evidence land in `flagged`, not `names` — review them on the Glossary page. Episodes already
+delivered keep the spellings they shipped with; the glossary protects what is generated next
+(regenerate one with a request if the names matter). Then let the nightly loop take over:
+`ACQUIRE` and `VERIFY` now have a file to work on.
+
+---
+
 ## Choose a quantisation for your card
 
 **Problem:** you want Whisper and the repair model resident at once on one card.

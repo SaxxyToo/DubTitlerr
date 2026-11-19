@@ -56,7 +56,7 @@ def test_mine_stops_between_episodes_and_leaves_the_glossary_untouched(tmp_path,
 
     monkeypatch.setattr(mine_glossary, "eng_sub_text", fake_text)
 
-    assert mine_glossary.main() is None  # normal return -> exit status 0
+    assert mine_glossary.main() == 0  # normal return -> exit status 0
     assert len(seen) == 1
     assert gpath.read_text() == original  # nothing half-counted was written
     json.loads(gpath.read_text())
