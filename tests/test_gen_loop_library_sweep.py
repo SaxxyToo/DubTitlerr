@@ -24,13 +24,19 @@ def _run_loop(tmp_path, sweep, with_order=True, **extra):
     app = tmp_path / "app"
     (app / "shell").mkdir(parents=True)
     shutil.copy(REPO / "shell" / "lib.sh", app / "shell" / "lib.sh")
-    shutil.copy(REPO / "review_requests.py", app / "review_requests.py")
+    # The app dir carries a package skeleton: gen_loop.sh drives every stage as
+    # `python3 -m dubtitlerr.<pkg>.<mod>`. Only the files the loop's CLIs need are copied,
+    # so this minimal app dir stays pysubs2-free (a stray module-scope `common` import fails).
+    for pkg in ("", "core", "glossary", "pipeline", "review"):
+        (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / "dubtitlerr" / pkg / "__init__.py", app / "dubtitlerr" / pkg / "__init__.py")
+    shutil.copy(REPO / "dubtitlerr" / "review" / "review_requests.py", app / "dubtitlerr" / "review" / "review_requests.py")
     # review_requests now shares the atomic-write primitive, which is stdlib-only so this
     # minimal app dir stays pysubs2-free.
-    shutil.copy(REPO / "atomic_file.py", app / "atomic_file.py")
-    (app / "mine_glossary.py").write_text("")
-    (app / "generate.py").write_text(_STUB_GENERATE)
-    (app / "watch_queue.py").write_text("import os; open(os.environ['CALLLOG'] + '.watch', 'w').close()\n")
+    shutil.copy(REPO / "dubtitlerr" / "core" / "atomic_file.py", app / "dubtitlerr" / "core" / "atomic_file.py")
+    (app / "dubtitlerr" / "glossary" / "mine_glossary.py").write_text("")
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(_STUB_GENERATE)
+    (app / "dubtitlerr" / "pipeline" / "watch_queue.py").write_text("import os; open(os.environ['CALLLOG'] + '.watch', 'w').close()\n")
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
     (anime / "Other").mkdir()
@@ -65,7 +71,7 @@ def _run_loop(tmp_path, sweep, with_order=True, **extra):
     if sweep is not None:
         env["LIBRARY_SWEEP"] = sweep
     env.update(extra)
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     log = tmp_path / "calls.log"
     calls = log.read_text().splitlines() if log.exists() else []
     return proc, calls, requests_dir

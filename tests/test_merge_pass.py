@@ -134,7 +134,7 @@ def test_apostrophe_stem_records_real_crash_fallback(tmp_path, monkeypatch):
     bindir = tmp_path / "fakebin"
     wrapper = bindir / "python3"
     wrapper.write_text(
-        f'#!/bin/sh\ncase "$1" in\n  */mux.py) [ "$2" = "--apply" ] && exit 1 ;;\nesac\nexec {shlex.quote(sys.executable)} "$@"\n'
+        f'#!/bin/sh\ncase "$*" in\n  *dubtitlerr.pipeline.mux*--apply*) exit 1 ;;\nesac\nexec {shlex.quote(sys.executable)} "$@"\n'
     )
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -161,10 +161,15 @@ _REPO = os.path.dirname(MERGE_PASS)
 _STUB = """\
 import os, sys
 sys.path.insert(0, {repo!r})
-import common
+# This stub shadows the packaged module; the app copy of common serves stage records.
+from dubtitlerr.core import common
 common.OUTPUT_ROOT = ""
 if "--delivered" in sys.argv:  # the real predicate, from the module mux.py exposes it in
-    import mux as _real_mux
+    # Load the REAL mux from the repo: purge the app-bound package modules, then re-import
+    # with the repo first on sys.path (this stub currently occupies the module name).
+    for _k in [_k for _k in list(sys.modules) if _k == "dubtitlerr" or _k.startswith("dubtitlerr.")]:
+        del sys.modules[_k]
+    from dubtitlerr.pipeline import mux as _real_mux
     sys.exit(0 if _real_mux.delivered(sys.argv[sys.argv.index("--delivered") + 1]) else 1)
 name = {name!r}
 arg = sys.argv[-1]
@@ -212,9 +217,11 @@ if late_crash:
 def _stub_app(tmp_path):
     app = tmp_path / "app"
     app.mkdir()
+    # The app owns a copy of the package (as the image does); overwrite the three stage
+    # modules with stubs, keep everything else real (common for stage records, the gate).
+    shutil.copytree(os.path.join(_REPO, "dubtitlerr"), app / "dubtitlerr")
     for name, script in (("repair", "repair.py"), ("signs", "dub_signs_merge.py"), ("mux", "mux.py")):
-        (app / script).write_text(_STUB.format(repo=_REPO, name=name))
-    shutil.copy(os.path.join(_REPO, "publish_gate.py"), app / "publish_gate.py")  # as in the image
+        (app / "dubtitlerr" / "pipeline" / script).write_text(_STUB.format(repo=_REPO, name=name))
     (app / "shell").mkdir()  # the real helpers, as in the image (/app/shell/lib.sh)
     (app / "shell" / "lib.sh").write_text(open(os.path.join(_REPO, "shell", "lib.sh")).read())
     return app
@@ -452,8 +459,12 @@ def test_a_stop_after_the_last_stem_still_reports_stopped(tmp_path):
 _REAL_REPAIR = """
 import os, sys
 sys.path.insert(0, {repo!r})
-import glossary
-import repair
+# The real glossary/repair modules from the repo: purge the app-bound package modules,
+# then re-import with the repo first (this stub occupies the module name it loads).
+for _k in [_k for _k in list(sys.modules) if _k == "dubtitlerr" or _k.startswith("dubtitlerr.")]:
+    del sys.modules[_k]
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import repair
 
 with open(os.environ["CALLLOG"], "a") as f:
     f.write("repair " + os.path.basename(sys.argv[1]).split(".")[0] + "\\n")
@@ -479,7 +490,7 @@ def test_a_stopped_repair_holds_the_stem_back_and_the_next_pass_retries_it(tmp_p
     signs and no mux. Pass 2 re-runs repair for real, then signs, then mux."""
     root, stem = _episode(tmp_path)
     app = _stub_app(tmp_path)
-    (app / "repair.py").write_text(_REAL_REPAIR.format(repo=_REPO))
+    (app / "dubtitlerr" / "pipeline" / "repair.py").write_text(_REAL_REPAIR.format(repo=_REPO))
     row = {"text": "garbled line here", "avg_logprob": -0.9, "no_speech_prob": 0.1}
     rows = [{**row, "start": k * 3.0, "end": k * 3.0 + 2.0} for k in range(3)]
     (root / "Show" / "ep01.dubtitles.conf.json").write_text(json.dumps(rows))
@@ -513,7 +524,7 @@ def _two_shows(tmp_path):
     (tmp_path / "calls.log").write_text("")
     rdir = tmp_path / "requests"
     rdir.mkdir()
-    shutil.copy(os.path.join(_REPO, "review_requests.py"), _stub_app(tmp_path) / "review_requests.py")
+    shutil.copy(os.path.join(_REPO, "dubtitlerr", "review", "review_requests.py"), _stub_app(tmp_path) / "dubtitlerr" / "review" / "review_requests.py")
     return root, rdir
 
 
@@ -606,7 +617,7 @@ def test_a_missing_publish_gate_stops_the_pass_before_the_loop(tmp_path):
     delivered nothing (the misbuilt standalone image)."""
     root, _ = _episode(tmp_path)
     app = _stub_app(tmp_path)
-    (app / "publish_gate.py").unlink()
+    (app / "dubtitlerr" / "pipeline" / "publish_gate.py").unlink()
 
     res, calls = _gated_run(tmp_path, root, extra_env={"PUBLISH_GATE": "1"})
     output = res.stdout + res.stderr
@@ -622,7 +633,7 @@ def test_the_missing_publish_gate_is_tolerated_when_the_gate_is_off(tmp_path):
     never run."""
     root, _ = _episode(tmp_path)
     app = _stub_app(tmp_path)
-    (app / "publish_gate.py").unlink()
+    (app / "dubtitlerr" / "pipeline" / "publish_gate.py").unlink()
 
     res, calls = _gated_run(tmp_path, root, extra_env={"PUBLISH_GATE": "0"})
 

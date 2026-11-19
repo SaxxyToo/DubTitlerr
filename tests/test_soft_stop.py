@@ -199,7 +199,10 @@ def _supervisor(tmp_path):
     app.mkdir()
     (app / "merge_pass.sh").write_text(_STUB_MERGE)
     (app / "gen_loop.sh").write_text(_STUB_GEN)
-    (app / "review_server.py").write_text(_STUB_REVIEW)
+    for pkg in ("", "review"):
+        (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
+        (app / "dubtitlerr" / pkg / "__init__.py").write_text("")
+    (app / "dubtitlerr" / "review" / "review_server.py").write_text(_STUB_REVIEW)
     (app / "shell").mkdir()
     (app / "shell" / "lib.sh").write_text(open(LIB).read())
     log = tmp_path / "calls.log"
@@ -214,10 +217,10 @@ def _supervisor(tmp_path):
         MERGE_INTERVAL="1",
         REVIEW_RESTART="1",
         RESCAN_INTERVAL="1",
-        PYTHONPATH=REPO,
+        PYTHONPATH=str(app),
     )
     p = subprocess.Popen(
-        ["sh", CONTAINER_RUN], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
+        ["sh", CONTAINER_RUN], env=env, cwd=str(app), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
     )
     return p, log, flag
 
@@ -305,13 +308,16 @@ def _gen_loop_run(tmp_path, stop_after=None):
     app = tmp_path / "app"
     (app / "shell").mkdir(parents=True)
     (app / "shell" / "lib.sh").write_text(open(LIB).read())
-    for name, script in (
-        ("mine", "mine_glossary.py"),
-        ("acquire", "glossary_acquire.py"),
-        ("verify", "glossary_verify.py"),
-        ("generate", "generate.py"),
+    for pkg in ("", "glossary", "pipeline"):
+        (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
+        (app / "dubtitlerr" / pkg / "__init__.py").write_text("")
+    for name, pkg, script in (
+        ("mine", "glossary", "mine_glossary.py"),
+        ("acquire", "glossary", "glossary_acquire.py"),
+        ("verify", "glossary", "glossary_verify.py"),
+        ("generate", "pipeline", "generate.py"),
     ):
-        (app / script).write_text(_STUB_PY.format(name=name))
+        (app / "dubtitlerr" / pkg / script).write_text(_STUB_PY.format(name=name))
     anime, gloss = tmp_path / "anime", tmp_path / "gloss"
     gloss.mkdir()
     for show in ("Show1", "Show2"):
@@ -334,7 +340,7 @@ def _gen_loop_run(tmp_path, stop_after=None):
     )
     if stop_after:
         env["STOP_AFTER"] = stop_after
-    res = subprocess.run(["sh", GEN_LOOP], env=env, capture_output=True, text=True, timeout=60)
+    res = subprocess.run(["sh", GEN_LOOP], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=60)
     return res, log.read_text().split("\n")[:-1]
 
 

@@ -73,19 +73,22 @@ def run_server_function(tmp_path, secrets, env=None):
 
     app = tmp_path / "app"
     app.mkdir()
-    for name in (
-        "review_settings_write.py",
-        "settings_registry.py",
-        "settings_store.py",
-        "settings_connections.py",
-        "glossary_lock.py",
-        "common.py",
-        "atomic_file.py",
+    for pkg, name in (
+        ("review", "review_settings_write.py"),
+        ("settings", "settings_registry.py"),
+        ("settings", "settings_store.py"),
+        ("settings", "settings_connections.py"),
+        ("glossary", "glossary_lock.py"),
+        ("core", "common.py"),
+        ("core", "atomic_file.py"),
     ):
-        shutil.copy(os.path.join(REPO, name), app / name)
+        (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
+        shutil.copy(os.path.join(REPO, "dubtitlerr", pkg, name), app / "dubtitlerr" / pkg / name)
+    for pkg in ("", "core", "glossary", "review", "settings"):
+        shutil.copy(os.path.join(REPO, "dubtitlerr", pkg, "__init__.py"), app / "dubtitlerr" / pkg / "__init__.py")
     dump = tmp_path / "server-env.json"
     stub = "import json, os\nenv = {k: v for k, v in os.environ.items() if 'WEBHOOK_TOKEN' in k}\n"
-    (app / "review_server.py").write_text(stub + f"open({str(dump)!r}, 'w').write(json.dumps(env))\n")
+    (app / "dubtitlerr" / "review" / "review_server.py").write_text(stub + f"open({str(dump)!r}, 'w').write(json.dumps(env))\n")
     (tmp_path / "settings.json").write_text(json.dumps({"version": 1, "values": {"REVIEW_PORT": 9000}}))
     (tmp_path / "secrets.json").write_text(json.dumps({"version": 1, "values": secrets, "connections": {}}))
     os.chmod(tmp_path / "secrets.json", 0o600)
@@ -98,7 +101,7 @@ def run_server_function(tmp_path, secrets, env=None):
     )
     full = {k: v for k, v in os.environ.items() if "WEBHOOK_TOKEN" not in k}
     full.update({"APP_DIR": str(app), "CONFIG_DIR": str(tmp_path), **(env or {})})
-    res = subprocess.run(["sh", "-c", script], env=full, capture_output=True, text=True, timeout=30)
+    res = subprocess.run(["sh", "-c", script], env=full, cwd=str(app), capture_output=True, text=True, timeout=30)
     return res, json.loads(dump.read_text()) if dump.exists() else None
 
 
@@ -125,11 +128,11 @@ def test_a_missing_exporter_still_starts_the_server(tmp_path):
     res, seen = run_server_function(tmp_path, {"WEBHOOK_TOKEN": "hook-stored-1"}, {"WEBHOOK_TOKEN": "container-hook-9"})
     assert seen["WEBHOOK_TOKEN"] == "hook-stored-1"  # sanity: the stub app has the exporter
     app = tmp_path / "app"
-    (app / "review_settings_write.py").unlink()
+    (app / "dubtitlerr" / "review" / "review_settings_write.py").unlink()
     (tmp_path / "server-env.json").unlink()
     script = f"set -u\n{server_block()}\nrun_review_server &\nwait $!\n"
     full = {**os.environ, "APP_DIR": str(app), "CONFIG_DIR": str(tmp_path), "WEBHOOK_TOKEN": "container-hook-9"}
-    subprocess.run(["sh", "-c", script], env=full, capture_output=True, text=True, timeout=30)
+    subprocess.run(["sh", "-c", script], env=full, cwd=str(app), capture_output=True, text=True, timeout=30)
     assert json.loads((tmp_path / "server-env.json").read_text()) == {"WEBHOOK_TOKEN": "container-hook-9"}
 
 
@@ -143,4 +146,4 @@ def test_the_one_time_migration_runs_before_the_exports_and_its_values_are_expor
     (tmp_path / "settings.json").write_text(json.dumps({"version": 1, "values": {"MERGE_INTERVAL": 120}}))
     res = run_block(tmp_path, {"MERGE_INTERVAL": 120}, tail='echo "migrated=$(ls "$CONFIG_DIR" | grep -c runtime.env.migrated)"')
     assert res.stdout.splitlines()[-1] == "migrated=1" and "interval=120 port=unset" in res.stdout, res.stderr
-    assert SCRIPT.index('review_settings_write.py" migrate') < SCRIPT.index('review_settings_write.py" export')
+    assert SCRIPT.index("review_settings_write migrate") < SCRIPT.index("review_settings_write export")

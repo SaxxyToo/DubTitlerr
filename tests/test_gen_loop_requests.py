@@ -24,11 +24,17 @@ def _setup_app(tmp_path):
     app = tmp_path / "app"
     (app / "shell").mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO / "shell" / "lib.sh", app / "shell" / "lib.sh")
-    shutil.copy(REPO / "review_requests.py", app / "review_requests.py")
+    # The app dir carries a package skeleton: gen_loop.sh drives every stage as
+    # `python3 -m dubtitlerr.<pkg>.<mod>`. Only the files the loop's CLIs need are copied,
+    # so this minimal app dir stays pysubs2-free (a stray module-scope `common` import fails).
+    for pkg in ("", "core", "glossary", "pipeline", "review"):
+        (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / "dubtitlerr" / pkg / "__init__.py", app / "dubtitlerr" / pkg / "__init__.py")
+    shutil.copy(REPO / "dubtitlerr" / "review" / "review_requests.py", app / "dubtitlerr" / "review" / "review_requests.py")
     # review_requests now shares the atomic-write primitive, which is stdlib-only so this
     # minimal app dir stays pysubs2-free.
-    shutil.copy(REPO / "atomic_file.py", app / "atomic_file.py")
-    (app / "mine_glossary.py").write_text("")
+    shutil.copy(REPO / "dubtitlerr" / "core" / "atomic_file.py", app / "dubtitlerr" / "core" / "atomic_file.py")
+    (app / "dubtitlerr" / "glossary" / "mine_glossary.py").write_text("")
     return app
 
 
@@ -49,7 +55,7 @@ if os.environ.get("GENERATE_ONLY_RE"):
 else:
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """
-    (app / "generate.py").write_text(REPORT_OK + stub_generate)
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -83,7 +89,7 @@ else:
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Check generate ran with request parameters
@@ -116,7 +122,7 @@ if os.environ.get("GENERATE_ONLY_RE"):
     sys.exit(2) # Fail the request pass
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """
-    (app / "generate.py").write_text(REPORT_OK + stub_generate)
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -150,7 +156,7 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Failing request moved to failed/
@@ -175,7 +181,7 @@ import os, pathlib
 pathlib.Path(r"{record}").write_text("ran")
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """
-    (app / "generate.py").write_text(REPORT_OK + stub_generate)
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -246,7 +252,7 @@ def test_schedule_closed_starts_no_work(tmp_path):
 import pathlib
 pathlib.Path(r"{call_log}").write_text("called")
 """
-    (app / "generate.py").write_text(REPORT_OK + stub_generate)
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -331,7 +337,7 @@ if os.environ.get("GENERATE_ONLY_RE"):
 else:
     pathlib.Path(r"{sweep_marker}").write_text("sweep_done")
 """
-    (app / "generate.py").write_text(REPORT_OK + stub_generate)
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -397,7 +403,7 @@ def test_effective_env_content_and_masking(tmp_path):
     # Mutation caught: effective.env not written at sweep start or
     # secret environment variables leaked into effective.env.
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text(REPORT_OK + """\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -429,7 +435,7 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         SECRET_TOKEN_PASSWORD="bad",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     assert effective_env_file.exists()
@@ -448,7 +454,7 @@ def test_recovery_of_running_file(tmp_path):
     # Mutation caught: interrupted/crashed .running file is not moved to
     # failed/ with 'interrupted by restart' on startup.
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text(REPORT_OK + """\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -481,7 +487,7 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # .running was moved to failed/
@@ -497,7 +503,7 @@ def test_hostile_show_name_rejected_by_loop(tmp_path):
     # Mutation caught: hostile show name with newline/PATH injection
     # executes in shell or passes into gen_loop without rejection.
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text(REPORT_OK + """\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -531,7 +537,7 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Hostile request moved to failed/ and never executed
@@ -547,13 +553,13 @@ def test_claim_failure_skips_request(tmp_path):
     # Decision 4: A request that cannot be claimed (start returns non-zero)
     # must be skipped, not executed.
     app = _setup_app(tmp_path)
-    real_rr = REPO / "review_requests.py"
-    (app / "review_requests.py").write_text(f"""\
-import sys, pathlib, subprocess
+    real_rr = REPO / "dubtitlerr" / "review" / "review_requests.py"
+    (app / "dubtitlerr" / "review" / "review_requests.py").write_text(f"""\
+import os, sys, pathlib, subprocess
 if len(sys.argv) > 1 and sys.argv[1] == "start":
     pathlib.Path(sys.argv[2]).unlink(missing_ok=True)
     sys.exit(1)
-res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:])
+res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:], env=dict(os.environ, PYTHONPATH="{REPO}"))
 sys.exit(res.returncode)
 """)
 
@@ -574,7 +580,7 @@ sys.exit(res.returncode)
         })
     )
 
-    (app / "generate.py").write_text(REPORT_OK + """\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -591,7 +597,7 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Request was skipped, not executed
@@ -609,15 +615,15 @@ import os, pathlib
 with open(r"{call_log}", "a") as f:
     f.write(os.environ.get("GENERATE_ONLY_RE", "sweep") + "\\n")
 """
-    (app / "generate.py").write_text(REPORT_OK + stub_generate)
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + stub_generate)
 
-    real_rr = REPO / "review_requests.py"
-    (app / "review_requests.py").write_text(f"""\
+    real_rr = REPO / "dubtitlerr" / "review" / "review_requests.py"
+    (app / "dubtitlerr" / "review" / "review_requests.py").write_text(f"""\
 import sys, subprocess, os, pathlib
 if len(sys.argv) > 1 and sys.argv[1] in ("finish", "finish-report"):
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
     sys.exit(1)
-res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:])
+res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:], env=dict(os.environ, PYTHONPATH="{REPO}"))
 sys.exit(res.returncode)
 """)
 
@@ -659,7 +665,7 @@ sys.exit(res.returncode)
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     assert "stopping drain" in proc.stdout
@@ -672,7 +678,7 @@ sys.exit(res.returncode)
 def test_loop_newline_injection_does_not_move_victim(tmp_path):
     # H1: A hostile request injecting a newline and PATH=victim must not move or unlink the victim.
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text(REPORT_OK + """\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -709,7 +715,7 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Victim must be completely untouched
@@ -750,7 +756,7 @@ else:
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
     sys.exit(0)
 """
-    (app / "generate.py").write_text(REPORT_OK + stub_generate)
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + stub_generate)
 
     order = tmp_path / "order.txt"
     order.write_text("Frieren\n")
@@ -778,7 +784,7 @@ else:
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Both episodes were produced because it resumed
@@ -793,7 +799,7 @@ else:
 def test_drain_requests_invokes_prune(tmp_path):
     # L3: Prune is invoked during drain_requests once per sweep
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text(REPORT_OK + """\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
@@ -822,7 +828,7 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # The 10-day old file was pruned by drain_requests
@@ -832,13 +838,13 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
 def test_first_wins_path_in_unpack(tmp_path):
     # L3: gen_loop.sh enforces first-wins for PATH (defence-in-depth against duplicate keys)
     app = _setup_app(tmp_path)
-    real_rr = REPO / "review_requests.py"
+    real_rr = REPO / "dubtitlerr" / "review" / "review_requests.py"
     evil_victim = tmp_path / "victim.json"
     evil_victim.write_text(json.dumps({"id": "victim", "status": "pending"}))
 
-    (app / "review_requests.py").write_text(f"""\
-import sys, subprocess
-res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:], capture_output=True, text=True)
+    (app / "dubtitlerr" / "review" / "review_requests.py").write_text(f"""\
+import os, sys, subprocess
+res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:], capture_output=True, text=True, env=dict(os.environ, PYTHONPATH="{REPO}"))
 if len(sys.argv) > 1 and sys.argv[1] == "unpack":
     # Inject a duplicate duplicate PATH key pointing to victim
     sys.stdout.write(res.stdout + "\\nPATH={evil_victim}\\n")
@@ -865,7 +871,7 @@ sys.exit(res.returncode)
         })
     )
 
-    (app / "generate.py").write_text(REPORT_OK + """\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + """\
 import os, pathlib
 if not os.environ.get("GENERATE_ONLY_RE"):
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
@@ -882,7 +888,7 @@ if not os.environ.get("GENERATE_ONLY_RE"):
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # First-wins kept real_req as req_path: real_req completed to done/
@@ -895,13 +901,13 @@ if not os.environ.get("GENERATE_ONLY_RE"):
 def test_soft_stop_before_generate_requeues_request(tmp_path):
     # N1: A soft stop right after claiming the request must return it to pending, not mark it done
     app = _setup_app(tmp_path)
-    real_rr = REPO / "review_requests.py"
+    real_rr = REPO / "dubtitlerr" / "review" / "review_requests.py"
     stop_flag = tmp_path / "stop"
     gen_called = tmp_path / "gen_called"
 
-    (app / "review_requests.py").write_text(f"""\
+    (app / "dubtitlerr" / "review" / "review_requests.py").write_text(f"""\
 import sys, subprocess, pathlib, os
-res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:], capture_output=True, text=True)
+res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:], capture_output=True, text=True, env=dict(os.environ, PYTHONPATH="{REPO}"))
 sys.stdout.write(res.stdout)
 sys.stderr.write(res.stderr)
 if len(sys.argv) > 1 and sys.argv[1] == "start" and res.returncode == 0:
@@ -909,7 +915,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "start" and res.returncode == 0:
 sys.exit(res.returncode)
 """)
 
-    (app / "generate.py").write_text(REPORT_OK + f"""\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + f"""\
 import pathlib
 pathlib.Path(r"{gen_called}").touch()
 """)
@@ -942,7 +948,7 @@ pathlib.Path(r"{gen_called}").touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # generate was not called
@@ -985,7 +991,7 @@ else:
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
     sys.exit(0)
 """
-    (app / "generate.py").write_text(REPORT_OK + stub_generate)
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + stub_generate)
 
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
@@ -1016,7 +1022,7 @@ else:
     )
 
     # First loop run: stop flag touched during generate
-    proc1 = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc1 = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc1.returncode == 0, proc1.stdout + proc1.stderr
 
     # Must be pending again, not done!
@@ -1026,7 +1032,7 @@ else:
 
     # Second loop run with flag removed: completes request to done!
     stop_flag.unlink(missing_ok=True)
-    proc2 = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc2 = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc2.returncode == 0, proc2.stdout + proc2.stderr
 
     done_file = requests_dir / "done" / "20261012T100000Z-88888888.json"
@@ -1064,7 +1070,7 @@ def test_a_forced_request_that_rebuilt_nothing_is_filed_as_failed(tmp_path):
     # Measured 2026-11-18: this exact request -- forced, exit code 0, nothing rebuilt -- was
     # filed "done, error: null". The report it now writes says so, and the request fails.
     app = _setup_app(tmp_path)
-    (app / "generate.py").write_text("""\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text("""\
 import json, os, pathlib
 if os.environ.get("RUN_REPORT"):
     pathlib.Path(os.environ["RUN_REPORT"]).write_text(json.dumps({"scope": 28, "forced": True, "rebuilt": 0,
@@ -1073,7 +1079,7 @@ else:
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
     env, requests_dir = _request_env(tmp_path, app, "20261018T100000Z-f0f0f0f0", force=True)
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     failed = json.loads((requests_dir / "failed" / "20261018T100000Z-f0f0f0f0.json").read_text())
     assert failed["status"] == "failed" and "rebuilt nothing" in failed["error"], failed
@@ -1086,7 +1092,7 @@ def test_every_resume_pass_of_a_request_shares_one_start_time(tmp_path):
     seen = tmp_path / "since.txt"
     count = tmp_path / "count.txt"
     show_dir = tmp_path / "anime" / "Frieren"
-    (app / "generate.py").write_text(REPORT_OK + f"""\
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + f"""\
 import os, sys, pathlib
 if not os.environ.get("RUN_REPORT"):
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
@@ -1099,7 +1105,7 @@ with open(r"{seen}", "a") as f:
 sys.exit(1 if n == 1 else 0)  # crash once, then finish
 """)
     env, requests_dir = _request_env(tmp_path, app, "20261018T100000Z-5a5a5a5a")
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=60)
+    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     stamps = seen.read_text().split()
     assert len(stamps) == 2 and stamps[0] == stamps[1], stamps
