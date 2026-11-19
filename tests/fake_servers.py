@@ -1,4 +1,7 @@
-"""A 127.0.0.1 JSON endpoint for tests that need a real socket. Synthetic data only."""
+"""A 127.0.0.1 endpoint for tests that need a real socket. Synthetic data only.
+
+Serves both JSON bodies (chat/completions) and multipart uploads (audio/transcriptions):
+a multipart body is not JSON, so the raw bytes are kept as-is rather than parsed."""
 
 import http.server
 import json
@@ -16,7 +19,14 @@ class FakeServer:
         class H(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
-                body = json.loads(self.rfile.read(length) or b"null")
+                raw = self.rfile.read(length)
+                try:
+                    body = json.loads(raw or b"null")
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    # A multipart upload (an ASR request) is not JSON. Handing the raw bytes
+                    # through lets an ASR test assert on what was actually posted -- the
+                    # request shape a whisper.cpp server would have to accept.
+                    body = raw
                 req = {
                     "path": self.path,
                     "auth": self.headers.get("Authorization"),
@@ -42,6 +52,11 @@ class FakeServer:
     def close(self):
         self.srv.shutdown()
         self.srv.server_close()
+
+
+def asr_reply(doc: dict, status: int = 200):
+    """A ``FakeServer`` reply function that always returns this transcription document."""
+    return lambda req: (status, doc)
 
 
 def chat_reply(content, **message):

@@ -1,0 +1,113 @@
+{
+  "entrants": [
+    {
+      "model": "whisper-large-v3-turbo-subs",
+      "family": "whisper.cpp-endpoint",
+      "logprob_source": "derived-from-word-probs",
+      "load_s": null,
+      "peak_vram_mib": null,
+      "has_word_timestamps": true,
+      "episodes": [
+        {
+          "episode": "Cyberpunk Edgerunners (2022) - S01E01 - 001 - Let You Down [NF][WEBDL-1080p v2][EAC3 5.1][JA+EN][x264 8bit]-FLUX.mkv",
+          "segments": 393,
+          "wall_s": 42.8,
+          "wer_vs_ref": 0.16659162539396669
+        },
+        {
+          "episode": "Death Note (2006) - S01E01 - 001 - Rebirth [Bluray-1080p][Opus 2.0][EN+JA][x265 10bit]-HONE.mkv",
+          "segments": 359,
+          "wall_s": 30.7,
+          "wer_vs_ref": 0.10121141070730755
+        },
+        {
+          "episode": "Vinland Saga (2019) - S01E01 - 001 - Somewhere not here [Bluray-1080p][Opus 2.0][EN+JA][x265 10bit]-HONE.mkv",
+          "segments": 380,
+          "wall_s": 37.0,
+          "wer_vs_ref": 0.2536927621861152
+        },
+        {
+          "episode": "Fullmetal Alchemist Brotherhood (2009) - S01E02 - 002 - The First Day [Bluray-1080p][Opus 5.1][EN+JA][x265 10bit]-DarQ.mkv",
+          "segments": 401,
+          "wall_s": 42.4,
+          "wer_vs_ref": 0.29555555555555557
+        },
+        {
+          "episode": "Attack on Titan (2013) - S01E01 - 001 - To You in 2,000 Years The Fall of Shiganshina 1 [v2][Bluray-1080p v2][Opus 2.0][JA+EN][x265 10bit]-ZeroBuild.mkv",
+          "segments": 333,
+          "wall_s": 58.0
+        }
+      ],
+      "music_rule_would_fire": 0,
+      "maybe_silence_would_fire": 0,
+      "segments": 1866,
+      "nsp_min": 0.0,
+      "nsp_median": 0.0,
+      "nsp_max": 1.9e-05,
+      "nsp_alive_frac": 0.0005,
+      "nsp_over_0_5": 0,
+      "nsp_over_0_95": 0,
+      "logprob_median": -0.040631,
+      "logprob_p05": -0.582648,
+      "blocklist_hits": 9,
+      "word_count": 11753,
+      "verdict": "ok"
+    },
+    {
+      "model": "whisper-large-v3-subs",
+      "family": "whisper.cpp-endpoint",
+      "logprob_source": "derived-from-word-probs",
+      "load_s": null,
+      "peak_vram_mib": null,
+      "has_word_timestamps": true,
+      "episodes": [
+        {
+          "episode": "Cyberpunk Edgerunners (2022) - S01E01 - 001 - Let You Down [NF][WEBDL-1080p v2][EAC3 5.1][JA+EN][x264 8bit]-FLUX.mkv",
+          "segments": 337,
+          "wall_s": 63.6,
+          "wer_vs_ref": 0.16208914903196758
+        },
+        {
+          "episode": "Death Note (2006) - S01E01 - 001 - Rebirth [Bluray-1080p][Opus 2.0][EN+JA][x265 10bit]-HONE.mkv",
+          "segments": 333,
+          "wall_s": 52.3,
+          "wer_vs_ref": 0.10238374364986323
+        },
+        {
+          "episode": "Vinland Saga (2019) - S01E01 - 001 - Somewhere not here [Bluray-1080p][Opus 2.0][EN+JA][x265 10bit]-HONE.mkv",
+          "segments": 364,
+          "wall_s": 58.1,
+          "wer_vs_ref": 0.2171344165435746
+        },
+        {
+          "episode": "Fullmetal Alchemist Brotherhood (2009) - S01E02 - 002 - The First Day [Bluray-1080p][Opus 5.1][EN+JA][x265 10bit]-DarQ.mkv",
+          "segments": 409,
+          "wall_s": 67.9,
+          "wer_vs_ref": 0.23873015873015874
+        },
+        {
+          "episode": "Attack on Titan (2013) - S01E01 - 001 - To You in 2,000 Years The Fall of Shiganshina 1 [v2][Bluray-1080p v2][Opus 2.0][JA+EN][x265 10bit]-ZeroBuild.mkv",
+          "segments": 348,
+          "wall_s": 63.2
+        }
+      ],
+      "music_rule_would_fire": 0,
+      "maybe_silence_would_fire": 12,
+      "segments": 1791,
+      "nsp_min": 0.0,
+      "nsp_median": 0.0,
+      "nsp_max": 0.924849,
+      "nsp_alive_frac": 0.1658,
+      "nsp_over_0_5": 12,
+      "nsp_over_0_95": 0,
+      "logprob_median": -0.036668,
+      "logprob_p05": -0.608564,
+      "blocklist_hits": 15,
+      "word_count": 11509,
+      "verdict": "ok"
+    }
+  ],
+  "agreement_wer": {
+    "whisper-large-v3-turbo-subs|whisper-large-v3-subs": 0.10904142213149613
+  }
+}

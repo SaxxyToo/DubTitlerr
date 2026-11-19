@@ -308,6 +308,7 @@ def test_ransac_offset_drift_null_guard_residual_below_min_n():
         "matched_pairs_count": 1,
         "inlier_count": 0,
         "residual_median_s": None,
+        "residual_abs_median_ms": None,
         "residual_iqr_s": None,
         "look_for_drift": False,
     }
@@ -1109,3 +1110,56 @@ def test_select_reference_track_reports_no_reference_when_only_sub_is_our_dubtit
     _stub_ffprobe(monkeypatch, [_ass(3, title="Dubtitles")])
     monkeypatch.setattr(common, "extract_sub", lambda v, idx, out: pytest.fail("extracted our own dubtitle"))
     assert tc.select_reference_track("fake.mkv", {"eng"}) is None
+
+
+# ============================================================================
+# U5 -- the two report gaps that blocked criterion 4 being fully evaluable
+# ============================================================================
+
+
+def _pairs_with_noise(n=20, offset=0.2, noise=0.01):
+    """(card_start, cue_start) pairs whose fitted residual is +/- `noise` seconds."""
+    return [(i + offset + (noise if i % 2 else -noise), float(i)) for i in range(n)]
+
+
+def test_ransac_reports_the_median_absolute_residual_in_milliseconds():
+    """The gate asks for a median absolute onset error in ms. The fit already computes
+    residuals, but only exposes their SIGNED median, which a least-squares fit drives to
+    ~0 by construction -- useless as an error metric. The absolute median is the one that
+    answers the question."""
+    fit = tc.ransac_offset_drift(_pairs_with_noise())
+    assert fit["residual_abs_median_ms"] == pytest.approx(10.0, abs=0.5)
+
+
+def test_ransac_absolute_residual_is_zero_when_the_fit_is_exact():
+    pairs = [(i + 0.2, float(i)) for i in range(20)]
+    fit = tc.ransac_offset_drift(pairs)
+    assert fit["residual_abs_median_ms"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_ransac_absolute_residual_is_null_below_the_minimum_inlier_count():
+    """Same rule as the other residual fields: below the floor the number is unmeasured,
+    not zero."""
+    fit = tc.ransac_offset_drift([(0.2, 0.0)])
+    assert fit["residual_abs_median_ms"] is None
+
+
+def test_resolve_vad_backend_keeps_a_backend_that_can_run(monkeypatch):
+    monkeypatch.setattr(tc.vad, "backend_available", lambda b: True)
+    assert tc.resolve_vad_backend("webrtcvad") == "webrtcvad"
+
+
+def test_resolve_vad_backend_falls_back_when_the_requested_one_cannot_run(monkeypatch):
+    """A backend that cannot run here turns every in-gap card into in_gap_vad_error, and
+    the report then reads the rate as UNMEASURED (null) rather than zero. webrtcvad is a C
+    extension with no wheel for the dev venv, so the shipped default silently produced a
+    null on every local run. Falling back keeps the measurement available."""
+    monkeypatch.setattr(tc.vad, "backend_available", lambda b: b == "ffmpeg-silencedetect")
+    assert tc.resolve_vad_backend("webrtcvad") == "ffmpeg-silencedetect"
+
+
+def test_resolve_vad_backend_keeps_the_request_when_no_fallback_exists(monkeypatch):
+    """Nothing can run: report the request unchanged and let the run degrade to
+    in_gap_vad_error honestly, rather than pretending a backend ran."""
+    monkeypatch.setattr(tc.vad, "backend_available", lambda b: False)
+    assert tc.resolve_vad_backend("webrtcvad") == "webrtcvad"

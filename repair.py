@@ -187,6 +187,9 @@ TIMEOUT_CONNECT = float(os.environ.get("REPAIR_TIMEOUT_CONNECT", "10"))
 TIMEOUT_READ = float(os.environ.get("REPAIR_TIMEOUT_READ", "120"))
 LOGPROB_MIN = float(os.environ.get("LOGPROB_MIN", "-0.4"))  # mid-confidence-and-lower (C1)
 NSP_MAX = float(os.environ.get("NSP_MAX", "0.5"))
+# Below this, no_speech_prob carries no signal at all. turbo collapses it toward zero on
+# BOTH backends; see nsp_is_alive for the measurements.
+NSP_ALIVE_FLOOR = 1e-6
 GLOSSARY_DIR = os.environ.get("GLOSSARY_DIR", "/config/glossaries")
 ROOTS = os.environ.get("MERGE_ROOTS", "/data/Media/Anime Library").split(":")
 CONF_SUFFIX = ".dubtitles.conf.json"
@@ -315,6 +318,28 @@ def has_low_prob_word(c):
     conf.json files predating A6, or a card generate.py couldn't join any words to) ->
     False, backward-compatible."""
     return any(p < LOW_WORD_PROB for p in c.get("word_probs", []))
+
+
+def nsp_is_alive(conf) -> bool:
+    """Whether these cards carry a usable ``no_speech_prob`` at all.
+
+    Measured 2026-11-18 from the repo's own stored bakeoff artifacts, on two physical cards:
+    ``large-v3-turbo`` int8 reports nsp 0.0 for EVERY segment (nsp_alive_frac 0.0), while
+    ``large-v3`` int8 reports a 0.54 median (frac 1.0). whisper.cpp's turbo collapses the
+    same way (2.2e-10 .. 1.5e-08). So this is a **turbo** property, not a backend one, and it
+    applies to the local path too -- turbo has been the default model since the 1050ti swap.
+
+    Why it needs saying out loud: ``is_target``'s music guard is a ``no_speech_prob > NSP_MAX``
+    test. On a collapsed series that passes EVERY card -- so the guard is inert rather than
+    protective, and a music card that should be excluded is sent to the repair LLM. An inert
+    guard nobody notices is how a misheard lyric gets "repaired" into invented dialogue.
+
+    This deliberately does NOT change targeting. Which way to fail (skip every repair on a
+    collapsed signal, or keep repairing and accept that music is not screened out) is an
+    admission-policy decision, and it is coupled to the model question: large-v3 restores the
+    signal AND measured better WER than turbo in the wiki's table. Detection first, decision
+    after evidence."""
+    return any(float(c.get("no_speech_prob") or 0.0) > NSP_ALIVE_FLOOR for c in conf)
 
 
 def is_target(c, gloss):
@@ -1459,6 +1484,13 @@ def _process_episode(conf_path):
     _queued = unresolved.items(stem)
     # [F-2, F8] The queue's history is consulted by STATE, not by presence (see queue_proposal): a pair settles a line only when a
     # human resolved it or it is still pending. A pair the queue merely superseded is reopened if the model proposes it again.
+    nsp_live = nsp_is_alive(conf)
+    if conf and not nsp_live:
+        log(
+            "repair: no_speech_prob is collapsed for this episode (turbo) -- the music "
+            "guard could not exclude anything. Targets below are every low-confidence "
+            "card, music included."
+        )
     targets = [(i, c) for i, c in enumerate(conf) if is_target(c, gloss)]
     if not targets:
         return "clean"  # nothing to repair (e.g. S15E01)
@@ -1865,6 +1897,10 @@ def _process_episode(conf_path):
     lat_values = [r["latency_ms"] for r in repaired_lines]
     summary = {
         "targets": len(targets),
+        # False means the music guard did not apply to this run (see nsp_is_alive). Recorded
+        # so the number above is readable: "targets: 144" means something different when the
+        # one guard that screens out music was inert.
+        "nsp_live": nsp_live,
         "repaired": fixed,
         "skipped_no_ref": skipped_no_ref,
         "llm_empty": llm_empty,

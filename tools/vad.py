@@ -38,6 +38,7 @@ Built with help of Claude (Anthropic).
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import wave
@@ -51,6 +52,22 @@ sys.path.insert(0, ".")
 import common  # noqa: E402
 
 log = common.log
+
+def backend_available(backend: str) -> bool:
+    """Whether a VAD backend can actually run here, asked BEFORE any episode is walked.
+
+    webrtcvad is a C extension with no wheel for this repo's py3.14 dev venv (its install
+    in the image is best-effort), so on such a host it reports unavailable and every in-gap
+    card comes back ``in_gap_vad_error`` -- which the report reads as an UNMEASURED rate
+    (``false_in_gap_rate: null``), not as zero. ffmpeg-silencedetect needs only ffmpeg,
+    which the pipeline requires anyway, so it is always the fallback.
+    """
+    if backend == "webrtcvad":
+        return webrtcvad is not None
+    if backend == "ffmpeg-silencedetect":
+        return shutil.which("ffmpeg") is not None
+    return False
+
 
 # --- Tunables ---
 

@@ -1420,7 +1420,16 @@ def endpoint_transcribe(wav):
         ("model", ASR_MODEL),
         ("language", "en"),
         ("response_format", "verbose_json"),
+        # BOTH granularities, deliberately. no_speech_prob lives only on segments, and
+        # OpenRouter omits `segments` ENTIRELY when word granularity is the only one asked
+        # for -- measured 2026-11-18 against openai/whisper-1: verbose_json alone returns
+        # segments (no_speech_prob 0.279), verbose_json + word returns none at all. The old
+        # single-granularity request therefore cost the repair stage its music guard on
+        # every OpenRouter run, and left the endpoint path rebuilding one synthetic
+        # whole-file segment whose nsp is 0.0. whisper.cpp ignores the field and returns
+        # the same segments and words either way, so this is safe on both flavours.
         ("timestamp_granularities[]", "word"),
+        ("timestamp_granularities[]", "segment"),
     ]
     if INITIAL_PROMPT:
         fields.append(("prompt", INITIAL_PROMPT))

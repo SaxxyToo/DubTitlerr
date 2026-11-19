@@ -58,6 +58,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import math
 import os
 import re
 import statistics
@@ -65,6 +66,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -381,6 +383,52 @@ def segment_from_words(words: list[dict], max_gap: float = 2.0) -> list[dict]:
 # cross-chunk context the decoder might have used (irrelevant here: these are direct
 # ASR entrants, not judged on continuity, and faster-whisper's own condition_on_previous
 # _text is already off for the same reason -- see generate.py).
+def endpoint_run_shape(segments: list[dict], words: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Rebuild the shapes this tool holds from ``generate.endpoint_transcribe``'s output.
+
+    The endpoint path returns ``segments=[{start,end,no_speech_prob}]`` and
+    ``words=[{text,start,end,prob,seg}]`` -- deliberately: production rebuilds cards from
+    words, so a segment there needs no text and no confidence of its own. The judge here
+    counts blocklist hits per segment TEXT, so text is rebuilt from the segment's words.
+
+    ``avg_logprob`` is DERIVED from the word probabilities using reflow's own formula
+    (``mean ln(max(prob, PROB_FLOOR))``), which is also how production derives card
+    confidence for both backends. The endpoint carries no per-segment avg_logprob at all:
+    ``_map_endpoint_doc`` folds it into word probs. Importing the constant rather than
+    restating it keeps the clamp from drifting. Word ``text`` is kept VERBATIM -- the
+    leading space a merged whisper.cpp token carries is what production stores too."""
+    from reflow import PROB_FLOOR  # lazy + single source of truth for the clamp
+
+    by_seg: dict[int, list[dict]] = {}
+    for w in words:
+        by_seg.setdefault(int(w.get("seg", 0)), []).append(w)
+
+    out_segments: list[dict] = []
+    out_words: list[dict] = []
+    for si, s in enumerate(segments):
+        mine = by_seg.get(si, [])
+        logs = [math.log(max(float(w.get("prob", PROB_FLOOR)), PROB_FLOOR)) for w in mine]
+        out_segments.append(
+            {
+                "start": float(s.get("start") or 0.0),
+                "end": float(s.get("end") or 0.0),
+                "text": "".join(str(w.get("text") or "") for w in mine).strip(),
+                "no_speech_prob": float(s.get("no_speech_prob") or 0.0),
+                "avg_logprob": (sum(logs) / len(logs)) if logs else math.log(PROB_FLOOR),
+            }
+        )
+        for w in mine:
+            out_words.append(
+                {
+                    "text": str(w.get("text") or ""),
+                    "start": float(w.get("start") or 0.0),
+                    "end": float(w.get("end") or 0.0),
+                    "prob": float(w.get("prob", PROB_FLOOR)),
+                }
+            )
+    return out_segments, out_words
+
+
 NEMO_CHUNK_S = 300.0
 
 # Canary (EncDecMultiTaskModel) is a different decoder family from parakeet (RNNT/TDT):
@@ -770,6 +818,91 @@ def is_qwen_name(name: str) -> bool:
     return name.lower().startswith("qwen/")
 
 
+def run_endpoint(url: str, label: str, videos: list[str]) -> WhisperRun:
+    """Transcribe every episode through an OpenAI-compatible endpoint.
+
+    Calls ``generate.endpoint_transcribe`` rather than posting directly: that IS the
+    production path, silence-chunking and mp3 re-encode included, so the wall times and
+    the text describe what a real run would produce. The endpoint globals are swapped for
+    the duration of the run and restored afterwards -- this tool must not leave the
+    process pointed at a bakeoff URL.
+
+    ``label`` becomes ``ASR_MODEL`` and travels as the request's ``model`` field, which is
+    how a llama-swap router picks the entry (see ``parse_endpoint_spec``).
+
+    No VRAM is recorded: the model lives on the host that serves the endpoint, and
+    ``vram_used_mib`` measures this process's card only. Reporting a number here would
+    invent a measurement."""
+    import generate  # lazy: pulls faster_whisper at module scope
+
+    run = WhisperRun(label)
+    run.family = "whisper.cpp-endpoint"
+    saved = (generate.ASR_URL, generate.ASR_MODEL)
+    generate.ASR_URL = url
+    generate.ASR_MODEL = label
+    try:
+        for v in videos:
+            ep: dict = {"episode": os.path.basename(v)}
+            t0 = time.monotonic()
+            try:
+                with tempfile.TemporaryDirectory() as td:
+                    wav = _extract_dub_wav(v, td)
+                    if wav is None:
+                        ep["error"] = "no-eng-dub-or-extract-failed"
+                    else:
+                        segments, words = generate.endpoint_transcribe(wav)
+                        segs, ws = endpoint_run_shape(segments, words)
+                        run.segments.extend(segs)
+                        run.words.extend(ws)
+                        ep["segments"] = len(segs)
+                        ep["text"] = " ".join(s["text"] for s in segs)
+            except Exception as e:  # one bad episode must not throw away the endpoint's run
+                ep["error"] = f"{type(e).__name__}: {e}"
+            ep["wall_s"] = round(time.monotonic() - t0, 1)
+            run.episodes.append(ep)
+            status = f"ERROR: {ep['error'][:80]}" if "error" in ep else "ok"
+            print(f"  {label}: {ep['episode'][:50]} {ep['wall_s']}s [{status}]", flush=True)
+    finally:
+        generate.ASR_URL, generate.ASR_MODEL = saved
+    return run
+
+
+ENDPOINT_PREFIX = "endpoint:"
+
+
+def is_endpoint_name(name: str) -> bool:
+    """Route an --models entry to the whisper.cpp/OpenAI-compatible endpoint runner.
+
+    Entries are ``endpoint:URL[@label]``. Checked before the whisper-family test because a
+    URL can contain a whisper-family token in its path or a label (".../whisper-server")."""
+    return name.lower().startswith(ENDPOINT_PREFIX)
+
+
+def parse_endpoint_spec(spec: str) -> tuple[str, str]:
+    """``endpoint:URL[@label]`` -> ``(url, label)``; an unlabelled entry is labelled by its
+    host:port so two endpoints differing only by port cannot collide as one entrant.
+
+    **The label is sent as the request's ``model`` field.** For a router that selects the
+    backend by model name -- llama-swap does -- the label must therefore be the ROUTER's
+    entry name, e.g. ``@whisper-large-v3-turbo-subs``, not a free-form tag: llama-swap
+    refuses a model it does not know rather than falling back. A bare whisper-server
+    ignores the field, so a descriptive label is fine there. Either way the label is what
+    names the entrant in the report, which is why it doubles as both.
+
+    The label separator is the last ``@`` in the URL's PATH, never one in its authority:
+    ``http://user@host/path`` is userinfo, while ``http://host/path@tag`` is a label."""
+    rest = spec[len(ENDPOINT_PREFIX):]
+    scheme = rest.find("://")
+    path_start = rest.find("/", scheme + 3 if scheme >= 0 else 0)
+    head, tail = (rest, "") if path_start < 0 else (rest[:path_start], rest[path_start:])
+    url_part, sep, label = tail.rpartition("@")
+    url = head + url_part if sep else rest
+    if not sep:
+        parsed = urlparse(url)
+        label = parsed.netloc.rsplit("@", 1)[-1] or url
+    return url, label
+
+
 def run_entrant(name: str, videos: list[str], compute_type: str, model_dir: str, device: str) -> dict:
     """Dispatch one --models entry to its runner, then shape its report entry.
 
@@ -779,7 +912,10 @@ def run_entrant(name: str, videos: list[str], compute_type: str, model_dir: str,
     runs of the "same" model at different precision need distinct labels or they
     collide as one entrant in the pairwise-agreement table."""
     run: WhisperRun | NemoRun | QwenRun
-    if is_whisper_name(name):
+    if is_endpoint_name(name):
+        url, label = parse_endpoint_spec(name)
+        run = run_endpoint(url, label, videos)
+    elif is_whisper_name(name):
         run = run_whisper(name, videos, compute_type, model_dir)
         label = f"{name} ({compute_type})"
     elif is_qwen_name(name):
@@ -792,6 +928,13 @@ def run_entrant(name: str, videos: list[str], compute_type: str, model_dir: str,
     entry: dict = {
         "model": label,
         "family": run.family,
+        # The judge's logprob stats mean different things per family: faster-whisper
+        # reports a per-segment avg_logprob natively, while an endpoint carries none and
+        # it is derived from word probs (see endpoint_run_shape). Recorded so a reader
+        # comparing the two columns knows they are not the same measurement.
+        "logprob_source": (
+            "derived-from-word-probs" if is_endpoint_name(name) else "native-segment"
+        ),
         "load_s": run.load_s,
         "peak_vram_mib": run.peak_vram_mib,
         "has_word_timestamps": bool(run.words),
@@ -831,6 +974,24 @@ def score_against_references(entries: list[dict], refs: dict[str, str]) -> None:
             ref = refs.get(ep["episode"])
             if ref and "text" in ep:
                 ep["wer_vs_ref"] = wer(ref, ep["text"])
+
+
+def strip_transcripts(entries: list[dict]) -> list[dict]:
+    """Remove every carrier of transcribed dialogue from report entries.
+
+    A report committed to the repo must not hold a commercial dub's script. The report
+    keeps transcripts ON PURPOSE when you are reading it locally (the verdict line tells
+    you to hand-read the noisiest episode, which is exactly where blocklist and agreement
+    metrics cannot see wrong-but-plausible words) -- so this is opt-in via --metrics-only,
+    and it removes text ONLY. Every number derived from that text stays: blocklist_hits,
+    the nsp/logprob stats and word_count are the evidence, and dropping them would leave
+    a report that no longer supports the verdict it is attached to."""
+    out: list[dict] = []
+    for e in entries:
+        stripped = {k: v for k, v in e.items() if k not in ("texts", "words")}
+        stripped["episodes"] = [{k: v for k, v in ep.items() if k != "text"} for ep in e.get("episodes", [])]
+        out.append(stripped)
+    return out
 
 
 def shape_report(entries: list[dict], agreement: dict) -> dict:
@@ -886,13 +1047,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--models",
         default="large-v3-turbo,nvidia/parakeet-tdt-0.6b-v3",
-        help="comma-separated; whisper-family names -> faster-whisper, everything else -> NeMo",
+        help=(
+            "comma-separated; whisper-family names -> faster-whisper, "
+            "'endpoint:URL[@label]' -> an OpenAI-compatible server (e.g. a whisper.cpp "
+            "sidecar), everything else -> NeMo"
+        ),
     )
     ap.add_argument("--compute-type", default=os.environ.get("COMPUTE_TYPE", "int8"))
     ap.add_argument("--model-dir", default=os.environ.get("MODEL_DIR", "/models"))
     ap.add_argument("--device", default=os.environ.get("ASR_DEVICE", "cuda"), help="device for the NeMo side")
     ap.add_argument("--out", default="", help="write the JSON report here")
     ap.add_argument("--report-only", action="store_true", help="re-print a saved --out report, no GPU")
+    ap.add_argument(
+        "--metrics-only",
+        action="store_true",
+        help="drop transcripts (texts, words, per-episode text) from the report -- use for any report that leaves this machine",
+    )
     ap.add_argument(
         "--ref",
         action="append",
@@ -933,6 +1103,9 @@ def main(argv: list[str] | None = None) -> int:
     # Agreement WER for every pair of entrants that completed the same episode set -- a
     # one-sided or error-punctuated join would score a mismatch the models never both saw.
     report = shape_report(entries, pairwise_agreement(entries))
+    if args.metrics_only:
+        report["entrants"] = strip_transcripts(report["entrants"])
+        print("metrics-only: transcripts stripped from the report")
     if args.out:
         with open(args.out, "w") as f:
             json.dump(report, f, indent=2)

@@ -6,6 +6,8 @@ is built from: WER math, the whisper/nemo router, the judge summary, and the
 defensive NeMo transcript parser whose return shapes move between nemo versions.
 """
 
+import json
+import math
 import wave
 
 import pytest
@@ -395,3 +397,230 @@ def test_segment_from_words_keeps_contiguous_speech_together():
     words = [{"text": "a", "start": 0.0, "end": 0.5}, {"text": "b", "start": 0.6, "end": 1.0}]
     segs = ab.segment_from_words(words, max_gap=2.0)
     assert len(segs) == 1 and segs[0]["text"] == "a b"
+
+
+# --------------------------------------------------- endpoint entrant (whisper.cpp sidecar)
+
+
+def test_endpoint_spec_splits_the_url_from_its_label():
+    url, label = ab.parse_endpoint_spec(
+        "endpoint:http://127.0.0.1:11434/v1/audio/transcriptions@whispercpp-turbo-f16"
+    )
+    assert url == "http://127.0.0.1:11434/v1/audio/transcriptions"
+    assert label == "whispercpp-turbo-f16"
+
+
+def test_endpoint_spec_defaults_the_label_to_host_and_port():
+    """An unlabelled entry still needs a distinct report label -- two endpoints that
+    differ only by port must not collide as one entrant in the agreement table."""
+    url, label = ab.parse_endpoint_spec("endpoint:http://127.0.0.1:11434/v1/audio/transcriptions")
+    assert url == "http://127.0.0.1:11434/v1/audio/transcriptions"
+    assert label == "127.0.0.1:11434"
+
+
+def test_endpoint_spec_keeps_a_url_that_contains_an_at_sign_out_of_it():
+    """rpartition, not split: credentials in a URL ('user@host') must not be mistaken
+    for a label separator."""
+    url, label = ab.parse_endpoint_spec("endpoint:http://user@127.0.0.1:11434/v1/audio/transcriptions")
+    assert url == "http://user@127.0.0.1:11434/v1/audio/transcriptions"
+    assert label == "127.0.0.1:11434"
+
+
+def test_router_sends_endpoint_entries_to_the_endpoint_runner():
+    assert ab.is_endpoint_name("endpoint:http://127.0.0.1:11434/v1/audio/transcriptions@x")
+    assert not ab.is_endpoint_name("large-v3-turbo")
+    assert not ab.is_endpoint_name("nvidia/parakeet-tdt-0.6b-v3")
+
+
+def test_endpoint_shape_rebuilds_a_segment_text_from_its_own_words():
+    """endpoint_transcribe returns segments with no text -- production never needs it
+    there (reflow rebuilds cards from words), but the judge counts blocklist hits per
+    segment text, so the entrant must rebuild it."""
+    segments = [
+        {"start": 0.0, "end": 2.0, "no_speech_prob": 0.01},
+        {"start": 2.0, "end": 3.0, "no_speech_prob": 0.9},
+    ]
+    words = [
+        {"text": " Hello", "start": 0.0, "end": 0.5, "prob": 0.9, "seg": 0},
+        {"text": " there.", "start": 0.5, "end": 1.0, "prob": 0.8, "seg": 0},
+        {"text": " Music", "start": 2.0, "end": 3.0, "prob": 0.2, "seg": 1},
+    ]
+    segs, ws = ab.endpoint_run_shape(segments, words)
+    assert [s["text"] for s in segs] == ["Hello there.", "Music"]
+    assert [s["no_speech_prob"] for s in segs] == [0.01, 0.9]
+
+
+def test_endpoint_shape_derives_segment_logprob_from_word_probs_like_reflow():
+    """The endpoint path carries no per-segment avg_logprob: _map_endpoint_doc folds it
+    into word probs, and reflow.card_confidence derives card confidence back out of
+    those. Deriving the same way here means the judge sees what production sees -- and
+    it must match reflow's formula, not a re-implementation of it."""
+    import reflow
+
+    prob_a, prob_b = 0.5, 0.25
+    segments = [{"start": 0.0, "end": 2.0, "no_speech_prob": 0.0}]
+    words = [
+        {"text": " a", "start": 0.0, "end": 1.0, "prob": prob_a, "seg": 0},
+        {"text": " b", "start": 1.0, "end": 2.0, "prob": prob_b, "seg": 0},
+    ]
+    segs, ws = ab.endpoint_run_shape(segments, words)
+    expected, _nsp = reflow.card_confidence(words, segments)
+    assert segs[0]["avg_logprob"] == pytest.approx(expected)
+
+
+def test_endpoint_shape_keeps_word_prob_and_drops_the_endpoint_seg_key():
+    segments = [{"start": 0.0, "end": 1.0, "no_speech_prob": 0.0}]
+    words = [{"text": " a", "start": 0.0, "end": 1.0, "prob": 0.4, "seg": 0}]
+    _segs, ws = ab.endpoint_run_shape(segments, words)
+    # verbatim, leading space included: production stores merged whisper.cpp tokens the
+    # same way, and reflow relies on the spacing to rejoin them
+    assert ws == [{"text": " a", "start": 0.0, "end": 1.0, "prob": 0.4}]
+
+
+def test_endpoint_shape_clamps_a_zero_probability_before_the_log():
+    """prob 0 is real (a token the server scored at zero) and ln(0) is -inf, which would
+    poison every downstream median. reflow clamps at PROB_FLOOR; this must too."""
+    import reflow
+
+    segments = [{"start": 0.0, "end": 1.0, "no_speech_prob": 0.0}]
+    words = [{"text": " a", "start": 0.0, "end": 1.0, "prob": 0.0, "seg": 0}]
+    segs, _ws = ab.endpoint_run_shape(segments, words)
+    assert segs[0]["avg_logprob"] == pytest.approx(math.log(reflow.PROB_FLOOR))
+
+
+def test_strip_transcripts_removes_every_carrier_of_dub_text():
+    """The report keeps transcripts on purpose (the verdict tells you to hand-read the
+    noisiest episode), and that is exactly why a repo-committed report must not: the text
+    is a commercial dub's script. All three carriers have to go -- the top-level texts,
+    the word list, and each episode's own text."""
+    entry = {
+        "model": "x",
+        "episodes": [
+            {"episode": "e1.mkv", "wall_s": 4.0, "segments": 3, "text": "the whole script"},
+            {"episode": "e2.mkv", "wall_s": 1.0, "error": "no-eng-dub-or-extract-failed"},
+        ],
+        "texts": ["the whole script"],
+        "words": [{"text": " the", "start": 0.0, "end": 0.5, "prob": 0.9}],
+    }
+    out = ab.strip_transcripts([entry])
+    stripped = out[0]
+    assert "texts" not in stripped and "words" not in stripped
+    assert all("text" not in ep for ep in stripped["episodes"])
+    # the metrics must survive -- this strips text, not the measurement
+    assert stripped["episodes"][0]["wall_s"] == 4.0
+    assert stripped["episodes"][0]["segments"] == 3
+    assert stripped["episodes"][1]["error"] == "no-eng-dub-or-extract-failed"
+
+
+def test_strip_transcripts_leaves_the_metrics_untouched():
+    """The blocklist counts and confidence stats are built from text but are themselves
+    numbers; stripping must not silently drop them or the report stops being evidence."""
+    entry = {
+        "model": "x",
+        "episodes": [{"episode": "e.mkv", "text": "secret"}],
+        "texts": ["secret"],
+        "words": [],
+        "blocklist_hits": 2,
+        "nsp_median": 0.1,
+        "logprob_p05": -1.5,
+        "music_rule_would_fire": 3,
+        "word_count": 10,
+    }
+    stripped = ab.strip_transcripts([entry])[0]
+    assert stripped["blocklist_hits"] == 2
+    assert stripped["nsp_median"] == 0.1
+    assert stripped["logprob_p05"] == -1.5
+    assert stripped["music_rule_would_fire"] == 3
+    assert stripped["word_count"] == 10
+
+
+def _tiny_wav(path, seconds=1.0, rate=16000):
+    """A real (silent) wav, so the entrant's ffprobe duration step runs for real."""
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\x00\x00" * int(rate * seconds))
+    return str(path)
+
+
+def test_run_endpoint_transcribes_through_the_real_http_path(tmp_path, monkeypatch):
+    """The entrant must go end to end: extract -> mp3 re-encode -> multipart POST ->
+    verbose_json -> the tool's shapes. Nothing here is stubbed except the ffmpeg step the
+    production path shares with every other test, so a break in the request shape (the
+    thing a whisper.cpp server has to accept) fails here."""
+    import fake_servers
+
+    import generate
+
+    doc = json.load(open("tests/fixtures/whispercpp_verbose_json.json"))
+    server = fake_servers.FakeServer(fake_servers.asr_reply(doc))
+    try:
+        wav = _tiny_wav(tmp_path / "a.wav")
+        monkeypatch.setattr(ab, "_extract_dub_wav", lambda video, td: wav)
+        # The mp3 encode is the one shared production step that needs a real ffmpeg; the
+        # POST is exercised over a REAL socket, which is the point of this test.
+        def _fake_mp3(w, path):
+            open(path, "wb").write(b"x" * 4096)  # a real POST goes out; only the encode is stubbed
+            return True
+
+        monkeypatch.setattr(generate, "_mp3_for_upload", _fake_mp3)
+        monkeypatch.setattr(generate, "ASR_KEY_ENV", "")
+        monkeypatch.setattr(generate, "ASR_URL", "http://127.0.0.1:1/never-used")
+        monkeypatch.setattr(generate, "ASR_MODEL", "never-used")
+
+        run = ab.run_endpoint(server.base + "/v1/audio/transcriptions", "fake-whispercpp", ["ep.mkv"])
+
+        # the request really was a multipart upload carrying the fields the server needs
+        assert server.requests, "no request reached the endpoint"
+        body = server.requests[0]["body"]
+        assert isinstance(body, bytes) and b"response_format" in body and b"verbose_json" in body
+        assert server.requests[0]["path"] == "/v1/audio/transcriptions"
+
+        # shapes: sub-word tokens rejoined, per-word prob kept, segment text rebuilt
+        assert [w["text"] for w in run.words] == [" Treecutting", " aviary", " Beacon"]
+        assert run.words[0]["prob"] == pytest.approx(0.55)  # min of the merged pieces
+        assert run.segments[0]["text"] == "Treecutting aviary"
+        assert run.segments[0]["no_speech_prob"] == pytest.approx(0.02)
+        assert run.segments[0]["avg_logprob"] < 0  # derived, never left absent
+        assert run.episodes[0]["segments"] == 2 and "error" not in run.episodes[0]
+        assert run.ok and run.family == "whisper.cpp-endpoint"
+    finally:
+        server.close()
+
+
+def test_run_endpoint_restores_the_endpoint_globals_even_on_failure(tmp_path, monkeypatch):
+    """A bakeoff URL must not survive the run: a later production call in the same process
+    would otherwise be pointed at a bakeoff server."""
+    import generate
+
+    monkeypatch.setattr(ab, "_extract_dub_wav", lambda video, td: None)  # -> per-episode error
+    monkeypatch.setattr(generate, "ASR_KEY_ENV", "")
+    monkeypatch.setattr(generate, "ASR_URL", "http://127.0.0.1:1/original")
+    monkeypatch.setattr(generate, "ASR_MODEL", "original-model")
+
+    run = ab.run_endpoint("http://127.0.0.1:9/bakeoff", "bakeoff", ["ep.mkv"])
+
+    assert generate.ASR_URL == "http://127.0.0.1:1/original"
+    assert generate.ASR_MODEL == "original-model"
+    assert run.episodes[0]["error"] == "no-eng-dub-or-extract-failed"
+
+
+def test_run_endpoint_records_an_episode_error_instead_of_aborting(tmp_path, monkeypatch):
+    """One unreadable mkv must not throw away the other episodes' work."""
+    import generate
+
+    calls = {"n": 0}
+
+    def fake_extract(video, td):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("bad mkv")
+        return None
+
+    monkeypatch.setattr(ab, "_extract_dub_wav", fake_extract)
+    monkeypatch.setattr(generate, "ASR_KEY_ENV", "")
+    run = ab.run_endpoint("http://127.0.0.1:9/x", "l", ["a.mkv", "b.mkv"])
+    assert len(run.episodes) == 2
+    assert run.episodes[0]["error"].startswith("RuntimeError")
+    assert run.episodes[1]["error"] == "no-eng-dub-or-extract-failed"
