@@ -75,3 +75,7 @@ docs/asr-bakeoff/*-report.json
 .impeccable/review/
 .impeccable/build/
 .impeccable/live/
+
+.impeccable/direction/
+.impeccable/questions/
+web/.probe-*.mjs
