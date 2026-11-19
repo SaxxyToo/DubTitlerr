@@ -148,6 +148,7 @@ Then open `http://<host>:8842/review/setup` to create the admin account. `compos
 | [Reference](docs/wiki/Reference.md) | Every variable, glossary field, sidecar, stage outcome, and route. |
 | [Why it works this way](docs/wiki/Why-It-Works-This-Way.md) | The reasoning behind the guards, queues, and defaults. |
 | [Choosing an ASR model](docs/wiki/Choosing-an-ASR-Model.md) | What to transcribe with, local or over an endpoint. |
+| [Choosing a repair model](docs/wiki/Choosing-a-repair-model.md) | What rewrites the doubtful lines, and why names decide it. |
 | [ASR bakeoff data](docs/wiki/ASR-bakeoff-data.md) | The measurements behind those defaults, per entrant and per card. |
 | [Design decisions](docs/wiki/Design-decisions.md) | The two decisions that are expensive to rediscover. |
 | [Agent notes](AGENTS.md) | The rules for changing the code. |

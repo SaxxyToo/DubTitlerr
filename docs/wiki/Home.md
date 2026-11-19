@@ -25,6 +25,7 @@ It runs as one container, per episode, incrementally.
 | Look up a variable, a filename, a schema    | **[Reference](Reference.md)**                                                             |
 | Understand why it behaves the way it does   | **[Why it works this way](Why-It-Works-This-Way.md)**                                     |
 | Pick a transcription model for your GPU     | **[Choosing an ASR model](Choosing-an-ASR-Model.md)**                                     |
+| Pick the model that repairs the lines       | **[Choosing a repair model](Choosing-a-repair-model.md)**                                 |
 | See the numbers behind the model choice     | **[ASR bakeoff data](ASR-bakeoff-data.md)**                                                |
 | Read a design decision before reversing it  | **[Design decisions](Design-decisions.md)**                                                |
 | Point an AI agent at the project            | **[Agent notes](https://github.com/SaxxyToo/DubTitlerr/blob/main/AGENTS.md)**              |

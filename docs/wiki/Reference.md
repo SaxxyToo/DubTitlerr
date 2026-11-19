@@ -171,6 +171,33 @@ line for review, and the stage still records `ok`.
 | `GLOSSARY_FILE`                      | _(empty)_        | Override the glossary resolved from the show                                                   |
 | `FFMPEG_TIMEOUT` / `FFPROBE_TIMEOUT` | `1800` / `60`    | Seconds                                                                                        |
 
+### ASR backend
+
+`ASR_BACKEND` decides where transcription happens. Everything downstream — reflow, glossary
+correction, repair, the hallucination gate, the signs merge — is identical on both paths, so this is
+the only place the choice shows up. [Choosing an ASR model](Choosing-an-ASR-Model.md) is about which
+model to point an endpoint at.
+
+| Var                                  | Default                                            | Meaning                                                                                                                                                                                    |
+| ------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ASR_BACKEND`                        | `local`                                            | `local` runs Whisper inside this container; `endpoint` posts the audio to an OpenAI-compatible `/audio/transcriptions` URL and needs no local model, no torch and no CUDA                      |
+| `ASR_URL`                            | `https://openrouter.ai/api/v1/audio/transcriptions` | Full `/audio/transcriptions` URL, used when the backend is `endpoint`                                                                                                                      |
+| `ASR_MODEL`                          | `openai/whisper-1`                                 | Model name sent to the endpoint — for a router, this must be the router's entry name. **Read the shutdown note below before relying on the default**                                        |
+| `ASR_KEY_ENV`                        | `OPENROUTER_API_KEY`                               | Name of the environment variable that holds the key, and the only one read. Empty sends no key. A key is sent only over https, or plain http to loopback, whatever this is set to           |
+| `ASR_TIMEOUT`                        | `900`                                              | Per-request timeout, seconds                                                                                                                                                               |
+| `ASR_REFERER`                        | this fork's URL                                    | `HTTP-Referer`, sent to OpenRouter only; other endpoints ignore it                                                                                                                         |
+| `ASR_DEVICE`                         | `cuda`                                             | Device faster-whisper runs on. `local` backend only; ignored in endpoint mode                                                                                                              |
+| `OUTPUT_MODE`                        | `mux`                                              | `mux` embeds the subtitle as a Dubtitles track and rewrites the video; `sidecar` leaves it beside the video and never opens the video for writing                                          |
+| `SIDECAR_SUFFIX`                     | `.eng.dubtitles`                                   | Sidecar mode only. The text between the episode name and the extension, e.g. `.dub.en` gives `Episode.dub.en.srt`                                                                          |
+| `ADOPT_DUB_EN`                       | `false`                                            | Feed an existing `.dub.en.srt` / `.ass` from another pipeline through repair and signs merge. Off, the pass never moves files it did not produce                                           |
+
+> **The `ASR_URL` and `ASR_MODEL` defaults point at a service being withdrawn.** `openai/whisper-1`
+> shuts down on **2027-02-26**, and no replacement returns word-level timestamps — the
+> `timestamp_granularities[]` parameter that provides them is supported by `whisper-1` alone. Point
+> the endpoint at a server you run, or at a provider that returns both word timings and a live
+> `no_speech_prob`; [Choosing an ASR model](Choosing-an-ASR-Model.md#hosted-endpoints-and-a-date-worth-knowing)
+> compares the hosted options field by field.
+
 ### Repair
 
 | Var                                  | Default                                            | Meaning                                                                                                                                                                                                                                                                                                             |
