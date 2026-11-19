@@ -67,3 +67,11 @@ docs/asr-bakeoff/*-report.json
 .qoder/
 .roo/
 .windsurf/
+
+# Impeccable design-process working artifacts (host-local, regenerated during design
+# runs: mocks, review captures, build state). config.json is tracked; it records the
+# project's build path.
+.impeccable/mocks/
+.impeccable/review/
+.impeccable/build/
+.impeccable/live/
