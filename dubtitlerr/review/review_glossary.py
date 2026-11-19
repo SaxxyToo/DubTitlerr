@@ -5,10 +5,17 @@ machine-owned verified/flagged/acquired/known/_curated, any underscore key, init
 loaded and written back untouched. ``show`` is resolved only against the server-side list of
 ``*.json`` in decisions.GLOSSARY_DIR, never used as a path, and no media tree is ever walked.
 
+The GET detail also lists the ``flagged`` review queue (``review_items``: bare-string verifier entries
+and object acquire/mine entries, normalised, with every evidence key the producer attached) and what
+accepting each entry would do (``accept_effect``). POST with ``op: "review"`` applies one human
+accept/reject through ``glossary_acquire.record_decision`` -- the CLI's own decision function -- so the
+web surface adds no adjudication rules of its own.
+
 A write holds glossary_lock.locked(path, "webui"), refuses a stale ``expected_version`` (sha256 of
 the raw file bytes), copies the prior file to ``<file>.bak-<UTC timestamp>`` (newest 20 kept), and
 swaps the new content in through common.atomic_write_bytes (temp + os.replace in the same
-directory)."""
+directory). A busy glossary is a 503 the reviewer retries; the CLI stages answers in
+``<glossary>.json.review-pending`` only because an interactive walk cannot be re-clicked."""
 
 import contextlib
 import datetime
@@ -21,7 +28,7 @@ import unicodedata
 
 from dubtitlerr.core import decisions
 from dubtitlerr.core.common import MODE_KEEP, atomic_write_bytes, log
-from dubtitlerr.glossary import glossary_lock, glossary_verify
+from dubtitlerr.glossary import glossary_acquire, glossary_lock, glossary_verify
 
 EDITABLE = ("names", "phrases", "hard_fixes")
 OPS = ("add", "update", "delete")
@@ -100,6 +107,7 @@ def _load(show):
     for key, want in (("names", list), ("phrases", list), ("hard_fixes", dict)):
         if cfg.get(key) is not None and not isinstance(cfg[key], want):
             raise _Refused(500, "glossary corrupt")
+    _flagged(cfg)  # the queue's own shape check: a dict, or an empty list meaning "nothing queued"
     return raw, cfg
 
 
@@ -107,11 +115,37 @@ def _version(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def _flagged(cfg):
+    """The flagged queue as a mapping. An absent/null/empty queue reads as {}; a non-empty non-dict does not,
+    because record_decision would silently coerce it and the whole queue would be lost on the next write."""
+    value = cfg.get("flagged")
+    if value is None or value == [] or value == {}:
+        return {}
+    if not isinstance(value, dict):
+        raise _Refused(500, "glossary corrupt")
+    return value
+
+
+def review_queue(cfg):
+    """The flagged queue as the UI sees it: review_items, each with the effect accepting would have.
+
+    ``effect`` is glossary_acquire.accept_effect -- the same function the CLI's prompt uses, so the
+    button label cannot disagree with what the write does. No ordering decision is taken here beyond
+    review_items' own term order.
+    """
+    flagged = _flagged(cfg)
+    items = glossary_acquire.review_items({**cfg, "flagged": flagged})
+    for item in items:
+        item["effect"] = glossary_acquire.accept_effect(item["term"], item)
+    return items
+
+
 def read_show(show):
     try:
         raw, cfg = _load(_check_show(show))
     except _Refused as r:
         return r.reply
+    queue = review_queue(cfg)
     return 200, {
         "show": show,
         "version": _version(raw),
@@ -119,6 +153,8 @@ def read_show(show):
         "phrases": list(cfg.get("phrases") or []),
         "hard_fixes": dict(cfg.get("hard_fixes") or {}),
         "wiki": cfg["wiki"] if isinstance(cfg.get("wiki"), str) else "",
+        "flagged": queue,
+        "flagged_total": len(queue),
     }
 
 
@@ -274,6 +310,28 @@ def _write(path, new_bytes):
     return os.path.basename(backup)
 
 
+def apply_review(cfg, req):
+    """(new cfg, stored term, accept) with one human decision applied by the CLI's record_decision. Pure.
+
+    Exactly the CLI's guard: the answer applies only to a term still flagged *with the canonical the
+    reviewer saw* (``_commit_answers`` skips such an answer and logs it; here it is a 409, because a web
+    request must not report success for a decision it did not make). ``accept`` is a real JSON boolean.
+    """
+    accept = req.get("accept")
+    if not isinstance(accept, bool):
+        raise _Refused(400, "accept must be true or false")
+    term = _text(req.get("term"), "names", "term")
+    flagged = _flagged(cfg)
+    stored = next((k for k in flagged if str(k).lower() == term.lower()), None)
+    if stored is None:
+        raise _Refused(409, "review item is no longer pending")
+    meta = flagged[stored]
+    canonical = "" if isinstance(meta, str) else (meta or {}).get("canonical", "")
+    if "canonical" in req and req["canonical"] != canonical:
+        raise _Refused(409, "review item changed")
+    return glossary_acquire.record_decision(cfg, stored, accept=accept), stored, accept
+
+
 def write_show(body, operator, role="user"):
     try:
         if len(json.dumps(body, ensure_ascii=False).encode("utf-8", "surrogatepass")) > MAX_BODY:
@@ -284,24 +342,29 @@ def write_show(body, operator, role="user"):
         expected = body.get("expected_version")
         if not isinstance(expected, str) or not expected:
             raise _Refused(400, "expected_version is required")
+        if body.get("op") == "review" and "wiki" in body:
+            raise _Refused(400, "a review decision does not carry a wiki")
         path = _path(show)
+        review_op = body.get("op") == "review"
         with glossary_lock.locked(path, "webui") as got:
             if not got:
                 return 503, {"error": "glossary busy"}
             raw, cfg = _load(show)  # re-read under the lock: the version check and the write see one file
             if _version(raw) != expected:
                 return 409, {"error": "version conflict", "version": _version(raw)}
-            new, term, value = cfg, None, None
-            if "op" in body or "wiki" not in body:
-                new, term, value = apply_op(cfg, body)
-            wiki = None
-            if "wiki" in body:
-                wiki = _wiki(body["wiki"])
-                new = dict(new)
-                if wiki:
-                    new["wiki"] = wiki
-                else:
-                    new.pop("wiki", None)
+            new, term, value, decided, wiki = cfg, None, None, None, None
+            if review_op:
+                new, term, decided = apply_review(cfg, body)
+            else:
+                if "op" in body or "wiki" not in body:
+                    new, term, value = apply_op(cfg, body)
+                if "wiki" in body:
+                    wiki = _wiki(body["wiki"])
+                    new = dict(new)
+                    if wiki:
+                        new["wiki"] = wiki
+                    else:
+                        new.pop("wiki", None)
             new_bytes = _dump(raw, new)
             try:
                 backup = _write(path, new_bytes)
@@ -310,7 +373,12 @@ def write_show(body, operator, role="user"):
     except _Refused as r:
         return r.reply
     at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    if term is not None:
+    if decided is not None:
+        log(
+            f"glossary review: at={at} operator={operator} show={json.dumps(show)} "
+            f"op={'accept' if decided else 'reject'} term={json.dumps(term, ensure_ascii=False)} backup={backup}"
+        )
+    elif term is not None:
         shown = "" if value is None else f" value={json.dumps(value, ensure_ascii=False)}"
         log(
             f"glossary edit: at={at} operator={operator} show={json.dumps(show)} op={body['op']} "
@@ -321,7 +389,14 @@ def write_show(body, operator, role="user"):
             f"glossary edit: at={at} operator={operator} show={json.dumps(show)} op={'set' if wiki else 'delete'} "
             f"key=wiki value={json.dumps(wiki, ensure_ascii=False)} backup={backup}"
         )
-    return 200, {"ok": True, "show": show, "version": _version(new_bytes), "backup": backup, "reapply_hint": True}
+    return 200, {
+        "ok": True,
+        "show": show,
+        "version": _version(new_bytes),
+        "backup": backup,
+        "reapply_hint": True,
+        "flagged_total": len(new.get("flagged") or {}),
+    }
 
 
 def handle(method, path, body, operator="anonymous", role="user"):

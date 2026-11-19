@@ -21,7 +21,7 @@ RAW = {
     "phrases": ["Straw Hat Pirates"],
     "hard_fixes": {"lufi": "Luffy", "straw hat": "Straw Hat"},
     "verified": {"Luffy": {"source": "wiki", "at": "2026-09-01"}},
-    "flagged": [{"term": "Zoro", "why": "alt spelling"}],
+    "flagged": {"Zoro": {"reason": "low-confidence", "canonical": "Roronoa Zoro", "variant_count": 3, "canonical_count": 9}},
     "acquired": {"Nami": "wiki"},
     "known": ["Sanji"],
     "_curated": True,
@@ -95,6 +95,19 @@ def test_detail_round_trip_has_editable_keys_and_sha256_version(gdir):
         "phrases": ["Straw Hat Pirates"],
         "hard_fixes": {"lufi": "Luffy", "straw hat": "Straw Hat"},
         "wiki": "",
+        "flagged": [
+            {
+                "term": "Zoro",
+                "reason": "low-confidence",
+                "canonical": "Roronoa Zoro",
+                "variant_count": 3,
+                "canonical_count": 9,
+                "bound": 0.0,
+                "context": [],
+                "effect": "refused",
+            }
+        ],
+        "flagged_total": 1,
     }
 
 

@@ -11,6 +11,54 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+# Deployed glossaries the page edits. One carries a flagged review queue so the Review queue tab has
+# something real to decide: a respelling (accept -> hard fix), an additive expansion, a bare-string
+# verifier entry and a tier-B no-match with no canonical.
+GLOSSARIES = {
+    "Neon Harbor": {
+        "show": "Neon Harbor",
+        "names": [],
+        "phrases": [],
+        "hard_fixes": {},
+        "flagged": {
+            "Usop": {
+                "reason": "respelling-needs-review",
+                "canonical": "Usopp",
+                "variant_count": 9,
+                "canonical_count": 3,
+                "score": 0.91,
+                "bound": 0.72,
+                "context": ["Usop, wait!"],
+                "source": "transcript",
+                "scope": 12,
+            },
+            "Straw": {
+                "reason": "common-word",
+                "canonical": "Straw Hat Pirates",
+                "variant_count": 5,
+                "canonical_count": 5,
+                "score": 0.8,
+                "bound": 0.6,
+                "context": [],
+                "source": "transcript",
+                "scope": 12,
+            },
+            "Dwarfs": "low-confidence",
+            "Frier": {
+                "reason": "no-wiki-match",
+                "canonical": "",
+                "variant_count": 7,
+                "canonical_count": 0,
+                "bound": 0.0,
+                "context": ["Frier is late."],
+                "source": "transcript",
+                "scope": 12,
+            },
+        },
+    },
+    "Paper Moon": {"show": "Paper Moon"},
+}
+
 
 def main():
     with tempfile.TemporaryDirectory(prefix="dubtitlerr-ui-test-") as scratch:
@@ -106,7 +154,7 @@ def main():
             ),
         ]
         for show, ep, rows in fixtures:
-            (glossary_dir / f"{show}.json").write_text(json.dumps({"show": show}))
+            (glossary_dir / f"{show}.json").write_text(json.dumps(GLOSSARIES[show]))
             season = "Season 01" if "S01" in ep else "Season 02"
             folder = media / show / season
             folder.mkdir(parents=True, exist_ok=True)
@@ -157,7 +205,7 @@ def main():
                     (base / "stop").unlink(missing_ok=True)
                     (base / "schedule.json").unlink(missing_ok=True)
                     for show in ("Neon Harbor", "Paper Moon"):
-                        (glossary_dir / f"{show}.json").write_text(json.dumps({"show": show}))
+                        (glossary_dir / f"{show}.json").write_text(json.dumps(GLOSSARIES[show]))
                     return self._send(200, {"ok": True})
                 return super().do_POST()
 
