@@ -87,6 +87,7 @@ def test_a_restart_request_ends_the_whole_container_script_with_exit_0_after_the
         (app / "dubtitlerr" / pkg / "__init__.py").write_text("")
     (app / "dubtitlerr" / "review" / "review_server.py").write_text("import time\ntime.sleep(8)\n")
     flag = tmp_path / "stop"
+    (tmp_path / "processing.json").write_text('{"state": "running", "by": "test", "at": "x"}')
     env = {
         **os.environ,
         "APP_DIR": str(app),

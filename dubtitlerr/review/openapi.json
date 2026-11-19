@@ -262,7 +262,7 @@
     "/api/v1/command": {
       "post": {
         "summary": "Run a command",
-        "description": "arr-style command endpoint. run.request mirrors POST /api/requests (same validation and status codes; params are show, season, episode_re, require_eng, webhook, force). system.restart writes the soft-stop flag and returns 202. notification.test sends one test event to a saved provider (params: {\"name\": ...}).",
+        "description": "arr-style command endpoint. run.request mirrors POST /api/requests (same validation and status codes; params are show, season, episode_re, require_eng, webhook, force). system.restart writes the soft-stop flag and returns 202. system.start, system.pause and system.stop persist the processing state (start clears a stale soft-stop flag; stop also writes it) and return 202. notification.test sends one test event to a saved provider (params: {\"name\": ...}).",
         "operationId": "runCommand",
         "tags": [
           "commands"
@@ -916,6 +916,34 @@
           "queue": {
             "$ref": "#/components/schemas/QueueCounts"
           },
+          "processing": {
+            "type": "object",
+            "description": "The persisted processing state. A missing state file reads as paused; the app's boot path writes it.",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "paused",
+                  "stopped"
+                ]
+              },
+              "by": {
+                "type": "string",
+                "nullable": true,
+                "description": "Who last changed the state (user:NAME, admin, or boot)."
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "default": {
+                "type": "boolean",
+                "description": "True when no usable state file exists and paused is the boot default."
+              }
+            }
+          },
           "library": {
             "type": "object",
             "properties": {
@@ -1299,6 +1327,9 @@
             "enum": [
               "run.request",
               "system.restart",
+              "system.start",
+              "system.pause",
+              "system.stop",
               "notification.test"
             ]
           },

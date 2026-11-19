@@ -64,6 +64,9 @@ else # lib missing (misbuilt image): never stop, plain sleeps
 	stop_requested() { return 1; }
 	sleep_unless_stopped() { sleep "$1"; }
 	library_sweep_enabled() { return 0; }
+	processing_state() { printf 'running\n'; }
+	processing_running() { return 0; }
+	hold_while_paused() { return 0; }
 fi
 
 check_window_open() {
@@ -195,6 +198,8 @@ drain_requests() {
 	last_req_path=""
 	while :; do
 		if stop_requested; then return 0; fi
+		# Pause boundary between requests: the request in flight finishes, then the drain holds.
+		hold_while_paused || return 0
 		check_window_open
 		[ "$is_open" = "open" ] || break
 
@@ -308,6 +313,9 @@ while :; do
 		echo "gen_loop: soft stop, not starting the next sweep"
 		exit 0
 	fi
+	# Pause boundary before a sweep: a paused/stopped app starts no sweep at all. The show in
+	# flight (if any) already finished; resume continues with this sweep.
+	hold_while_paused || exit 0
 	wait_for_window
 	if stop_requested; then
 		echo "gen_loop: soft stop, not starting the next sweep"
@@ -354,6 +362,8 @@ while :; do
 			echo "gen_loop: soft stop, not starting ${show:-the next show}"
 			exit 0
 		fi
+		# Pause boundary between shows: the show in flight finished, no new one starts.
+		hold_while_paused || exit 0
 		drain_requests
 		case "$show" in '' | \#*) continue ;; esac
 		[ -d "$ANIME/$show" ] || {
@@ -420,6 +430,13 @@ while :; do
 		if stop_requested; then
 			echo "gen_loop: soft stop, leaving the idle wait"
 			exit 0
+		fi
+		# A pause during the long idle wait takes effect now, not after RESCAN_INTERVAL:
+		# hold at the boundary, then restart the idle countdown on resume.
+		if ! processing_running; then
+			hold_while_paused || exit 0
+			elapsed=0
+			last_check=0
 		fi
 		if [ $((elapsed - last_check)) -ge "$poll_interval" ] || [ "$elapsed" -eq 0 ]; then
 			last_check="$elapsed"

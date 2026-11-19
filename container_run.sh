@@ -23,6 +23,18 @@ export PYTHONPATH
 : "${STOP_FLAG:=/tmp/dubtitlerr.stop}"
 export STOP_FLAG
 rm -f "$STOP_FLAG" # a stale flag from an earlier `docker stop` + `docker start` must not stop a fresh run
+# Persisted processing state (running / paused / stopped). The file lives in the config volume,
+# so it survives a recreate; container_run.sh materialises `paused` when it is absent BEFORE any
+# loop starts. That is the requirement Michael stated on 2026-11-19: starting the app must not
+# start it on the library. PROCESSING_BOOT_DEFAULT only covers a file deleted mid-run.
+: "${CONFIG_DIR:=/config}"
+export CONFIG_DIR
+: "${PROCESSING_STATE_FILE:=$CONFIG_DIR/processing.json}"
+export PROCESSING_STATE_FILE
+: "${PROCESSING_POLL_INTERVAL:=15}" # seconds a paused loop sleeps between boundary checks
+export PROCESSING_POLL_INTERVAL
+PROCESSING_BOOT_DEFAULT=paused
+export PROCESSING_BOOT_DEFAULT
 # >>> stored settings
 # First the one-time import of an old runtime.env (idempotent). Then the container- and server-scope settings from settings.json /
 # secrets.json, exported BEFORE the defaults below and before any child
@@ -51,14 +63,33 @@ export DT_CONTAINER_BOOT_ID
 # learned to refuse. The window stops the wasted work; the guard stops the damage.
 : "${MERGE_WINDOW:=}"
 
-echo "==== dubtitle-builder up $(date) — merge_interval=${MERGE_INTERVAL}s rescan=${RESCAN_INTERVAL}s ===="
-
 if [ -f "$APP_DIR/shell/lib.sh" ]; then
 	. "$APP_DIR/shell/lib.sh"
 else # lib missing (misbuilt image): never stop, plain sleeps
 	stop_requested() { return 1; }
 	sleep_unless_stopped() { sleep "$1"; }
+	processing_state() { printf '%s\n' "${PROCESSING_BOOT_DEFAULT:-running}"; }
+	hold_while_paused() { return 0; }
 fi
+
+# Materialise the default before any child starts. `init` writes `paused` ONLY when the file is
+# absent, so a stored running/paused/stopped survives a recreate and is what boot honors. The
+# shell fallback keeps a misbuilt/unmounted app from bypassing the default: the file must exist
+# with `paused` in it, even if the Python module is unavailable.
+boot_state=""
+if [ -f "$APP_DIR/dubtitlerr/core/processing_state.py" ]; then
+	boot_state=$(python3 -m dubtitlerr.core.processing_state init --by boot 2>/dev/null) || boot_state=""
+fi
+if [ -z "$boot_state" ]; then
+	if [ ! -f "$PROCESSING_STATE_FILE" ]; then
+		mkdir -p "$(dirname "$PROCESSING_STATE_FILE")" 2>/dev/null || true
+		_ps_tmp="$PROCESSING_STATE_FILE.$$.tmp"
+		printf '{"at": "%s", "by": "boot", "state": "paused"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$_ps_tmp" 2>/dev/null &&
+			mv "$_ps_tmp" "$PROCESSING_STATE_FILE" 2>/dev/null || rm -f "$_ps_tmp"
+	fi
+	boot_state=$(processing_state)
+fi
+echo "==== dubtitle-builder up $(date) — processing=${boot_state} merge_interval=${MERGE_INTERVAL}s rescan=${RESCAN_INTERVAL}s ===="
 
 # Notifications are REPORTING ONLY: failures are swallowed, so a broken notify can never change this
 # supervisor's exit code or the fate of a loop. merge_pass.sh reports its own preflight failures and
@@ -73,6 +104,9 @@ notify_send() {
 (
 	while :; do
 		if stop_requested; then break; fi
+		# Pause boundary: a paused/stopped app keeps the review server up and starts no sweep.
+		# A stop that arrives while holding returns non-zero, so the loop drains like today.
+		hold_while_paused || break
 		if [ -n "$MERGE_WINDOW" ] && ! python3 -c "import sys,time; from dubtitlerr.core import common; t=time.localtime(); sys.exit(0 if common.within_window(sys.argv[1], t.tm_hour, t.tm_min) else 1)" "$MERGE_WINDOW" 2>/dev/null; then
 			echo "merge_pass: outside MERGE_WINDOW=$MERGE_WINDOW ($(date +%H:%M)) — skipping this sweep"
 		else

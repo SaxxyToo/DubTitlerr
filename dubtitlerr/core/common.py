@@ -340,6 +340,42 @@ def stop_requested():
     return bool(flag) and os.path.exists(flag)
 
 
+_PAUSED_LOGGED: set = set()
+
+
+def wait_while_paused():
+    """The pause boundary for Python stages (glossary verify's per-term loop).
+
+    Returns True when the stage may start its next unit, False when the soft stop arrived
+    while holding. A MISSING state file means no app boot created one (a stage run directly,
+    or a test), so processing continues exactly as today; container_run.sh materialises
+    ``paused`` before starting any loop, which is where the application's default lives.
+    A corrupt file reads as paused and holds.
+
+    Called BETWEEN units, never inside one: the term in flight completes, then the worker
+    holds here. Each state logs once per process so a paused verification does not print a
+    line per term.
+    """
+    from dubtitlerr.core import processing_state
+
+    poll = float(os.environ.get("PROCESSING_POLL_INTERVAL", "15") or 15)
+    while not stop_requested():
+        info = processing_state.read()
+        if info.get("missing"):
+            # No file: a direct stage invocation keeps today's behaviour, but the container
+            # exports PROCESSING_BOOT_DEFAULT=paused, so a file deleted underneath a running
+            # app still holds instead of silently starting work.
+            return (os.environ.get("PROCESSING_BOOT_DEFAULT") or "running") != "paused"
+        if info.get("state") == "running":
+            return True
+        state = str(info.get("state") or "paused")
+        if state not in _PAUSED_LOGGED:
+            _PAUSED_LOGGED.add(state)
+            log(f"processing {state} — holding")
+        time.sleep(max(0.01, poll))
+    return False
+
+
 def write_stamp(path: str, video: str, stages: dict | None = None, mode: str | None = None) -> None:
     """Write the .dubtitles.done idempotency stamp recording the delivered file's size+mtime
     and the tier versions that produced it (stamp_valid rejects a stamp behind either

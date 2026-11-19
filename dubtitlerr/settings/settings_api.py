@@ -28,6 +28,10 @@ ROLE_ENTRIES = {
     ("POST", "/api/settings/reset"): "admin",
     ("POST", "/api/settings/test"): "admin",
     ("POST", "/api/system/restart"): "admin",
+    ("GET", "/api/system/processing"): "user",
+    ("POST", "/api/system/start"): "admin",
+    ("POST", "/api/system/pause"): "admin",
+    ("POST", "/api/system/stop"): "admin",
 }
 SECRETS_NEED_LOGIN = "secrets can be changed only after login is enabled"
 RETIRED_ENV = ("REPAIR_PROFILES", "RUNTIME_VERIFY_BACKENDS", "RUNTIME_DECISION_MODELS")
@@ -156,6 +160,8 @@ def public_notification(prov, state):
 
 def get_settings(environ=None):
     environ = _env(environ)
+    from dubtitlerr.core import processing_state
+
     state = store.load(environ)
     reports = _reports(environ)
     settings_mtime = _mtime(store.settings_path(environ))
@@ -165,6 +171,7 @@ def get_settings(environ=None):
         "connections": [public_connection(c, state) for c in state.connections],
         "notifications": [public_notification(n, state) for n in state.notifications],
         "stages": dict(state.stages),
+        "processing": processing_state.describe(environ),
         "restart_pending": any(values[k]["pending"] for k, e in reg.REGISTRY.items() if e["applies"] == "restart"),
         "revision": state.rev,
         "store_error": state.error,
@@ -716,6 +723,15 @@ def test_notification(name, environ=None):
     return 200, {"ok": result.get("ok") is True, "error": error}
 
 
+def request_processing(action, environ=None, who="admin"):
+    """Persist start/pause/stop. Stop also writes the soft-stop flag, so the loops drain and the
+    container exits exactly as a `docker stop` would; the restart policy brings the UI back and
+    the persisted `stopped` then holds the loops idle until someone starts them."""
+    from dubtitlerr.core import processing_state
+
+    return processing_state.apply(action, who=who, environ=environ)
+
+
 def request_restart(environ=None, who="admin"):
     """Ask the builder for a soft stop: touch the flag every loop checks between units of work. The episode in flight (a mux
     included) finishes, the loops exit 0, and the container's restart policy brings the container back with a new boot id."""
@@ -752,4 +768,10 @@ def handle(method, path, body=None, environ=None, who="admin", opener=None, cont
         return review_settings.handle(method, route, body, environ=environ, opener=opener)
     if method == "POST" and route == "/api/system/restart":
         return request_restart(environ, who)
+    if method == "GET" and route == "/api/system/processing":
+        from dubtitlerr.core import processing_state
+
+        return 200, processing_state.describe(_env(environ))
+    if method == "POST" and route in ("/api/system/start", "/api/system/pause", "/api/system/stop"):
+        return request_processing(route.rsplit("/", 1)[-1], environ, who)
     return 404, {"error": "no such route"}

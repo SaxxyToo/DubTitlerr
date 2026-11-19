@@ -58,6 +58,57 @@ sleep_unless_stopped() {
 	return 0
 }
 
+# `PROCESSING_STATE_FILE` is the persisted state file. The shell helper treats a MISSING file
+# as running: these stages are also run directly outside the container (tests, a manual repair),
+# where there is no app boot to honor. container_run.sh materialises `paused` at boot before any
+# loop starts, so the application's default is paused. A corrupt/unknown file is always paused:
+# the safe direction is to touch the library as little as possible.
+processing_state_file() {
+	printf '%s' "${PROCESSING_STATE_FILE:-${CONFIG_DIR:-/config}/processing.json}"
+}
+
+# processing_state — running | paused | stopped. A missing file is running for a direct stage
+# invocation (see above); reading is a tiny sed over the machine-written JSON, not a subprocess.
+processing_state() {
+	_psf=$(processing_state_file)
+	if [ ! -r "$_psf" ]; then
+		printf '%s\n' "${PROCESSING_BOOT_DEFAULT:-running}"
+		return 0
+	fi
+	_pss=$(sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([a-zA-Z]*\)".*/\1/p' "$_psf" 2>/dev/null | head -n 1)
+	case "$_pss" in
+	running | paused | stopped) printf '%s\n' "$_pss" ;;
+	*) printf 'paused\n' ;;
+	esac
+}
+
+# processing_running — true only for the running word. Use inside if/&&/|| (returns 1 otherwise).
+processing_running() {
+	[ "$(processing_state)" = "running" ]
+}
+
+# hold_while_paused — the pause boundary. Returns 0 when processing may start, and 1 when the
+# soft stop arrived while holding (the caller then drains exactly as it does for stop_requested).
+# Logs "processing paused — holding" once per hold, then polls every PROCESSING_POLL_INTERVAL
+# seconds. The sleep is the existing stop-aware one, so a `docker stop` during a hold is prompt.
+hold_while_paused() {
+	_hwp_logged=0
+	while :; do
+		if stop_requested; then
+			return 1
+		fi
+		_hwp_state=$(processing_state)
+		if [ "$_hwp_state" = "running" ]; then
+			return 0
+		fi
+		if [ "$_hwp_logged" -eq 0 ]; then
+			echo "processing ${_hwp_state} — holding"
+			_hwp_logged=1
+		fi
+		sleep_unless_stopped "${PROCESSING_POLL_INTERVAL:-15}"
+	done
+}
+
 # library_sweep_enabled — false only when LIBRARY_SWEEP is an explicit off spelling (0, false, no, off, dry-run; any case,
 # surrounding whitespace ignored): unset, empty or anything else keeps today's behaviour, the whole-library sweep. The same
 # spellings the registry's bool type reads as off.
