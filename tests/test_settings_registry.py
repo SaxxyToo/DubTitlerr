@@ -53,7 +53,17 @@ FIRST_WAVE = {
         "MERGE_INTERVAL",
     ],
     "schedule": ["MERGE_WINDOW", "WATCH_QUEUE_WINDOW_DAYS", "WATCH_QUEUE_PIN", "LIBRARY_SWEEP"],
-    "connect": ["PLEX_URL", "PLEX_TOKEN", "PLEX_SECTION", "WATCHSTATE_URL", "WATCHSTATE_API_KEY", "WEBHOOK_TOKEN"],
+    "connect": [
+        "PLEX_URL",
+        "PLEX_TOKEN",
+        "PLEX_SECTION",
+        "WATCHSTATE_URL",
+        "WATCHSTATE_API_KEY",
+        "JELLYFIN_URL",
+        "JELLYFIN_API_KEY",
+        "JELLYFIN_USER",
+        "WEBHOOK_TOKEN",
+    ],
 }
 FIELDS = ("key", "category", "label", "help", "type", "default", "advanced", "applies", "scope", "editable", "secret")
 
@@ -100,6 +110,7 @@ def test_only_first_wave_entries_are_editable_and_secrets_are_flagged():
     assert {k for k, e in reg.REGISTRY.items() if e["secret"] and e["editable"]} == {
         "PLEX_TOKEN",
         "WATCHSTATE_API_KEY",
+        "JELLYFIN_API_KEY",
         "WEBHOOK_TOKEN",
     }
 
@@ -189,7 +200,7 @@ def test_from_env_rejects_bad_enum_and_malformed_numbers():
 
 
 def test_url_help_mentions_tokens():
-    for key in ("PLEX_URL", "WATCHSTATE_URL"):
+    for key in ("PLEX_URL", "WATCHSTATE_URL", "JELLYFIN_URL"):
         assert "tokens belong in a secret field" in reg.REGISTRY[key]["help"]
 
 

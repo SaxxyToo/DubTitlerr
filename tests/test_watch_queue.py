@@ -1,9 +1,21 @@
 """The watch gate. Its failure mode is not crashing -- it is returning a confident,
 correctly-sorted, incomplete list, which is what each source does on its own."""
 
+import json
+import re
+
 import pytest
 
 from dubtitlerr.pipeline import watch_queue as wq
+
+
+@pytest.fixture(autouse=True)
+def _jellyfin_unconfigured(monkeypatch):
+    """The suite must not depend on a developer's Jellyfin environment variables. Tests that
+    exercise the source set the three module constants themselves."""
+    monkeypatch.setattr(wq, "JELLYFIN_URL", "")
+    monkeypatch.setattr(wq, "JELLYFIN_API_KEY", "")
+    monkeypatch.setattr(wq, "JELLYFIN_USER", "")
 
 
 def test_union_takes_the_newer_timestamp(monkeypatch):
@@ -286,3 +298,203 @@ def test_a_failed_plex_show_lookup_keeps_the_bare_title(monkeypatch):
     monkeypatch.setattr(wq, "PLEX_TOKEN", "t")
     monkeypatch.setattr(wq, "_get", fake_get)
     assert wq.from_plex(0) == {"One Pace": 400}
+
+
+# --- Jellyfin, the third source ---------------------------------------------------------------------------------------
+
+JF_ID = "a" * 32  # 32 hex characters: a user id, so the source skips GET /Users
+
+
+def _jf_item(name, played, tvdb=None):
+    """One `Items` row as the Jellyfin API returns it: timestamp and ids in UserData/ProviderIds."""
+    return {
+        "Name": name,
+        "ProviderIds": {"Tvdb": tvdb} if tvdb else {},
+        "UserData": {"LastPlayedDate": played},
+    }
+
+
+def _jf_page(*items, total=None):
+    doc = {"Items": list(items)}
+    if total is not None:
+        doc["TotalRecordCount"] = total
+    return json.dumps(doc).encode()
+
+
+def _configure_jellyfin(monkeypatch, user=""):
+    monkeypatch.setattr(wq, "JELLYFIN_URL", "http://jf")
+    monkeypatch.setattr(wq, "JELLYFIN_API_KEY", "key")
+    monkeypatch.setattr(wq, "JELLYFIN_USER", user)
+
+
+def test_jellyfin_parses_played_and_resumable_rows_and_tags_tvdb(monkeypatch):
+    """Both filter kinds arrive in one Items list, and the tvdb id rides on the row, so unlike
+    Plex no per-show metadata request is needed. The timestamp is ISO-8601, not an epoch."""
+    rows = [
+        _jf_item("JoJo's Bizarre Adventure", "1970-01-01T00:00:05Z", "262954"),
+        _jf_item("One Pace", "1970-01-01T00:00:04Z"),
+    ]
+    seen = {}
+
+    def fake_get(url, headers=None):
+        seen["url"], seen["headers"] = url, headers
+        return _jf_page(*rows, total=2)
+
+    _configure_jellyfin(monkeypatch, user=JF_ID)
+    monkeypatch.setattr(wq, "_get", fake_get)
+    assert wq.from_jellyfin(0) == {"JoJo's Bizarre Adventure {tvdb-262954}": 5, "One Pace": 4}
+    assert f"/Users/{JF_ID}/Items" in seen["url"]
+    assert "IncludeItemTypes=Series" in seen["url"]
+    assert "Fields=UserData,ProviderIds" in seen["url"]
+    assert "Filters=IsPlayed,IsResumable" in seen["url"]
+    assert "EnableTotalRecordCount=false" in seen["url"]
+    assert seen["headers"] == {"X-Emby-Token": "key"}
+
+
+def test_jellyfin_filters_the_window_client_side(monkeypatch):
+    """`LastPlayedDate` has no dependable server-side lower bound, so the row, not the query,
+    decides whether it is inside the window."""
+    rows = [_jf_item("Old", "1970-01-01T00:00:02Z"), _jf_item("New", "1970-01-01T00:00:09Z")]
+    _configure_jellyfin(monkeypatch, user=JF_ID)
+    monkeypatch.setattr(wq, "_get", lambda url, headers=None: _jf_page(*rows, total=2))
+    assert wq.from_jellyfin(5) == {"New": 9}
+
+
+def test_jellyfin_reads_every_page(monkeypatch):
+    """The selection is not ordered by recency, so a first page is a slice, not the answer."""
+    pages = {
+        0: _jf_page(_jf_item("A", "1970-01-01T00:00:01Z"), _jf_item("B", "1970-01-01T00:00:02Z")),
+        2: _jf_page(_jf_item("C", "1970-01-01T00:00:03Z")),
+        3: _jf_page(),
+    }
+
+    def fake_get(url, headers=None):
+        match = re.search(r"StartIndex=(\d+)", url)
+        assert match is not None
+        return pages[int(match.group(1))]
+
+    _configure_jellyfin(monkeypatch, user=JF_ID)
+    monkeypatch.setattr(wq, "PER_PAGE", 2)
+    monkeypatch.setattr(wq, "_get", fake_get)
+    assert wq.from_jellyfin(0) == {"A": 1, "B": 2, "C": 3}
+
+
+def test_jellyfin_refuses_at_the_page_backstop_instead_of_returning_a_slice(monkeypatch):
+    """A truncated walk looks exactly like a complete one, which is the failure this module
+    exists to prevent."""
+    _configure_jellyfin(monkeypatch, user=JF_ID)
+    monkeypatch.setattr(wq, "PER_PAGE", 1)
+    monkeypatch.setattr(wq, "MAX_PAGES", 2)
+    monkeypatch.setattr(wq, "_get", lambda url, headers=None: _jf_page(_jf_item("A", "1970-01-01T00:00:01Z")))
+    with pytest.raises(wq.Unreachable, match="more than 2 pages"):
+        wq.from_jellyfin(0)
+
+
+def test_jellyfin_aggregates_every_user_when_no_user_is_configured(monkeypatch):
+    """Aggregation answers "is anyone watching" with a max across users, not the first
+    account's answer."""
+    users = [{"Id": "u1", "Name": "Michael"}, {"Id": "u2", "Name": "Guest"}]
+    pages = {
+        "u1": _jf_page(_jf_item("One Pace", "1970-01-01T00:00:02Z")),
+        "u2": _jf_page(
+            _jf_item("One Pace", "1970-01-01T00:00:07Z"),
+            _jf_item("SPY x FAMILY", "1970-01-01T00:00:03Z"),
+        ),
+    }
+
+    def fake_get(url, headers=None):
+        if url.endswith("/Users"):
+            return json.dumps(users).encode()
+        user_id = url.split("/Users/")[1].split("/")[0]
+        match = re.search(r"StartIndex=(\d+)", url)
+        start = int(match.group(1)) if match else 0
+        return pages[user_id] if start == 0 else _jf_page()
+
+    _configure_jellyfin(monkeypatch, user="")
+    monkeypatch.setattr(wq, "_get", fake_get)
+    assert wq.from_jellyfin(0) == {"One Pace": 7, "SPY x FAMILY": 3}
+
+
+def test_a_jellyfin_username_resolves_case_insensitively_to_its_id(monkeypatch):
+    users = [{"Id": "u1", "Name": "Michael"}]
+
+    def fake_get(url, headers=None):
+        if url.endswith("/Users"):
+            return json.dumps(users).encode()
+        assert "/Users/u1/Items" in url
+        match = re.search(r"StartIndex=(\d+)", url)
+        start = int(match.group(1)) if match else 0
+        return _jf_page(_jf_item("One Pace", "1970-01-01T00:00:02Z")) if start == 0 else _jf_page()
+
+    _configure_jellyfin(monkeypatch, user="michael")
+    monkeypatch.setattr(wq, "_get", fake_get)
+    assert wq.from_jellyfin(0) == {"One Pace": 2}
+
+
+def test_an_unknown_jellyfin_user_refuses_instead_of_reading_nobody(monkeypatch):
+    _configure_jellyfin(monkeypatch, user="nobody")
+    monkeypatch.setattr(wq, "_get", lambda url, headers=None: json.dumps([{"Id": "u1", "Name": "Michael"}]).encode())
+    with pytest.raises(wq.Unreachable, match="not found"):
+        wq.from_jellyfin(0)
+
+
+def test_a_half_configured_jellyfin_refuses(monkeypatch):
+    """A URL without a key is a mistake, not an absent source."""
+    monkeypatch.setattr(wq, "JELLYFIN_URL", "http://jf")
+    with pytest.raises(wq.Unreachable, match="JELLYFIN_API_KEY not set"):
+        wq.from_jellyfin(0)
+
+
+def test_jellyfin_with_nothing_played_returns_an_empty_dict(monkeypatch):
+    _configure_jellyfin(monkeypatch, user=JF_ID)
+    monkeypatch.setattr(wq, "_get", lambda url, headers=None: _jf_page(total=0))
+    assert wq.from_jellyfin(0) == {}
+
+
+def test_build_unions_all_three_sources_and_reports_each_count(monkeypatch):
+    _configure_jellyfin(monkeypatch, user=JF_ID)
+    monkeypatch.setattr(wq, "from_watchstate", lambda s: {"One Pace": 200})
+    monkeypatch.setattr(wq, "from_plex", lambda s: {"One Pace": 100, "SPY x FAMILY": 50})
+    monkeypatch.setattr(wq, "from_jellyfin", lambda s: {"SPY x FAMILY": 300, "Mashle": 400})
+    monkeypatch.setattr(wq, "library_dirs", lambda r: ["One Pace", "SPY x FAMILY (2022) {tvdb-405920}", "Mashle"])
+    order, rep = wq.build(0, "/x")
+    assert (rep["watchstate"], rep["plex"], rep["jellyfin"], rep["union"]) == (1, 2, 2, 3)
+    assert order == ["Mashle", "SPY x FAMILY (2022) {tvdb-405920}", "One Pace"]
+
+
+def test_an_unconfigured_jellyfin_is_not_a_source(monkeypatch):
+    """Every existing deployment keeps working without new configuration."""
+
+    def boom(s):
+        raise AssertionError("an unconfigured Jellyfin must not be read")
+
+    monkeypatch.setattr(wq, "from_jellyfin", boom)
+    monkeypatch.setattr(wq, "from_watchstate", lambda s: {"One Pace": 100})
+    monkeypatch.setattr(wq, "from_plex", lambda s: {})
+    monkeypatch.setattr(wq, "library_dirs", lambda r: ["One Pace"])
+    order, rep = wq.build(0, "/x")
+    assert order == ["One Pace"] and rep["jellyfin"] == 0
+
+
+def test_a_configured_but_unreachable_jellyfin_refuses_the_write(monkeypatch):
+    _configure_jellyfin(monkeypatch, user=JF_ID)
+
+    def boom(s):
+        raise wq.Unreachable("jellyfin down")
+
+    monkeypatch.setattr(wq, "from_jellyfin", boom)
+    monkeypatch.setattr(wq, "from_watchstate", lambda s: {"One Pace": 100})
+    monkeypatch.setattr(wq, "from_plex", lambda s: {})
+    with pytest.raises(wq.Unreachable):
+        wq.build(0, "/x")
+
+
+def test_main_reports_the_jellyfin_count(monkeypatch, tmp_path, capsys):
+    out = tmp_path / "order.txt"
+    _configure_jellyfin(monkeypatch, user=JF_ID)
+    monkeypatch.setattr(wq, "from_watchstate", lambda s: {})
+    monkeypatch.setattr(wq, "from_plex", lambda s: {})
+    monkeypatch.setattr(wq, "from_jellyfin", lambda s: {"One Pace": 100})
+    monkeypatch.setattr(wq, "library_dirs", lambda r: ["One Pace"])
+    assert wq.main(["--out", str(out), "--root", "/x"]) == 0
+    assert "jellyfin=1" in capsys.readouterr().out
