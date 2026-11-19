@@ -2,7 +2,7 @@
 
 Nothing ever `source`s settings.json or secrets.json. The shell runs
 
-    eval "$(python3 "$APP_DIR/review_settings_write.py" export --scope gen --reset-to-init 2>/dev/null)"
+    eval "$(python3 -m dubtitlerr.review.review_settings_write export --scope gen --reset-to-init 2>/dev/null)"
 
 and this program prints only registry keys, re-validated, as shell-quoted `export NAME='value'` lines, so a hand-edited or
 hostile file can produce nothing but registered settings with valid values. It always exits 0 on a read problem and prints ONE

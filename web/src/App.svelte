@@ -704,7 +704,7 @@
           notice={error ||
             (accountsOk
               ? ''
-              : 'The accounts file cannot be read. An administrator can recover with: python3 review_users.py reset-admin <name>')}
+              : 'The accounts file cannot be read. An administrator can recover with: python3 -m dubtitlerr.review.review_users reset-admin <name>')}
         />
       {:else if view === 'glossary'}
         <Glossary {api} bind:dirty={glossaryDirty} role={account.role} />

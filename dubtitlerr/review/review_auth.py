@@ -136,7 +136,7 @@ class Unreadable(AuthError):
     status = 503
 
 
-_UNREADABLE = "accounts file unreadable; recover with: python3 review_users.py reset-admin <name>"
+_UNREADABLE = "accounts file unreadable; recover with: python3 -m dubtitlerr.review.review_users reset-admin <name>"
 
 
 def config_dir() -> str:
