@@ -23,11 +23,11 @@
 
 services:
   dubtitlerr:
-    # Beta status: pin a release tag (e.g. DUBTITLERR_TAG=v0.3.0 in .env)
-    # instead of :latest if you want reproducible version stamps.
-    image: ghcr.io/xenarathon/dubtitlerr:${DUBTITLERR_TAG:-latest}
-    # Only used by `docker compose up --build` / `docker compose build`;
-    # ignored when you pull the published image above.
+    # Built locally -- this fork publishes no image, so `docker compose up -d
+    # --build` is the normal path. Pin DUBTITLERR_TAG to a release tag if you
+    # want reproducible version stamps.
+    image: dubtitlerr:${DUBTITLERR_TAG:-latest}
+    # The full image (Whisper model baked in, review UI built).
     build:
       context: .
       dockerfile: Dockerfile.builder

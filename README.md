@@ -1,7 +1,7 @@
 # DubTitlerr
 
 [![Fork of XenaRathon/DubTitlerr](https://img.shields.io/badge/fork%20of-XenaRathon%2FDubTitlerr-informational)](https://github.com/XenaRathon/DubTitlerr)
-[![Upstream release](https://img.shields.io/github/v/release/XenaRathon/DubTitlerr?sort=semver&label=upstream%20release)](https://github.com/XenaRathon/DubTitlerr/releases/latest)
+[![Latest tag](https://img.shields.io/github/v/tag/SaxxyToo/DubTitlerr?sort=semver&label=latest%20tag)](https://github.com/SaxxyToo/DubTitlerr/tags)
 [![Lite image](https://img.shields.io/badge/lite%20image-936%20MB-2496ED?logo=docker&logoColor=white)](#images)
 [![License: GPL-3.0](https://img.shields.io/github/license/SaxxyToo/DubTitlerr)](LICENSE)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
@@ -64,7 +64,7 @@ flowchart LR
 Notes:
 
 - Audio is converted to a 32 kbps mono mp3 before upload. A 24-minute episode is ~46 MB as 16 kHz wav and ~5.5 MB as that mp3; OpenRouter rejects uploads over 25 MB.
-- The request asks for `verbose_json` with `timestamp_granularities[]=word`. An endpoint that returns only segment timestamps still works — each segment becomes one timed "word", which the reflow stage handles.
+- The request asks for `verbose_json` with both word and segment granularity. An endpoint that returns only segment timestamps still works — each segment becomes one timed "word", which the reflow stage handles. Ask for both, because `no_speech_prob` lives on segments alone.
 - The local model is never loaded in endpoint mode, and `faster_whisper` is an optional import, so the lite image can run the same code.
 - `lastrun.json` records `backend`, `model` and `url` instead of a decoder name, so a run's provenance says which endpoint produced it.
 
@@ -89,16 +89,20 @@ ASR_KEY_ENV=          # keyless; a key is never sent over plain http to another 
 
 Measured on an 892-episode library: local CPU int8 at beam 7 runs 3.2× realtime; llama-swap's `whisper-large-v3-turbo` on a current GPU runs ~11× realtime; OpenRouter `whisper-1` costs $0.006/min (~$0.14 per 24-minute episode).
 
+Which model to point the endpoint at, and what it costs you in accuracy or time, is measured in [Choosing an ASR model](docs/wiki/Choosing-an-ASR-Model.md) with the per-entrant numbers in [ASR bakeoff data](docs/wiki/ASR-bakeoff-data.md).
+
 ## Images
+
+Neither image is published; both are built from this repository.
 
 | Image | Size | Contains | Use |
 | --- | --- | --- | --- |
-| `ghcr.io/xenarathon/dubtitlerr:v0.3.0` | ~13.1 GB | Full upstream release: Whisper model, torch, ctranslate2 | `ASR_BACKEND=local`, GPU or CPU |
-| `dubtitlerr:lite` | 936 MB | `python:3.11-slim` + ffmpeg, mkvtoolnix, wamerican, tzdata, pysubs2, jellyfish + the review UI + this fork's scripts | `ASR_BACKEND=endpoint` |
+| `dubtitlerr` (`Dockerfile.builder`) | ~13 GB | Whisper model baked in, torch, ctranslate2, the review UI | `ASR_BACKEND=local` |
+| `dubtitlerr:lite` (`Dockerfile.lite`) | 936 MB | `python:3.11-slim` + ffmpeg, mkvtoolnix, wamerican, tzdata, pysubs2, jellyfish + the review UI + the pipeline scripts | `ASR_BACKEND=endpoint` |
 
 ```sh
-# full image (upstream), local ASR
-docker compose up -d
+# full image, local ASR
+docker compose up -d --build
 
 # lite image, endpoint ASR
 docker build -f Dockerfile.lite -t dubtitlerr:lite .
@@ -110,6 +114,8 @@ docker run -d --name dubtitlerr --network host \
   -e OUTPUT_MODE=sidecar -e SIDECAR_SUFFIX=.dub.en \
   dubtitlerr:lite
 ```
+
+`Dockerfile.fork` is a thin overlay for exercising a change on a host that already has a release image: it adds this fork's pipeline scripts without rebuilding the model or the UI.
 
 Both images need `mkvtoolnix` — the merge stage shells out to `mkvmerge` to read the video's subtitle streams and attachments. A lite build without it fails at the first merge pass with `FATAL: mkvmerge not found — image is misbuilt`.
 
@@ -124,21 +130,32 @@ The two images install the same runtime packages, serve the same review UI and s
 ## Quickstart
 
 ```sh
-curl -LO https://raw.githubusercontent.com/SaxxyToo/DubTitlerr/main/compose.yaml
-curl -L -o .env https://raw.githubusercontent.com/SaxxyToo/DubTitlerr/main/.env.example
-# edit .env: MEDIA_ROOT, ANIME_ROOT, and pin DUBTITLERR_TAG=v0.3.0
-docker compose up -d
+git clone https://github.com/SaxxyToo/DubTitlerr && cd DubTitlerr
+cp .env.example .env
+# edit .env: MEDIA_ROOT and ANIME_ROOT
+docker compose up -d --build
 ```
 
-Then open `http://<host>:8842/review/setup` to create the admin account. `compose.yaml` and `.env.example` carry the full variable set, and `AGENTS.md` carries the rules for changing the code.
+Then open `http://<host>:8842/review/setup` to create the admin account. `compose.yaml` and `.env.example` carry the full variable set; [Reference](docs/wiki/Reference.md) explains each one, and [Your first show](docs/wiki/Your-First-Show.md) is the end-to-end walkthrough.
 
+## Documentation
+
+| Page | What is there |
+| --- | --- |
+| [Home](docs/wiki/Home.md) | Start here: install path, per-episode pipeline, requirements. |
+| [Your first show](docs/wiki/Your-First-Show.md) | Full walkthrough: one season from model server to published track. |
+| [How-to guides](docs/wiki/How-To-Guides.md) | Recipes for one problem each (queue, repair backend, accounts, webhooks). |
+| [Reference](docs/wiki/Reference.md) | Every variable, glossary field, sidecar, stage outcome, and route. |
+| [Why it works this way](docs/wiki/Why-It-Works-This-Way.md) | The reasoning behind the guards, queues, and defaults. |
+| [Choosing an ASR model](docs/wiki/Choosing-an-ASR-Model.md) | What to transcribe with, local or over an endpoint. |
+| [ASR bakeoff data](docs/wiki/ASR-bakeoff-data.md) | The measurements behind those defaults, per entrant and per card. |
+| [Design decisions](docs/wiki/Design-decisions.md) | The two decisions that are expensive to rediscover. |
+| [Agent notes](AGENTS.md) | The rules for changing the code. |
 
 ## Status
 
-Beta upstream; the endpoint backend and lite image are newer than the rest and have been run on a full library pass, not just unit tests. Version stamps may be invalidated without notice during the beta, so pin your image tag instead of `:latest`.
+Beta. The endpoint backend, the lite image and sidecar delivery are newer than the rest of the pipeline and have been run on a full library pass, not just unit tests. The version stamps are real — a change that raises one re-processes affected episodes — so pin a tag rather than tracking `main`.
 
 ## License
 
 GPL-3.0; see [LICENSE](LICENSE).
-
-

@@ -246,13 +246,13 @@ def test_the_nsp_gated_rules_are_not_reintroduced():
     relaxation destroys more real dialogue than it saves (precision peaks near 20%).
 
     If this test fails, someone re-added a rule on the intuition that an unreachable
-    threshold is a bug. Read the 2026-08-24 nsp-rule deletion record before changing it: the precision ceiling
+    threshold is a bug. Read docs/wiki/Design-decisions.md before changing it: the precision ceiling
     is the thing to beat, not the threshold."""
     import hallucination as h
 
-    assert not hasattr(h, "NSP_DROP"), "the music rule was re-added; see the 2026-08-24 deletion record"
-    assert not hasattr(h, "LP_DROP"), "the music rule was re-added; see the 2026-08-24 deletion record"
-    assert not hasattr(h, "NSP_FLAG"), "maybe_silence was re-added; see the 2026-08-24 deletion record"
+    assert not hasattr(h, "NSP_DROP"), "the music rule was re-added; see docs/wiki/Design-decisions.md"
+    assert not hasattr(h, "LP_DROP"), "the music rule was re-added; see docs/wiki/Design-decisions.md"
+    assert not hasattr(h, "NSP_FLAG"), "maybe_silence was re-added; see docs/wiki/Design-decisions.md"
 
 
 def test_drop_reason_no_longer_reads_no_speech_prob():

@@ -26,8 +26,8 @@ def test_no_shipped_source_file_defaults_to_a_private_address():
     that was DEAD, so the documented default could not have worked for anybody, including the
     maintainer.
 
-    Scoped to code and shell: recorded measurements may name real hosts, but a shipped default
-    has to work for anyone who installs this."""
+    Scoped to code and shell, not docs: `docs/` records measurements taken on real hosts and
+    naming them there is what makes those records reproducible."""
     offenders = {}
     for path in _tracked("*.py", "*.sh", "Dockerfile*"):
         if path.startswith("tests/"):
@@ -58,6 +58,17 @@ def test_no_shipped_source_file_defaults_to_an_mdns_hostname():
                 if MDNS.search(line):
                     offenders.setdefault(path, []).append(n)
     assert not offenders, f"mDNS hostnames in shipped source: {offenders}"
+
+
+def test_the_wiki_discloses_when_repair_unanchored_was_deployed():
+    """The wiki used to say 'do not use REPAIR_UNANCHORED' / 'unset -- closed' while the
+    reference install had quietly turned it on months earlier (common.py's v10 note,
+    2026-09-06) -- exactly the silent-drift failure this suite exists to catch, just in
+    prose instead of code."""
+    for path in _tracked("docs/wiki/How-To-Guides.md", "docs/wiki/Reference.md"):
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        assert "2026-09-06" in text, f"{path} does not disclose the REPAIR_UNANCHORED deploy date"
 
 
 def test_repair_backend_secondary_is_retired_not_referenced_outside_history():

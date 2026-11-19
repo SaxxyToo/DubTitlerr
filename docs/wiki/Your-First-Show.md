@@ -1,0 +1,235 @@
+# Your first show
+
+A lesson. Follow it start to finish on **one season of one show** and you will end with a
+video file that plays a dubtitle track. Everything is deliberately narrow — one show, one
+season, defaults everywhere — so that when something goes wrong you know where it was.
+
+Budget about **20 minutes of your attention** and a few hours of the machine's. A 24-minute
+episode takes roughly 5–15 minutes to transcribe depending on your card.
+
+> This is a beta. It has been validated end to end on One Pace, Sword Art Online and Digimon.
+> Other shows work, and are also where the bugs are. See
+> [Why it works this way](Why-It-Works-This-Way.md#why-validation-names-three-shows).
+
+---
+
+## Before you start
+
+You need:
+
+1. **Either an NVIDIA card with CUDA, or nothing at all.** 6 GB is enough if the language model
+   lives elsewhere; see
+   [How-to guides](How-To-Guides.md#choose-a-quantisation-for-your-card). With
+   `ASR_BACKEND=endpoint` the transcription happens on a server you point at instead, and the host
+   needs no GPU — this lesson works either way.
+2. **Docker.** For the GPU path the NVIDIA container runtime must work. Check it:
+   ```sh
+   docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+   ```
+   If that prints your card, you are ready.
+3. **A show with an English dub**, in a folder named like `Show Name (Year)` containing
+   `Season 01/` and files tagged `S01E01`.
+4. **A place to run a small language model.** The repair stage needs one. Step 1 sets it up. To use a
+   hosted API instead, follow [Repair with a hosted model](How-To-Guides.md#repair-with-a-hosted-model)
+   in place of Step 1.
+
+Use it on media you own, for personal viewing. The pipeline transcribes dub audio and merges signs and song typography from files you already have. It does not fetch, host, or distribute video, audio, or subtitles for anyone else.
+
+---
+
+## Step 1 — Serve the repair model
+
+The pipeline calls an **OpenAI-compatible chat-completions endpoint**. Anything that speaks
+that protocol works; the validated setup is [llama.cpp](https://github.com/ggml-org/llama.cpp)
+serving a GGUF.
+
+The default model is **`qwen3-4b-instruct`**. Pick a quantisation that fits the VRAM you
+have left after Whisper — see [How-to guides](How-To-Guides.md#choose-a-quantisation-for-your-card).
+
+```sh
+llama-server \
+  -m /path/to/qwen3-4b-instruct-Q6_K.gguf \
+  -c 16384 --jinja \
+  --host 0.0.0.0 --port 8090 \
+  --alias qwen3-4b-instruct
+```
+
+`Q6_K` is what this project runs. There is no `--chat-template-kwargs
+'{"enable_thinking":false}'` here: that flag exists to stop a _thinking_ model emitting
+`<think>` blocks, and `qwen3-4b-instruct` has no thinking mode to disable. Verified
+2026-09-02 — the instruct model returns clean completions without it. If you swap in
+`qwen3-4b` or `qwen3.5-*`, which do think, add the flag back.
+
+> **`--jinja` is required.** Without it, `chat_template_kwargs` is silently ignored — the
+> server starts, reports healthy, and a thinking-capable model spends its whole token budget
+> on reasoning and returns an **empty reply**, which the pipeline treats as "no repair" and
+> tells you nothing. Measured (`repair.py`'s `llm_llamacpp`): empty after 114s at
+> `max_tokens=512` with thinking on; correct output in 4.3s with it off.
+>
+> `--chat-template-kwargs '{"enable_thinking":false}'` is what turns thinking off, and it
+> only takes effect with `--jinja` — the flag applies the model's own chat template, which is
+> where `enable_thinking` is read.
+
+**Check it is really ready.** A freshly started server answers `/health` with `200` while it
+is still loading weights, then fails the first real request. Ask it something instead:
+
+```sh
+curl -s http://127.0.0.1:8090/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-4b-instruct","messages":[{"role":"user","content":"hi"}],"max_tokens":4}'
+```
+
+When that returns JSON with a message in it, the model is loaded.
+
+---
+
+## Step 2 — Make a config directory
+
+```sh
+mkdir -p ~/dubtitlerr/{glossaries,decisions,wiki_cache}
+```
+
+Tell it which show to do. One line, exactly matching the folder name:
+
+```sh
+echo 'Show Name (Year)' > ~/dubtitlerr/anime_order.txt
+```
+
+Nothing else goes in this file yet. One show is the whole point of this lesson.
+
+---
+
+## Step 3 — Start the container
+
+Clone this repository (`git clone https://github.com/SaxxyToo/DubTitlerr && cd DubTitlerr`) and
+save this beside the Dockerfiles as `compose.yaml`, so `build: .` finds them:
+
+```yaml
+services:
+  dubtitlerr:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8842:8842"
+    environment:
+      # --- where things are ---
+      ANIME_ROOT: /media/Anime Library
+      MERGE_ROOTS: /media/Anime Library
+      MUX_ROOTS: /media/Anime Library
+      ANIME_ORDER: /config/anime_order.txt
+      GLOSSARY_DIR: /config/glossaries
+      DECISIONS_DIR: /config/decisions
+      WIKI_CACHE_DIR: /config/wiki_cache
+
+      # --- transcription ---
+      WHISPER_MODEL: large-v3-turbo
+      COMPUTE_TYPE: int8
+      REQUIRE_ENG: "1"
+
+      # --- repair model, from step 1 ---
+      REPAIR_BACKEND: llamacpp
+      REPAIR_MODEL: qwen3-4b-instruct
+      REPAIR_LLAMACPP_URL: http://host.docker.internal:8090/v1/chat/completions
+
+      # --- ownership of what it writes ---
+      MEDIA_UID: "1000"
+      MEDIA_GID: "100"
+    volumes:
+      - /path/to/your/media:/media
+      - ~/dubtitlerr:/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+Change the two `volumes` lines and `ANIME_ROOT` to match your library. Then:
+
+```sh
+docker compose up -d
+docker compose logs -f
+```
+
+`docker compose up -d` builds `Dockerfile.builder` from the tree you cloned. For the endpoint-only
+image, build `Dockerfile.lite` instead (`docker build -f Dockerfile.lite -t dubtitlerr:lite .`).
+
+**`ANIME_ROOT` and `MERGE_ROOTS` have different built-in defaults**, which is why the
+compose file sets all three roots explicitly. Do not remove them.
+
+---
+
+## Step 4 — Watch the first episode go through
+
+In the log you will see, in order:
+
+1. **Mining** — proper nouns pulled out of the episode's existing subtitle track, building
+   `~/dubtitlerr/glossaries/Show Name (Year).json`.
+2. **Verification** — those names checked against the show's Fandom wiki.
+3. **Transcription** — Whisper on the English dub audio. This is the slow part.
+4. **Repair** — the low-confidence and name-suspect lines sent to your model.
+5. **Merge and mux** — signs and songs folded in, then written into the MKV as a default
+   track named _Dubtitles_.
+
+Then open the episode in your player. There is a subtitle track called **Dubtitles**. Play a
+scene with dialogue.
+
+**That is the lesson's goal, reached.** Everything below makes it better.
+
+---
+
+## Step 5: Look at what the repair stage was unsure about
+
+Open **http://localhost:8842**.
+
+On your first visit, the server opens the setup wizard at `/review/setup`. Create your administrator username and password here. You only need to do this once.
+
+If you provided `REVIEW_USERNAME` and `REVIEW_PASSWORD` in your Compose environment, the setup page is skipped and you can sign in directly.
+
+After signing in, open your episode in the review workspace. You are looking at only the lines the pipeline was unsure about, not the whole episode. Each row shows what was transcribed, what the repair model proposed, and the lines either side for context.
+
+For each one, choose:
+
+- **accept**: the proposal is right
+- **reject**: keep the original
+- **correct**: neither is right; type what the dub actually says
+- **force**: admit a repair the mechanical gate refused
+
+Then press **Save**.
+
+---
+
+## Step 6 — Put your verdicts into the video
+
+Saving is not enough. Saving records your judgement and changes what the _next_ repair run
+ships. The video on disk has not changed.
+
+Press **Apply decisions to this episode**.
+
+That rewrites the subtitle, drops the completion stamp, and lets the merge loop re-mux the
+file. Wait for the next merge pass (default: every 10 minutes), then reopen the episode.
+
+Your corrections are in the track.
+
+---
+
+## What you have learned
+
+- The pipeline transcribes the **dub audio**, never the existing subtitle track.
+- Glossaries are built for you and live in `/config`, editable by hand.
+- The review page shows **uncertain lines only**, and a verdict there applies to that line
+  everywhere in the show.
+- **Saving a verdict and changing the video are two separate actions.**
+
+## Where to go next
+
+- Your copies have no English subtitles for the Japanese audio? →
+  [Turn on unanchored repair](How-To-Guides.md#turn-on-unanchored-repair-for-a-dub-only-show)
+- Want the whole library, in watch order? →
+  [Queue a library](How-To-Guides.md#queue-a-whole-library-in-watch-order)
+- Something looks wrong and you want to know whether it is meant to →
+  [Why it works this way](Why-It-Works-This-Way.md)

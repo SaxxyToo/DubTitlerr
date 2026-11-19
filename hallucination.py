@@ -24,7 +24,7 @@ import reflow
 # logprob below -2.0. The conjunction does not occur in this material, so no model change
 # revives it, and every reachable relaxation destroys more real dialogue than it saves.
 # The full measurement -- including the precision table that forced the 2026-08-21 revert
-# -- is in the repository history (the 2026-08-24 deletion commit).
+# -- is preserved in docs/wiki/Design-decisions.md.
 # Do not re-add either rule from intuition: the ~20% precision ceiling is the thing to
 # beat, not the threshold.
 # FLAG thresholds (a single weaker signal -> keep but mark suspect)

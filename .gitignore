@@ -43,6 +43,10 @@ skills/
 # skill-tooling lockfile scaffold, regenerated locally, not a project artifact
 skills-lock.json
 
+# ASR bakeoff: a raw harness report carries full transcripts of commercial dubs.
+# Only the stripped, metrics-only reports belong in the tree (docs/asr-bakeoff/README.md).
+docs/asr-bakeoff/*-report.json
+
 # Maintainer complexity-baseline snapshot: regenerated per run, host-local,
 # never a project artifact.
 .craftsman-baseline.json
