@@ -26,8 +26,8 @@ def test_no_shipped_source_file_defaults_to_a_private_address():
     that was DEAD, so the documented default could not have worked for anybody, including the
     maintainer.
 
-    Scoped to code and shell, not docs: `docs/` records measurements taken on real hosts and
-    naming them there is what makes those records reproducible."""
+    Scoped to code and shell: recorded measurements may name real hosts, but a shipped default
+    has to work for anyone who installs this."""
     offenders = {}
     for path in _tracked("*.py", "*.sh", "Dockerfile*"):
         if path.startswith("tests/"):
@@ -60,24 +60,11 @@ def test_no_shipped_source_file_defaults_to_an_mdns_hostname():
     assert not offenders, f"mDNS hostnames in shipped source: {offenders}"
 
 
-def test_the_wiki_discloses_when_repair_unanchored_was_deployed():
-    """The wiki used to say 'do not use REPAIR_UNANCHORED' / 'unset -- closed' while the
-    reference install had quietly turned it on months earlier (common.py's v10 note,
-    2026-09-06) -- exactly the silent-drift failure this suite exists to catch, just in
-    prose instead of code."""
-    for path in _tracked("docs/wiki/How-To-Guides.md", "docs/wiki/Reference.md"):
-        with open(path, encoding="utf-8") as f:
-            text = f.read()
-        assert "2026-09-06" in text, f"{path} does not disclose the REPAIR_UNANCHORED deploy date"
-
-
 def test_repair_backend_secondary_is_retired_not_referenced_outside_history():
     """REPAIR_BACKEND_SECONDARY was proposed, never implemented, and retired 2026-09-22 (S-13 of
     the v0.2.0 hardening pass). A name that keeps reappearing in ACTIVE docs after retirement is
-    exactly the kind of drift the retired review notes used to carry themselves.
-
-    CHANGELOG.md is the one allowed home: it is history, and history is allowed to name it."""
-    allowed_prefixes = ("CHANGELOG.md",)
+    exactly the kind of drift the retired review notes used to carry themselves."""
+    allowed_prefixes = ()
     offenders = []
     for path in _tracked("*.md"):
         if any(path.startswith(p) for p in allowed_prefixes):

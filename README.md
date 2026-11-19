@@ -130,33 +130,15 @@ curl -L -o .env https://raw.githubusercontent.com/SaxxyToo/DubTitlerr/main/.env.
 docker compose up -d
 ```
 
-Then open `http://<host>:8842/review/setup` to create the admin account. The full setup, from model server to your first muxed show, is in [Your first show](docs/wiki/Your-First-Show.md).
-
-## Documentation
-
-| Page | What is there |
-| --- | --- |
-| [Home](docs/wiki/Home.md) | Start here: install path, per-episode pipeline, requirements. |
-| [Your first show](docs/wiki/Your-First-Show.md) | Full walkthrough: one season from model server to muxed track. |
-| [How-to guides](docs/wiki/How-To-Guides.md) | Recipes for one problem each (queue, repair backend, accounts, webhooks). |
-| [Reference](docs/wiki/Reference.md) | Every variable, glossary field, sidecar, stage outcome, and route. |
-| [Why it works this way](docs/wiki/Why-It-Works-This-Way.md) | The reasoning behind the guards, queues, and defaults. |
-| [Choosing an ASR model](docs/wiki/Choosing-an-ASR-Model.md) | Measured evidence behind the transcription defaults. |
-| [Agent guide](docs/AGENT-GUIDE.md) | Setup, troubleshooting, and contributing in agent-actionable form. |
+Then open `http://<host>:8842/review/setup` to create the admin account. `compose.yaml` and `.env.example` carry the full variable set, and `AGENTS.md` carries the rules for changing the code.
 
 
 ## Status
 
 Beta upstream; the endpoint backend and lite image are newer than the rest and have been run on a full library pass, not just unit tests. Version stamps may be invalidated without notice during the beta, so pin your image tag instead of `:latest`.
 
-## Roadmap
-
-Planned work lives with the wiki: see the [roadmap](docs/wiki/Home.md#roadmap).
-
 ## License
 
 GPL-3.0; see [LICENSE](LICENSE).
 
-## A note on how this was built
 
-Upstream is 100% vibe-coded slop: Claude driving, but with specs, epics and stories, adversarial reviews and real test coverage behind it. I'm sharing it because it fills a gap I couldn't find a solution for, and because dub-matched subtitles are an accessibility tool — not a replacement for human-transcribed SDH, which will always be better, but for when they don't exist.

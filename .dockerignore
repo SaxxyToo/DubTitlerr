@@ -15,4 +15,3 @@ web/playwright-report
 
 # lite image build context
 tests/
-docs/

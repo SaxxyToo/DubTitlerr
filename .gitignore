@@ -32,9 +32,8 @@ glossaries/*.lastrun.json
 *.journal.jsonl.lock
 *.journal.jsonl.*.tmp
 
-# procoder per-project state (config, backlog, specs, plans, todo, index, session) and the
-# skills/procoder mirror it generates are tool working state, not project content, and are not
-# tracked. The tool regenerates both locally.
+# Maintainer tooling state (per-project config, backlog, generated mirrors, local lockfiles)
+# is working state, not project content. Regenerated locally; never tracked.
 .procoder/
 skills/
 
@@ -44,11 +43,7 @@ skills/
 # skill-tooling lockfile scaffold, regenerated locally, not a project artifact
 skills-lock.json
 
-# ASR bakeoff: raw harness output carries full transcripts of commercial dubs.
-# Only the stripped, metrics-only reports belong in the tree (docs/asr-bakeoff/README.md).
-docs/asr-bakeoff/*-report.json
-
-# procoder maintainer complexity-baseline snapshot: regenerated per run, host-local,
+# Maintainer complexity-baseline snapshot: regenerated per run, host-local,
 # never a project artifact.
 .craftsman-baseline.json
 

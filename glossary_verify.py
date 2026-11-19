@@ -744,7 +744,7 @@ def apply_results(gloss: dict, results: dict) -> dict:
         conf = adj["confidence"]
         # NOTE (Sol F13, kept on purpose): a high-confidence answer that AFFIRMS the term (canon == term) takes neither branch
         # below, so an earlier flag for it (copied from `flagged` above) stays in the review queue. Clearing it would let a fresh
-        # model answer erase evidence another stage or an earlier run put there; see the CHANGELOG note.
+        # model answer erase evidence another stage or an earlier run put there.
         if conf == "high" and canon and canon != term:
             # Imported at call time, NOT at module scope: glossary_acquire imports this
             # module, so a top-level import is a hard cycle (ImportError on the

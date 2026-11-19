@@ -168,8 +168,6 @@ CONFIG_ROOT^general^string^"./dubtitlerr-config"^container^restart^bootstrap^Con
 SUBS_REPO^general^string^""^container^restart^bootstrap^Subtitle repo^Publish tool: local clone of the subtitle repository.
 GITHUB_PAT^general^secret^^container^restart^bootstrap^GitHub token^Publish tool credential.
 GITHUB_USER^general^string^"x-access-token"^container^restart^bootstrap^GitHub user^Publish tool user name.
-GITHUB_WIKI^general^url^""^container^restart^bootstrap^GitHub wiki^Publish tool wiki remote; tokens belong in a secret field.
-FORGEJO_WIKI^general^url^""^container^restart^bootstrap^Forgejo wiki^Publish tool wiki remote; tokens belong in a secret field.
 PUBLISH_APPLY^general^bool^false^container^restart^bootstrap^Publish for real^Publish tool: push instead of a dry run.
 SHOWS^general^string^""^container^restart^bootstrap^Publish shows^Publish tool: shows to publish.
 DECISIONS_DIR^general^string^"/config/decisions"^merge,server^next_merge_pass^-^Decisions folder^Where review verdicts are stored.

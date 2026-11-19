@@ -173,7 +173,7 @@ TRACK_NAME = "Dubtitles"
 # a state worth keeping -- hence a bump rather than a targeted stamp deletion.
 # v5 (2026-08-24): the single version becomes TWO, because one number made a glossary
 # fix cost the same as a decoder change -- a full re-transcribe of the library. See
-# docs/adr/0001-idempotency-is-keyed-on-two-tiers-not-one-version.md.
+# the repository history (2026-08-24) for the decision record.
 # v6 (2026-08-26): repair.py gained the phonetic name guard -- it rejects an LLM repair
 # that substitutes a proper noun found in neither the glossary nor the original
 # (Syrahose -> Shyarros, Hirohoshi -> Hihohi). Text produced before it can carry names

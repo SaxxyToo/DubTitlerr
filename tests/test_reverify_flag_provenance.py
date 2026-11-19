@@ -1,6 +1,6 @@
 """Phase 29 F13 (a note, not a fix): a successful re-verify that affirms the term leaves an earlier verify-owned correction
 proposal in the review queue. Sol's self-rebuttal downgraded this: clearing every flag after a model answer could delete another
-stage's evidence, so the behaviour is kept and pinned here, and documented in the CHANGELOG. Changing it is a policy decision."""
+stage's evidence, so the behaviour is kept and pinned here. Changing it is a policy decision."""
 
 import glossary_acquire as ga
 import glossary_verify as gv
