@@ -438,6 +438,8 @@ the id settles it.
 
 Every environment variable the pipeline reads has a row under **Settings** in the web UI, in nine categories: General, Library, Transcription, Glossary, Repair, Connections, Output, Schedule and Connect. `#/settings` shows one card per category. `#/settings/<category>` shows the rows of that category.
 
+**Connect** carries more than rows. Besides `PLEX_URL`, `PLEX_TOKEN`, `PLEX_SECTION`, `WATCHSTATE_URL`, `WATCHSTATE_API_KEY`, `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER`, `PLEX_PATH` and the webhook access rows, it holds the **Notifications** panel. Notification providers are a user-defined list stored beside Connections and have no environment variable; see [Notifications](#notifications).
+
 The first-wave rows are editable. Every other row shows its value and why it cannot be changed here: "Set in the container environment" for the values the container fixes, "Set through a Connection", "Retired: no longer read", or "edit in a later release". For a signed-in user who is not an admin, the rows that would be editable are read-only and say "Only an admin can change settings". **Show Advanced** in the toolbar reveals the rows that rarely change. The bootstrap values always list, under General.
 
 Where a value comes from, in order: what you saved in the UI (**Set here**), else the container's environment (**From the container**), else the built-in default (**Default**). A saved value that hides an environment value reads "Overrides the container value". Resetting a row removes your saved value, so the container value or the default applies again.
@@ -463,9 +465,68 @@ Rules a saved Connection obeys:
 - The decision stage accepts only the hosts the decision client calls: openrouter.ai, api.commandcode.ai, or loopback.
 - **Test** asks the server to probe a saved Connection with its own timeouts.
 
-Secrets (the Plex token, the WatchState key, the webhook token and Connection keys) are entered only by a signed-in admin. Until login is enabled the page shows "available after login is enabled" and a plain set or not set.
+Secrets (the Plex token, the WatchState and Jellyfin keys, the webhook token, Connection keys and notification credentials) are entered only by a signed-in admin. Until login is enabled the page shows "available after login is enabled" and a plain set or not set.
 
 The first start after the upgrade imports the keys an existing `runtime.env` carried: `REPAIR_MODEL`, `VERIFY_BACKEND`, `VERIFY_DECISION_MODEL`, `REQUIRE_ENG` and `ACQUIRE_APPLY`. A `REPAIR_PROFILE` choice becomes the repair stage. The old `RUNTIME_VERIFY_BACKENDS` and `RUNTIME_DECISION_MODELS` opt-in filter still applies to what is imported. The file is renamed `runtime.env.migrated`, or an empty one is written so the import runs once. Under its own `profiles.migrated` marker, each `REPAIR_PROFILES` entry becomes a Connection. `REPAIR_PROFILES`, `RUNTIME_VERIFY_BACKENDS` and `RUNTIME_DECISION_MODELS` are retired: nothing reads them after that, and General lists them while they are still set.
+
+### Notifications
+
+The **Notifications** panel under Settings > Connect (`#/settings/connect`) is a list of outbound providers. Each one is a destination: a name, a kind, a `triggers` list, and that kind's fields. An admin saves the list and runs Test; a signed-in non-admin sees the providers read-only. Resetting the Connect category clears the list.
+
+Providers live in `$CONFIG_DIR/settings.json` under `notifications` (visible fields) and `$CONFIG_DIR/secrets.json` under `notifications.<name>` (the write-only parts, mode 0600). `dubtitlerr/core/notify.py` reads exactly those keys, so the panel and the sender cannot disagree about the file layout. There is no environment variable and no config file of its own: an install with no providers is a silent no-op.
+
+**Kinds and fields.**
+
+| Kind      | Visible fields     | Write-only secret | Sends |
+| --------- | ------------------ | ----------------- | ----- |
+| `discord` | _(none)_           | `url` (webhook)   | `POST {"content": summary}` to the webhook URL |
+| `ntfy`    | `server`, `topic`  | `token` (optional)| `POST server/topic` with the summary as the body, `Title: <event>`, `Priority: 5` on `pass.failed` and `default` otherwise, `Authorization: Bearer <token>` when a token is set |
+| `webhook` | _(none)_           | `url`             | `POST` the JSON envelope (below) verbatim |
+
+| Field      | Applies to     | Rule |
+| ---------- | -------------- | ---- |
+| `name`     | all            | letters, digits, `.`, `_`, `-`; up to 64 characters; unique |
+| `kind`     | all            | `discord`, `ntfy` or `webhook` |
+| `enabled`  | all            | `false` stores the provider and never sends to it |
+| `triggers` | all            | a list of event names from the table below; empty means nothing is sent |
+| `server`   | `ntfy`         | required; an http(s) URL passing the guards below |
+| `topic`    | `ntfy`         | required; letters, digits, `_`, `-`; up to 64 characters |
+| `url`      | `discord`, `webhook` | required; http(s), one line, 1 to 512 characters, passing the guards below |
+| `token`    | `ntfy`         | optional; one line without spaces or control characters, 1 to 512 characters |
+
+The webhook envelope is `{"event", "at", "host", "loop", "summary", "counts", "detail"}`. It has no `version` field: the repo exposes no runtime application version, so inventing one would give a consumer nothing it could check.
+
+**Triggers.**
+
+| Event               | Sent when | Carries |
+| ------------------- | --------- | ------- |
+| `run.requested`     | a run request is created from the web UI or the API (in-process, by the review server) | summary naming the show |
+| `sweep.completed`   | a generation sweep ends | `shows`, `failed`, `review_pending` |
+| `merge.completed`   | a merge pass ends | `delivered`, `failed`, `total_done` |
+| `pass.failed`       | a loop or stage failure fence: a stalled generate pass, a merge pass that cannot start (missing `ffmpeg`, `mkvmerge`, `pysubs2` or library root), or the generate loop exiting | `detail`: `{"stage", "reason"}` |
+| `review.pending`    | a generation sweep ends with unresolved review items (count > 0) | `pending` |
+| `episode.delivered` | a merge pass delivers an episode. Off by default in the panel, because it is one message per episode | `detail`: `{"mode": "mux"}` or `"sidecar"` |
+
+A provider receives only the events its `triggers` list names. For `episode.delivered` the merge pass asks once per pass whether any enabled provider subscribes (`python3 -m dubtitlerr.core.notify subscribed`), so an unsubscribed install pays no per-episode subprocess.
+
+**Delivery semantics.**
+
+- One request per provider per event, with a single 10-second timeout: urllib exposes one timeout covering connect and reads, so connect cannot be bounded separately from reads.
+- A timeout, a network error or a 5xx retries **once**. A 4xx does not retry.
+- Delivery never raises and never fails or stalls a run: the loops call it with `|| true`, the review server calls it in-process around a request that is already written, and the CLI exits 0 even when every delivery failed. A failure is one log line naming the provider, the event and the outcome.
+- **Secrets never reach a log.** No message contains a webhook URL, a token, or the exception text; the log records only the outcome (`ok`, `HTTP <status>`, `timeout`, `network error`).
+- URL safety mirrors Connections: http(s) only, no user name or password in the URL, and a refusal for link-local (`169.254.0.0/16`, `fe80::/10`) and cloud metadata addresses however they are spelled. Loopback and LAN hosts are allowed. A redirect is followed only into the same safe URL space.
+- An unusable `settings.json` or `secrets.json`, an unknown kind, or a missing secret is logged and skipped; nothing else in the pipeline changes.
+
+**Test button.** Save the provider first, then click Test. The page enables the button only when the provider exists on the server and its kind, server and topic match what is stored, with no unsaved secret typed into the row — Test exercises the saved configuration, not a draft. The page calls `POST /api/settings/test` with `{"notification": "<name>"}` (admin), which reaches the same code path as the CLI and sends a `notification.test` event to that provider regardless of `enabled` or its triggers. Discord and webhook providers hold their URL as a write-only secret, so the URL must be entered and saved before the button can work.
+
+The same sender is available without the UI:
+
+```sh
+python3 -m dubtitlerr.core.notify test  --name <provider>
+python3 -m dubtitlerr.core.notify send  --event sweep.completed --summary "..." --counts '{"shows": 12}'
+python3 -m dubtitlerr.core.notify subscribed --event episode.delivered   # exit 0 when some provider subscribes
+```
 
 ---
 
@@ -638,6 +699,50 @@ Access is controlled by `ROUTE_ROLES`. Every route requires a specific role: `pu
 | POST   | `/api/users`              | `admin`   | Create a new user account                                                |
 | PUT    | `/api/users/*`            | `admin`   | Update a user's role or password                                         |
 | DELETE | `/api/users/*`            | `admin`   | Delete a user account                                                    |
+| GET    | `/api/v1/system/status`   | `user`    | Version, uptime, loop state, queue depth, library cache and health       |
+| GET    | `/api/v1/health`          | `user`    | The `/healthz` check with a JSON body                                    |
+| GET    | `/api/v1/queue`           | `user`    | Queued and running run requests, with counts                             |
+| GET    | `/api/v1/history`         | `user`    | Recent deliveries and stage outcomes, paged                              |
+| GET    | `/api/v1/library`         | `user`    | Shows in the library                                                     |
+| POST   | `/api/v1/command`         | `admin`   | `{"name", "params"}`: `run.request`, `system.restart`, `notification.test` |
+| GET    | `/api/v1/notifications`   | `user`    | List notification providers (secrets reported as set or not set)         |
+| POST   | `/api/v1/notifications`   | `admin`   | Create a notification provider                                           |
+| GET    | `/api/v1/notification/*`  | `user`    | Read one notification provider                                           |
+| PUT    | `/api/v1/notification/*`  | `admin`   | Update one notification provider                                         |
+| DELETE | `/api/v1/notification/*`  | `admin`   | Delete one notification provider                                         |
+| GET    | `/api/v1/settings`        | `user`    | Effective settings, read-only, secrets masked                            |
+| GET    | `/api/v1/apikey/info`     | `user`    | API key rotation state, never the key                                    |
+| GET    | `/api/v1/openapi.json`    | `user`    | The OpenAPI document for this surface                                    |
+
+### `/api/v1`: the external contract
+
+`/api/v1` is the **frozen, additive** contract for external consumers: agents, scripts and future
+tools. The classic `/api/*` routes above remain the web UI's backend and move with it; nothing in v1
+renames, moves or changes them. The two surfaces share one role table and one auth path.
+
+- **Roles.** Every v1 read requires `user`; every v1 write, including `POST /api/v1/command`,
+  requires `admin`. A v1 path the module does not serve still fails closed at the role table, so it
+  needs `admin` rather than falling open.
+- **Auth.** `X-Api-Key` is an admin credential throughout; a valid key also exempts a request from
+  the browser CSRF header, so an agent sends the key and a JSON body and nothing else.
+- **No stored secret is returned.** A notification reports its URL or token as `{"set": true}`;
+  `GET /api/v1/settings` reuses the masked Settings shape; `GET /api/v1/apikey/info` returns rotation
+  state only.
+- **Commands.** `run.request` takes the same body as `POST /api/requests` (`show` required;
+  `season`, `episode_re`, `require_eng`, `webhook`, `force` optional) and returns that route's status
+  code through the envelope `{"name", "ok", "result"}`, including the 409 for an identical pending
+  request. `system.restart` writes the soft-stop flag. `notification.test` needs
+  `params.name`.
+- **History paging.** `limit` defaults to 25 and must be 1 to 200; `offset` is 0 or more. A value out
+  of range is a 400 rather than a clamp. The first call after a library walk reads up to two small
+  sidecars per episode, capped at 5,000 episodes; past the cap the response carries
+  `truncated: true`.
+- **Deliberately absent:** removing a queued request, scoped or multiple API keys, config writes
+  beyond notifications, and an event stream.
+- **The spec.** The static `dubtitlerr/review/openapi.json` is served at `/api/v1/openapi.json`; each
+  operation carries `x-dubtitlerr-role`. `tests/test_review_api_v1_openapi.py` compares the spec with
+  the live role table and fails when a path or a role drifts, so the document is never a stale
+  description of the surface.
 
 ### Authentication and security
 

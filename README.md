@@ -16,13 +16,15 @@ DubTitlerr produces one track that carries the dub dialogue with the signs and s
 
 ## What this fork adds
 
-Upstream DubTitlerr bakes a Whisper model into a ~13 GB image, needs an NVIDIA GPU for transcription, and muxes the result into the video file. This fork keeps all of that working but adds three things:
+Upstream DubTitlerr bakes a Whisper model into a ~13 GB image, needs an NVIDIA GPU for transcription, and muxes the result into the video file. This fork keeps all of that working but adds these things:
 
 | Addition | Why | Where |
 | --- | --- | --- |
 | **Endpoint ASR backend** (`ASR_BACKEND=endpoint`) | Transcribe through any OpenAI-compatible `/audio/transcriptions` — OpenRouter, a llama-swap whisper, a Nous gateway — so a node needs no model, no torch, no GPU and no CUDA | `dubtitlerr/pipeline/generate.py` |
 | **Lite image** (`Dockerfile.lite`) | 936 MB instead of 13.1 GB. The full image's runtime packages and review UI, no model baked in | `Dockerfile.lite` |
 | **Sidecar delivery and adoption** (`OUTPUT_MODE=sidecar`, `ADOPT_DUB_EN=1`) | Publish `<episode>.dub.en.ass` beside the video instead of rewriting it, and run an existing sidecar from another pipeline through repair + signs merge | `merge_pass.sh`, `dubtitlerr/pipeline/mux.py`, `dubtitlerr/pipeline/publish_gate.py` |
+| **Outbound notifications** | Send Discord, ntfy or generic-webhook messages when a sweep or merge pass ends or fails, configured in Settings > Connect with a per-provider triggers list and Test button | `dubtitlerr/core/notify.py`, `web/src/pages/settings/NotificationsPanel.svelte` |
+| **Agent-facing `/api/v1`** | A versioned, additive REST surface with a served OpenAPI document, so an agent or script can read status, queue, history and library and issue `run.request` / `system.restart` / `notification.test` with `X-Api-Key` | `dubtitlerr/review/review_api_v1.py`, `dubtitlerr/review/openapi.json` |
 
 Everything downstream of transcription — reflow, glossary correction, LLM repair, hallucination gate, signs/songs merge, QC — is unchanged and runs identically on both backends.
 
@@ -144,13 +146,13 @@ Then open `http://<host>:8842/review/setup` to create the admin account. `compos
 | --- | --- |
 | [Home](docs/wiki/Home.md) | Start here: install path, per-episode pipeline, requirements. |
 | [Your first show](docs/wiki/Your-First-Show.md) | Full walkthrough: one season from model server to published track. |
-| [How-to guides](docs/wiki/How-To-Guides.md) | Recipes for one problem each (queue, repair backend, accounts, webhooks). |
-| [Reference](docs/wiki/Reference.md) | Every variable, glossary field, sidecar, stage outcome, and route. |
+| [How-to guides](docs/wiki/How-To-Guides.md) | Recipes for one problem each (queue, repair backend, accounts, webhooks, notifications, agent access). |
+| [Reference](docs/wiki/Reference.md) | Every variable, glossary field, sidecar, stage outcome, notification field, and route. |
 | [Why it works this way](docs/wiki/Why-It-Works-This-Way.md) | The reasoning behind the guards, queues, and defaults. |
 | [Choosing an ASR model](docs/wiki/Choosing-an-ASR-Model.md) | What to transcribe with, local or over an endpoint. |
 | [Choosing a repair model](docs/wiki/Choosing-a-repair-model.md) | What rewrites the doubtful lines, and why names decide it. |
 | [ASR bakeoff data](docs/wiki/ASR-bakeoff-data.md) | The measurements behind those defaults, per entrant and per card. |
-| [Design decisions](docs/wiki/Design-decisions.md) | The two decisions that are expensive to rediscover. |
+| [Design decisions](docs/wiki/Design-decisions.md) | The decisions that are expensive to rediscover. |
 | [Agent notes](AGENTS.md) | The rules for changing the code. |
 
 ## Status
