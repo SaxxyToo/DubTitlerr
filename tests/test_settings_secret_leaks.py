@@ -8,8 +8,7 @@ import sys
 
 import pytest
 
-from dubtitlerr.review import review_auth
-from dubtitlerr.review import review_requests
+from dubtitlerr.review import review_auth, review_requests
 from dubtitlerr.review import review_server as rs
 from dubtitlerr.settings import settings_api as api
 from dubtitlerr.settings import settings_store as store

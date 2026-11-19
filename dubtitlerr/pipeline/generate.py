@@ -58,12 +58,6 @@ except ImportError:  # pragma: no cover - endpoint-only deployments
     WhisperModel = None
 
 from dubtitlerr.core import common
-from dubtitlerr.glossary import glossary
-from dubtitlerr.pipeline import hallucination
-from dubtitlerr.pipeline import ordering
-from dubtitlerr.pipeline import punctuation
-from dubtitlerr.pipeline import qc
-from dubtitlerr.pipeline import reflow
 from dubtitlerr.core.common import (
     STAMP_SUFFIX,
     TRANSCRIBE_VERSION,
@@ -80,6 +74,8 @@ from dubtitlerr.core.common import (
     stamp_valid,
     ts_srt,
 )
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import hallucination, ordering, punctuation, qc, reflow
 
 EXTRA_DIRS = load_extras()  # data/extras.txt is the source (see common.load_extras)
 # V2 C1: where per-show run summaries (<show>.lastrun.json) live -- same GLOSSARY_DIR

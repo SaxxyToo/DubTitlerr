@@ -30,9 +30,14 @@ def _setup_app(tmp_path, include_exporter=True):
         shutil.copy(REPO / "dubtitlerr" / pkg / "__init__.py", app / "dubtitlerr" / pkg / "__init__.py")
     shutil.copy(REPO / "dubtitlerr" / "review" / "review_requests.py", app / "dubtitlerr" / "review" / "review_requests.py")
     if include_exporter and (REPO / "dubtitlerr" / "review" / "review_settings_write.py").exists():
-        shutil.copy(REPO / "dubtitlerr" / "review" / "review_settings_write.py", app / "dubtitlerr" / "review" / "review_settings_write.py")
+        shutil.copy(
+            REPO / "dubtitlerr" / "review" / "review_settings_write.py",
+            app / "dubtitlerr" / "review" / "review_settings_write.py",
+        )
         if (REPO / "dubtitlerr" / "glossary" / "glossary_lock.py").exists():
-            shutil.copy(REPO / "dubtitlerr" / "glossary" / "glossary_lock.py", app / "dubtitlerr" / "glossary" / "glossary_lock.py")
+            shutil.copy(
+                REPO / "dubtitlerr" / "glossary" / "glossary_lock.py", app / "dubtitlerr" / "glossary" / "glossary_lock.py"
+            )
         for pkg, module in (
             ("settings", "settings_registry.py"),
             ("settings", "settings_store.py"),
@@ -86,7 +91,9 @@ def _prep_env(tmp_path, order_text, stubs):
     def stub(stage, show_expr, extra=""):
         return header + f"open(LOG, 'a').write('{stage} ' + {show_expr} + '\\n')\n" + extra
 
-    (app / "dubtitlerr" / "glossary" / "mine_glossary.py").write_text(stub("mine", "os.path.basename(sys.argv[1])", stubs.get("mine", "")))
+    (app / "dubtitlerr" / "glossary" / "mine_glossary.py").write_text(
+        stub("mine", "os.path.basename(sys.argv[1])", stubs.get("mine", ""))
+    )
     (app / "dubtitlerr" / "glossary" / "glossary_acquire.py").write_text(
         stub(
             "acquire",
@@ -94,8 +101,12 @@ def _prep_env(tmp_path, order_text, stubs):
             stubs.get("acquire", ""),
         )
     )
-    (app / "dubtitlerr" / "glossary" / "glossary_verify.py").write_text(stub("verify", "os.path.basename(sys.argv[1])[:-5]", stubs.get("verify", "")))
-    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(REPORT_OK + stub("generate", "os.environ['SHOW_NAME']", stubs.get("generate", "")))
+    (app / "dubtitlerr" / "glossary" / "glossary_verify.py").write_text(
+        stub("verify", "os.path.basename(sys.argv[1])[:-5]", stubs.get("verify", ""))
+    )
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(
+        REPORT_OK + stub("generate", "os.environ['SHOW_NAME']", stubs.get("generate", ""))
+    )
     config_dir = tmp_path / "config"
     (config_dir / "requests").mkdir(parents=True)
     gloss = tmp_path / "glossaries"
@@ -127,7 +138,9 @@ def _write_request(requests_dir, show="Frieren", rid="20261012T100000Z-11111111"
 
 
 def _run_gen_loop(env):
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     return proc
 
@@ -197,7 +210,9 @@ def test_a_stop_already_set_when_a_request_is_claimed_requeues_it_instead_of_exi
     env, log_file, requests_dir = _prep_env(tmp_path, "Show1\n", {})
     app = Path(env["APP_DIR"])
     # Raise the stop flag the moment the request is claimed, i.e. after drain_requests' own head check.
-    (app / "dubtitlerr" / "review" / "review_requests_real.py").write_text((app / "dubtitlerr" / "review" / "review_requests.py").read_text())
+    (app / "dubtitlerr" / "review" / "review_requests_real.py").write_text(
+        (app / "dubtitlerr" / "review" / "review_requests.py").read_text()
+    )
     (app / "dubtitlerr" / "review" / "review_requests.py").write_text(
         "import os, pathlib, runpy, sys\n"
         "if sys.argv[1:2] == ['start']:\n"
@@ -314,7 +329,12 @@ def test_a_stored_value_and_secret_reach_the_next_show_and_a_change_applies_to_t
     rewrite = f"pathlib.Path(r'{config}/settings.json').write_text({newer!r})"
     _recording_generate(app, runs, config / "settings.json", rewrite)
     proc = subprocess.run(
-        ["sh", str(REPO / "gen_loop.sh")], env=_loop_env(tmp_path, app, config), cwd=str(app), capture_output=True, text=True, timeout=30
+        ["sh", str(REPO / "gen_loop.sh")],
+        cwd=str(app),
+        env=_loop_env(tmp_path, app, config),
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     got = _runs(runs)
@@ -338,7 +358,9 @@ def test_a_reset_gives_the_next_show_the_container_value_or_nothing(tmp_path):
         f"""pathlib.Path(r"{config}/settings.json").unlink(); pathlib.Path(r"{config}/secrets.json").unlink()""",
     )
     env = _loop_env(tmp_path, app, config, WHISPER_BEAM_SIZE="7")
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     got = _runs(runs)
     assert (got[0]["WHISPER_BEAM_SIZE"], got[0]["REQUIRE_ENG"]) == ("5", "0")
@@ -364,7 +386,12 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         )
     )
     proc = subprocess.run(
-        ["sh", str(REPO / "gen_loop.sh")], env=_loop_env(tmp_path, app, config), cwd=str(app), capture_output=True, text=True, timeout=30
+        ["sh", str(REPO / "gen_loop.sh")],
+        cwd=str(app),
+        env=_loop_env(tmp_path, app, config),
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _runs(runs) == [{"require_eng": "0"}]
@@ -428,7 +455,9 @@ def test_the_sweep_exits_zero_on_a_soft_stop_with_stored_settings(tmp_path):
     (app / "dubtitlerr" / "pipeline" / "generate.py").write_text("raise SystemExit('must not run')")
     env = _loop_env(tmp_path, app, config)
     Path(env["STOP_FLAG"]).touch()
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0 and "soft stop" in proc.stdout
 
 
@@ -442,7 +471,9 @@ def test_an_exporter_that_raises_cannot_leave_the_previous_shows_stored_value_in
     break_exporter = f"pathlib.Path(r'{app}/review_settings_write.py').write_text('raise RuntimeError(\"boom\")')"
     _recording_generate(app, runs, config / "settings.json", break_exporter)
     env = _loop_env(tmp_path, app, config, WHISPER_BEAM_SIZE="7")
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert [(r["show"], r["WHISPER_BEAM_SIZE"]) for r in _runs(runs)] == [("Show1", "5"), ("Show2", "7")]
 
@@ -458,7 +489,12 @@ def test_a_stored_show_order_file_is_ignored_because_the_path_is_read_only_in_th
     runs = tmp_path / "runs.jsonl"
     _recording_generate(app, runs, config / "settings.json", "pass")
     proc = subprocess.run(
-        ["sh", str(REPO / "gen_loop.sh")], env=_loop_env(tmp_path, app, config), cwd=str(app), capture_output=True, text=True, timeout=30
+        ["sh", str(REPO / "gen_loop.sh")],
+        cwd=str(app),
+        env=_loop_env(tmp_path, app, config),
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert [r["show"] for r in _runs(runs)] == ["Show1", "Show2"]
@@ -498,7 +534,12 @@ def test_a_verify_connection_and_its_key_reach_the_next_show_but_the_repair_endp
     )
     _recording_generate(app, runs, config / "settings.json", "pass", keys=keys)
     proc = subprocess.run(
-        ["sh", str(REPO / "gen_loop.sh")], env=_loop_env(tmp_path, app, config), cwd=str(app), capture_output=True, text=True, timeout=30
+        ["sh", str(REPO / "gen_loop.sh")],
+        cwd=str(app),
+        env=_loop_env(tmp_path, app, config),
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     seen = _runs(runs)[0]

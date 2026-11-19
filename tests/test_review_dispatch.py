@@ -6,9 +6,8 @@ import threading
 
 import pytest
 
-from dubtitlerr.review import review_auth
+from dubtitlerr.review import review_auth, review_webhooks
 from dubtitlerr.review import review_server as rs
-from dubtitlerr.review import review_webhooks
 
 pytestmark = pytest.mark.real_accounts
 KEY = "dispatch-key"

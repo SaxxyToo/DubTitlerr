@@ -11,9 +11,7 @@ import math
 import os
 import time
 
-from dubtitlerr.core import common
-from dubtitlerr.core import decisions
-from dubtitlerr.core import unresolved
+from dubtitlerr.core import common, decisions, unresolved
 
 STAGES = ("transcribed", "repaired", "muxed", "failed", "stale", "pending-review")
 DEFAULT_LIMIT = 50

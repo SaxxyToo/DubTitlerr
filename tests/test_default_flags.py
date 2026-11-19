@@ -1,10 +1,10 @@
 """Phase 27: the defaults the maintainer decided on (2026-10-09). 'Unset' now means the new default; the old value restores the
 legacy behaviour. One place per flag, read per call."""
 
+from dubtitlerr.core import unresolved
 from dubtitlerr.glossary import glossary
 from dubtitlerr.glossary import glossary_verify as gv
 from dubtitlerr.pipeline import repair
-from dubtitlerr.core import unresolved
 
 
 def test_whole_word_guard_is_on_unless_set_to_0(monkeypatch):

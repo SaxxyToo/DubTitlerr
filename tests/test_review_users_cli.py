@@ -3,8 +3,7 @@ import json
 import pytest
 
 from dubtitlerr.glossary import glossary_lock
-from dubtitlerr.review import review_auth
-from dubtitlerr.review import review_users
+from dubtitlerr.review import review_auth, review_users
 
 pytestmark = pytest.mark.real_accounts
 

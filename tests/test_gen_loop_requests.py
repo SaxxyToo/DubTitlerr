@@ -89,7 +89,9 @@ else:
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Check generate ran with request parameters
@@ -156,7 +158,9 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Failing request moved to failed/
@@ -435,7 +439,9 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         SECRET_TOKEN_PASSWORD="bad",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     assert effective_env_file.exists()
@@ -487,7 +493,9 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # .running was moved to failed/
@@ -537,7 +545,9 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Hostile request moved to failed/ and never executed
@@ -597,7 +607,9 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Request was skipped, not executed
@@ -665,7 +677,9 @@ sys.exit(res.returncode)
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     assert "stopping drain" in proc.stdout
@@ -715,7 +729,9 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Victim must be completely untouched
@@ -784,7 +800,9 @@ else:
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # Both episodes were produced because it resumed
@@ -828,7 +846,9 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # The 10-day old file was pruned by drain_requests
@@ -844,7 +864,12 @@ def test_first_wins_path_in_unpack(tmp_path):
 
     (app / "dubtitlerr" / "review" / "review_requests.py").write_text(f"""\
 import os, sys, subprocess
-res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:], capture_output=True, text=True, env=dict(os.environ, PYTHONPATH="{REPO}"))
+res = subprocess.run(
+    [sys.executable, "{real_rr}"] + sys.argv[1:],
+    capture_output=True,
+    text=True,
+    env=dict(os.environ, PYTHONPATH="{REPO}"),
+)
 if len(sys.argv) > 1 and sys.argv[1] == "unpack":
     # Inject a duplicate duplicate PATH key pointing to victim
     sys.stdout.write(res.stdout + "\\nPATH={evil_victim}\\n")
@@ -888,7 +913,9 @@ if not os.environ.get("GENERATE_ONLY_RE"):
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # First-wins kept real_req as req_path: real_req completed to done/
@@ -907,7 +934,12 @@ def test_soft_stop_before_generate_requeues_request(tmp_path):
 
     (app / "dubtitlerr" / "review" / "review_requests.py").write_text(f"""\
 import sys, subprocess, pathlib, os
-res = subprocess.run([sys.executable, "{real_rr}"] + sys.argv[1:], capture_output=True, text=True, env=dict(os.environ, PYTHONPATH="{REPO}"))
+res = subprocess.run(
+    [sys.executable, "{real_rr}"] + sys.argv[1:],
+    capture_output=True,
+    text=True,
+    env=dict(os.environ, PYTHONPATH="{REPO}"),
+)
 sys.stdout.write(res.stdout)
 sys.stderr.write(res.stderr)
 if len(sys.argv) > 1 and sys.argv[1] == "start" and res.returncode == 0:
@@ -948,7 +980,9 @@ pathlib.Path(r"{gen_called}").touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     # generate was not called
@@ -1022,7 +1056,9 @@ else:
     )
 
     # First loop run: stop flag touched during generate
-    proc1 = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc1 = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc1.returncode == 0, proc1.stdout + proc1.stderr
 
     # Must be pending again, not done!
@@ -1032,7 +1068,9 @@ else:
 
     # Second loop run with flag removed: completes request to done!
     stop_flag.unlink(missing_ok=True)
-    proc2 = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc2 = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc2.returncode == 0, proc2.stdout + proc2.stderr
 
     done_file = requests_dir / "done" / "20261012T100000Z-88888888.json"
@@ -1079,7 +1117,9 @@ else:
     pathlib.Path(os.environ["STOP_FLAG"]).touch()
 """)
     env, requests_dir = _request_env(tmp_path, app, "20261018T100000Z-f0f0f0f0", force=True)
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     failed = json.loads((requests_dir / "failed" / "20261018T100000Z-f0f0f0f0.json").read_text())
     assert failed["status"] == "failed" and "rebuilt nothing" in failed["error"], failed
@@ -1105,7 +1145,9 @@ with open(r"{seen}", "a") as f:
 sys.exit(1 if n == 1 else 0)  # crash once, then finish
 """)
     env, requests_dir = _request_env(tmp_path, app, "20261018T100000Z-5a5a5a5a")
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=60)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=60
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     stamps = seen.read_text().split()
     assert len(stamps) == 2 and stamps[0] == stamps[1], stamps

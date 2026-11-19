@@ -5,10 +5,8 @@ import os
 import threading
 import time
 
-from dubtitlerr.core import common
-from dubtitlerr.core import decisions
-from dubtitlerr.review import review_server
-from dubtitlerr.review import review_status
+from dubtitlerr.core import common, decisions
+from dubtitlerr.review import review_server, review_status
 
 
 def _create_episode(tmp_path, show="ShowA", season="Season 1", ep="E01"):

@@ -24,7 +24,15 @@ from collections.abc import Collection
 
 import pysubs2
 
-from dubtitlerr.core.common import NON_DIALOGUE_STYLE, SIGNS_TITLE, STAMP_SUFFIX, is_our_track, load_extras, stop_requested, stream_title
+from dubtitlerr.core.common import (
+    NON_DIALOGUE_STYLE,
+    SIGNS_TITLE,
+    STAMP_SUFFIX,
+    is_our_track,
+    load_extras,
+    stop_requested,
+    stream_title,
+)
 
 EXTRA_DIRS = load_extras()  # data/extras.txt is the source (see common.load_extras)
 

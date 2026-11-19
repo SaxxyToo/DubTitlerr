@@ -47,7 +47,9 @@ def _run_gen_loop(tmp_path, require_eng):
     )
     if require_eng is not None:
         env["REQUIRE_ENG"] = require_eng
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=60)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=60
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     return record.read_text()
 

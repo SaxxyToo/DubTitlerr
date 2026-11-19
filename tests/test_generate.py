@@ -24,8 +24,7 @@ import pytest
 
 from dubtitlerr.core import common
 from dubtitlerr.glossary import glossary
-from dubtitlerr.pipeline import qc
-from dubtitlerr.pipeline import reflow
+from dubtitlerr.pipeline import qc, reflow
 
 
 def _stub_faster_whisper():
@@ -1478,7 +1477,9 @@ def test_punctuation_is_restored_before_reflow_splits_the_words():
     """The load-bearing ordering of the punctuation pass (spec 2026-08-20). Restoring
     after reflow() -- repair.py's natural home for it -- would leave every boundary
     exactly as wrong as before, so the call site, not just the code, is the feature."""
-    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dubtitlerr", "pipeline", "generate.py")).read()
+    src = open(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dubtitlerr", "pipeline", "generate.py")
+    ).read()
     assert "punctuation.restore(words, segments" in src
     assert src.index("punctuation.restore(") < src.index("reflow.reflow(")
 
@@ -2089,7 +2090,9 @@ def test_read_words_counts_a_transcribe_version_ahead_of_current_as_a_mismatch(t
 
 
 def test_partition_todo_and_process_text_request_the_decoder_identity():
-    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dubtitlerr", "pipeline", "generate.py")).read()
+    src = open(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dubtitlerr", "pipeline", "generate.py")
+    ).read()
     assert "read_words(stem, expect=decoder_identity())" in src
     assert "read_words(stem, rec=rec, expect=decoder_identity())" in src
 

@@ -4,9 +4,9 @@ Synthetic items only. The classification is checked against production by runnin
 
 import pytest
 
-from dubtitlerr.glossary import glossary_verify as gv
 import tools.glossary_consequences as gc
 import tools.glossary_score as gs
+from dubtitlerr.glossary import glossary_verify as gv
 
 
 def _item(term, titles, gold=None, kind=None, accept=None, negative=False, incumbent=False):

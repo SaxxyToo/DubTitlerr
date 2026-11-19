@@ -30,7 +30,9 @@ seen = {k: os.environ.get(k) for k in keys}
 if os.environ.get("CALL_BACKEND"):
     # Load the REAL repair module (the stub shadows it on the app copy) and make one hosted call, as a repair run would.
     import importlib.util
-    spec = importlib.util.spec_from_file_location("real_repair", os.path.join(os.environ["REPO"], "dubtitlerr", "pipeline", "repair.py"))
+    spec = importlib.util.spec_from_file_location(
+        "real_repair", os.path.join(os.environ["REPO"], "dubtitlerr", "pipeline", "repair.py")
+    )
     real = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(real)
     seen["answer"] = real.llm_openai("hello", None)

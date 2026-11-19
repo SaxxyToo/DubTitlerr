@@ -33,8 +33,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from dubtitlerr.core import adjudication_journal
-from dubtitlerr.core import common
+from dubtitlerr.core import adjudication_journal, common
 from dubtitlerr.core.common import llm_chat, stop_requested
 
 
@@ -1405,7 +1404,9 @@ def fetch_scope_cached(cfg: dict, scope: dict, show_key: str) -> tuple[set[str],
     if entry and (time.time() - entry.get("fetched_at", 0)) < WIKI_TTL:
         return set(entry["titles"]), "cached"
     try:
-        from dubtitlerr.glossary import wiki_scope  # inside the try: a module missing from the image is an incomplete scope, not a crash
+        from dubtitlerr.glossary import (
+            wiki_scope,  # inside the try: a module missing from the image is an incomplete scope, not a crash
+        )
 
         res = wiki_scope.resolve_scope(cfg, scope["season"], scope["episodes"], http=_http_json)
     except Exception as e:  # noqa: BLE001 -- the sweep must never fail on a wiki

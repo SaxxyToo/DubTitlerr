@@ -58,18 +58,11 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-from dubtitlerr.core import common
-from dubtitlerr.core import decisions
-from dubtitlerr.review import review_apply
-from dubtitlerr.review import review_auth
-from dubtitlerr.review import review_glossary
-from dubtitlerr.review import review_requests
-from dubtitlerr.review import review_status
-from dubtitlerr.review import review_webhooks
-from dubtitlerr.settings import settings_api
-from dubtitlerr.core import unresolved
+from dubtitlerr.core import common, decisions, unresolved
 from dubtitlerr.core.common import log
 from dubtitlerr.core.decisions import show_for
+from dubtitlerr.review import review_apply, review_auth, review_glossary, review_requests, review_status, review_webhooks
+from dubtitlerr.settings import settings_api
 
 review_auth.register_routes(settings_api.ROLE_ENTRIES)
 

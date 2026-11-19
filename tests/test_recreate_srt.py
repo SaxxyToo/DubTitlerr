@@ -4,8 +4,7 @@ defect this suite exists to prevent."""
 
 import json
 
-from dubtitlerr.pipeline import recreate_srt
-from dubtitlerr.pipeline import reflow
+from dubtitlerr.pipeline import recreate_srt, reflow
 
 
 def _write_conf(tmp_path, cards):

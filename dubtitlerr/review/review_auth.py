@@ -18,8 +18,8 @@ import threading
 import time
 import urllib.parse
 
-from dubtitlerr.glossary import glossary_lock
 from dubtitlerr.core.common import atomic_write, log
+from dubtitlerr.glossary import glossary_lock
 
 CLOCK = time.time
 LOCK_WAIT = 2.0

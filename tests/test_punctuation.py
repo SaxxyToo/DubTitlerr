@@ -8,9 +8,7 @@ repair.py afterwards.
 
 import pytest
 
-from dubtitlerr.pipeline import punctuation
-from dubtitlerr.pipeline import qc
-from dubtitlerr.pipeline import reflow
+from dubtitlerr.pipeline import punctuation, qc, reflow
 
 APOS = chr(0x2019)  # constructed, never typed: an editor that normalises a
 # literal curly apostrophe would silently disable the guard

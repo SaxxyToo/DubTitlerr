@@ -108,14 +108,7 @@ import threading
 import time
 import urllib.parse
 
-from dubtitlerr.pipeline import card_split
-from dubtitlerr.core import decisions
-from dubtitlerr.glossary import glossary
-from dubtitlerr.pipeline import hallucination
-from dubtitlerr.pipeline import ordering
-from dubtitlerr.pipeline import qc
-from dubtitlerr.pipeline import reflow
-from dubtitlerr.core import unresolved
+from dubtitlerr.core import decisions, unresolved
 from dubtitlerr.core.common import (
     MEDIA_GID,
     MEDIA_UID,
@@ -128,6 +121,8 @@ from dubtitlerr.core.common import (
     ts_srt,
     write_stage,
 )
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import card_split, hallucination, ordering, qc, reflow
 
 _LOGGED_ONCE = set()
 

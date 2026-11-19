@@ -12,8 +12,7 @@ import socket
 import urllib.parse
 import urllib.request
 
-from dubtitlerr.review import review_auth
-from dubtitlerr.review import review_settings
+from dubtitlerr.review import review_auth, review_settings
 from dubtitlerr.settings import settings_connections as conns
 from dubtitlerr.settings import settings_registry as reg
 from dubtitlerr.settings import settings_store as store

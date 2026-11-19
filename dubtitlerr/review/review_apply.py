@@ -40,10 +40,9 @@ import argparse
 import json
 import os
 
-from dubtitlerr.pipeline import card_split
 from dubtitlerr.core import decisions
-from dubtitlerr.pipeline import reflow
 from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, atomic_write, log, read_words, ts_srt
+from dubtitlerr.pipeline import card_split, reflow
 
 # The SAME fits_card repair.py applies, imported rather than reimplemented. Two writers of
 # the shipped srt that disagreed about C1 would mean a `correct` refused on a re-run and

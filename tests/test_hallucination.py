@@ -213,8 +213,7 @@ def test_the_guard_records_liveness_like_every_other_rule():
     """evaluated>0 with activated==0 is the dead-rule signal; the counters ARE the value
     of this guard -- it is observability, not recovery."""
     from dubtitlerr.pipeline import hallucination as h
-    from dubtitlerr.pipeline import qc
-    from dubtitlerr.pipeline import reflow
+    from dubtitlerr.pipeline import qc, reflow
 
     rec = qc.Recorder()
     h.bad_source_window(_card("it", ss=1.0, se=2.0), rec=rec)

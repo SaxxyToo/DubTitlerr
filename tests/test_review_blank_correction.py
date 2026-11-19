@@ -7,10 +7,9 @@ import json
 
 import pytest
 
-from dubtitlerr.core import decisions
+from dubtitlerr.core import decisions, unresolved
 from dubtitlerr.pipeline import mux
 from dubtitlerr.review import review_server as rs
-from dubtitlerr.core import unresolved
 
 ORIG, PROP = "the old line", "the wrong line"
 

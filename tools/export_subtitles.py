@@ -31,9 +31,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dubtitlerr.pipeline import reflow
 from dubtitlerr.core import unresolved
 from dubtitlerr.core.common import STAMP_SUFFIX, TRACK_NAME, read_stamp, stamp_valid, ts_srt
+from dubtitlerr.pipeline import reflow
 
 CONF_SUFFIX = ".dubtitles.conf.json"
 VIDEO_EXTS = (".mkv", ".mp4", ".m4v")

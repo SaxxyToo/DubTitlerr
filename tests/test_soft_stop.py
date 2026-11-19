@@ -220,7 +220,13 @@ def _supervisor(tmp_path):
         PYTHONPATH=str(app),
     )
     p = subprocess.Popen(
-        ["sh", CONTAINER_RUN], env=env, cwd=str(app), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
+        ["sh", CONTAINER_RUN],
+        cwd=str(app),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
     )
     return p, log, flag
 

@@ -36,7 +36,9 @@ def _run_loop(tmp_path, sweep, with_order=True, **extra):
     shutil.copy(REPO / "dubtitlerr" / "core" / "atomic_file.py", app / "dubtitlerr" / "core" / "atomic_file.py")
     (app / "dubtitlerr" / "glossary" / "mine_glossary.py").write_text("")
     (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(_STUB_GENERATE)
-    (app / "dubtitlerr" / "pipeline" / "watch_queue.py").write_text("import os; open(os.environ['CALLLOG'] + '.watch', 'w').close()\n")
+    (app / "dubtitlerr" / "pipeline" / "watch_queue.py").write_text(
+        "import os; open(os.environ['CALLLOG'] + '.watch', 'w').close()\n"
+    )
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
     (anime / "Other").mkdir()
@@ -71,7 +73,9 @@ def _run_loop(tmp_path, sweep, with_order=True, **extra):
     if sweep is not None:
         env["LIBRARY_SWEEP"] = sweep
     env.update(extra)
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
     log = tmp_path / "calls.log"
     calls = log.read_text().splitlines() if log.exists() else []
     return proc, calls, requests_dir

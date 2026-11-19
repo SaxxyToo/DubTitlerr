@@ -7,10 +7,9 @@ import json
 
 import pytest
 
-from dubtitlerr.glossary import glossary
-from dubtitlerr.pipeline import punctuation
-from dubtitlerr.pipeline import repair
 from dubtitlerr.core import unresolved
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import punctuation, repair
 
 # ---- the one counter ----------------------------------------------- ----
 

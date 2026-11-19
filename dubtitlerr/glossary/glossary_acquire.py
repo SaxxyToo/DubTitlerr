@@ -29,13 +29,10 @@ import re
 
 import jellyfish
 
-from dubtitlerr.core import acquire_cache
-from dubtitlerr.core import adjudication_journal
-from dubtitlerr.glossary import glossary
-from dubtitlerr.glossary import glossary_verify
-from dubtitlerr.glossary import mine_glossary
-from dubtitlerr.pipeline import ordering
+from dubtitlerr.core import acquire_cache, adjudication_journal
 from dubtitlerr.core.common import MODE_KEEP, atomic_write, find_video, llm_chat, log, stop_requested
+from dubtitlerr.glossary import glossary, glossary_verify, mine_glossary
+from dubtitlerr.pipeline import ordering
 
 _DISAMBIG_RE = re.compile(r"\s*\([^)]*\)\s*$")
 _REDUCE_RE = re.compile("[\\s" + chr(0x27) + chr(0x2019) + "-]")

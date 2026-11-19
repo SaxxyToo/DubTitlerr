@@ -6,9 +6,9 @@ import json
 
 import pytest
 
+from dubtitlerr.core import unresolved
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import repair
-from dubtitlerr.core import unresolved
 
 GL = glossary.load_dict({"names": ["Luffy", "Rain"]})
 

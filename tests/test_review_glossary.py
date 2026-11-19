@@ -10,8 +10,7 @@ import pytest
 
 from dubtitlerr.core import decisions
 from dubtitlerr.glossary import glossary_lock
-from dubtitlerr.review import review_glossary
-from dubtitlerr.review import review_server
+from dubtitlerr.review import review_glossary, review_server
 
 SHOW = "One Pace"
 

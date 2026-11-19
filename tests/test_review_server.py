@@ -14,10 +14,8 @@ from typing import Any
 
 import pytest
 
-from dubtitlerr.core import common
-from dubtitlerr.core import decisions
+from dubtitlerr.core import common, decisions, unresolved
 from dubtitlerr.review import review_server
-from dubtitlerr.core import unresolved
 
 # Card texts and queue entries are kept in CORRESPONDENCE on purpose. repair.py only ever
 # queues a line it processed, so every entry's original_text is a real card of this episode.

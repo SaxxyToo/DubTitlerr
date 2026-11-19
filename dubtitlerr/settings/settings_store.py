@@ -14,10 +14,10 @@ import json
 import os
 import urllib.parse
 
+from dubtitlerr.core.atomic_file import atomic_write_bytes
 from dubtitlerr.glossary import glossary_lock
 from dubtitlerr.settings import settings_connections as conns
 from dubtitlerr.settings import settings_registry as reg
-from dubtitlerr.core.atomic_file import atomic_write_bytes
 
 VERSION = 1
 MAX_BYTES = 256 * 1024

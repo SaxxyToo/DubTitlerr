@@ -5,8 +5,7 @@ import json
 import os
 import stat
 
-from dubtitlerr.core import decisions
-from dubtitlerr.core import unresolved
+from dubtitlerr.core import decisions, unresolved
 
 
 def test_records_per_stage_and_survives_reread(tmp_path):

@@ -7,8 +7,8 @@ import json
 import os
 import sys
 
-from dubtitlerr.pipeline import reflow
 from dubtitlerr.core.common import ts_srt
+from dubtitlerr.pipeline import reflow
 
 CONF_SUFFIX = ".dubtitles.conf.json"
 

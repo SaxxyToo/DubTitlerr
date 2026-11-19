@@ -16,8 +16,7 @@ not to reproduce repair's output."""
 import json
 import os
 
-from dubtitlerr.core import common
-from dubtitlerr.core import decisions
+from dubtitlerr.core import common, decisions
 from dubtitlerr.review import review_apply
 
 CONF = ".dubtitles.conf.json"

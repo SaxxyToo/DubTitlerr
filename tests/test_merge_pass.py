@@ -134,7 +134,8 @@ def test_apostrophe_stem_records_real_crash_fallback(tmp_path, monkeypatch):
     bindir = tmp_path / "fakebin"
     wrapper = bindir / "python3"
     wrapper.write_text(
-        f'#!/bin/sh\ncase "$*" in\n  *dubtitlerr.pipeline.mux*--apply*) exit 1 ;;\nesac\nexec {shlex.quote(sys.executable)} "$@"\n'
+        "#!/bin/sh\ncase \"$*\" in\n  *dubtitlerr.pipeline.mux*--apply*) exit 1 ;;\nesac\n"
+        f'exec {shlex.quote(sys.executable)} "$@"\n'
     )
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -524,7 +525,10 @@ def _two_shows(tmp_path):
     (tmp_path / "calls.log").write_text("")
     rdir = tmp_path / "requests"
     rdir.mkdir()
-    shutil.copy(os.path.join(_REPO, "dubtitlerr", "review", "review_requests.py"), _stub_app(tmp_path) / "dubtitlerr" / "review" / "review_requests.py")
+    shutil.copy(
+        os.path.join(_REPO, "dubtitlerr", "review", "review_requests.py"),
+        _stub_app(tmp_path) / "dubtitlerr" / "review" / "review_requests.py",
+    )
     return root, rdir
 
 
