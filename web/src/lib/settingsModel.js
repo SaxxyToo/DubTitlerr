@@ -121,16 +121,18 @@ function coerce(entry, draft) {
 }
 
 /**
- * True when anything would be sent: edited values, or connection and stage changes (Task 18).
+ * True when anything would be sent: edited values, or connection, stage and notification changes (Task 18).
  * @param {Record<string, unknown>} values
  * @param {unknown} connections
  * @param {unknown} stages
+ * @param {unknown} [notifications]
  */
-export function isDirty(values, connections, stages) {
+export function isDirty(values, connections, stages, notifications) {
   return (
     Object.keys(values).length > 0 ||
     (connections !== null && connections !== undefined) ||
-    (stages !== null && stages !== undefined)
+    (stages !== null && stages !== undefined) ||
+    (notifications !== null && notifications !== undefined)
   );
 }
 
@@ -405,4 +407,131 @@ export function describeTestResult(result) {
     return `${err} (HTTP ${result.status}).`;
   }
   return err;
+}
+
+// --- Notifications (Connect) -------------------------------------------------------------------------------------------------
+
+/** The triggers a brand-new provider turns on: everything except the per-episode one, which the design leaves off (verbose). */
+export const NOTIFICATION_OFF_BY_DEFAULT = ['episode.delivered'];
+
+/** The one write-only secret field a kind stores. */
+export const SECRET_FIELD = /** @type {Record<string, string>} */ ({
+  discord: 'url',
+  webhook: 'url',
+  ntfy: 'token',
+});
+
+/** @param {string} kind */
+export function secretFieldFor(kind) {
+  return SECRET_FIELD[kind] ?? 'url';
+}
+
+/**
+ * A new provider row: Discord, on, every default trigger on, no secret stored yet.
+ * @param {{ triggers?: string[] } | null | undefined} rules
+ */
+export function blankNotification(rules) {
+  return {
+    name: '',
+    kind: 'discord',
+    enabled: true,
+    triggers: (rules?.triggers ?? []).filter((t) => !NOTIFICATION_OFF_BY_DEFAULT.includes(t)),
+    url: { set: false },
+  };
+}
+
+/**
+ * A row switched to another kind. Its stored secret belongs to the old kind, so the row starts with no secret set; ntfy
+ * also starts with an empty server and topic.
+ * @param {any} row
+ * @param {string} kind
+ */
+export function withNotificationKind(row, kind) {
+  /** @type {any} */
+  const next = {
+    name: row.name,
+    kind,
+    enabled: row.enabled,
+    triggers: [...(row.triggers ?? [])],
+  };
+  if (kind === 'ntfy') {
+    next.server = '';
+    next.topic = '';
+    next.token = { set: false };
+  } else {
+    next.url = { set: false };
+  }
+  return next;
+}
+
+/** @param {string[]} triggers @param {string} trigger */
+export function toggleTrigger(triggers, trigger) {
+  return triggers.includes(trigger) ? triggers.filter((t) => t !== trigger) : [...triggers, trigger];
+}
+
+const NOTIFICATION_FIELDS = ['name', 'kind', 'enabled', 'triggers', 'server', 'topic'];
+
+/**
+ * The PUT `notifications` list from the working copies. Visible fields always travel; the secret field travels only when the
+ * operator typed one (`secret` text) or asked to clear it (CLEAR), so an untouched row keeps the secret the server holds.
+ * @param {Array<any>} working
+ */
+export function notificationsBody(working) {
+  return working.map((c) => {
+    /** @type {Record<string, unknown>} */
+    const item = Object.fromEntries(
+      NOTIFICATION_FIELDS.filter((f) => c[f] !== undefined).map((f) => [f, c[f]]),
+    );
+    item.triggers = [...(c.triggers ?? [])];
+    const field = secretFieldFor(c.kind);
+    if (c.secret === CLEAR) item[field] = { clear: true };
+    else if (typeof c.secret === 'string' && c.secret !== '') item[field] = c.secret;
+    return item;
+  });
+}
+
+/**
+ * True when the working copies differ from the loaded providers, or a secret was touched.
+ * @param {Array<any>} loaded
+ * @param {Array<any>} working
+ */
+export function notificationsChanged(loaded, working) {
+  if (working.some((c) => c.secret === CLEAR || (typeof c.secret === 'string' && c.secret !== '')))
+    return true;
+  const strip = (/** @type {any[]} */ list) =>
+    JSON.stringify(
+      list.map((c) => [
+        c.name,
+        c.kind,
+        c.enabled === true,
+        [...(c.triggers ?? [])].sort(),
+        c.server ?? '',
+        c.topic ?? '',
+      ]),
+    );
+  return strip(loaded) !== strip(working);
+}
+
+/**
+ * One plain sentence for a notification test result. The server never returns the secret, so there is nothing to hide here.
+ * @param {{ ok?: unknown, error?: unknown } | null | undefined} result
+ * @returns {string}
+ */
+export function describeNotificationResult(result) {
+  if (result?.ok === true) return 'Test notification sent.';
+  const err = typeof result?.error === 'string' && result.error.trim() !== '' ? result.error.trim() : '';
+  return err ? `The test failed: ${err}` : 'The test failed.';
+}
+
+/**
+ * A saved provider can be tested only as the server holds it: same kind and visible fields, and no typed secret.
+ * @param {any} row
+ * @param {Array<any>} saved
+ */
+export function notificationTestable(row, saved) {
+  const prior = saved.find((s) => s.name === row.name);
+  if (!prior) return false;
+  if (row.secret === CLEAR || (typeof row.secret === 'string' && row.secret !== '')) return false;
+  const visible = (/** @type {any} */ c) => [c.kind, c.server ?? '', c.topic ?? ''];
+  return JSON.stringify(visible(prior)) === JSON.stringify(visible(row));
 }
