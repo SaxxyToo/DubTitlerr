@@ -31,6 +31,7 @@ CALLS = {"get", "getenv", "env_int", "env_float", "_env_num", "_fraction", "_cou
 NON_SETTINGS = {
     "REPAIR_PROFILE": "an old runtime.env key, read once by settings_migrate.py",
     "REPAIR_REF_CLASSIC": "R2 rollback / A-B kill-switch (legacy merged reference pool); deliberately not a stored setting",
+    "REPAIR_GATE_DUB_VOUCHED": "R3 rollback kill-switch (role-aware gates back to classic); not a stored setting",
     "FORCE_REDO": "per-request signal from gen_loop.sh, never a stored setting",
     "DT_CONTAINER_BOOT_ID": "exported by container_run.sh at start, read by common.boot_id()",
     "ACQ_FLAGS": "gen_loop.sh local",

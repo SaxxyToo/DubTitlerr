@@ -677,6 +677,64 @@ MAX_REF_BORROW = int(os.environ.get("MAX_REF_BORROW", "3"))
 LEN_RATIO_MIN = float(os.environ.get("LEN_RATIO_MIN", "0.6"))
 LEN_RATIO_MAX = float(os.environ.get("LEN_RATIO_MAX", "1.5"))
 
+# --- R3: role-aware gates ------------------------------------------------------
+#
+# Every guard below was written when the reference was always a DIFFERENT translation of
+# the scene. Under that assumption a word the repair ADDS that also appears in the
+# reference is a leak: the model lifted the fansub's phrasing instead of repairing the
+# dub. A native dub-caption track inverts that assumption -- it is a transcript of the
+# audio this subtitle accompanies, so the same word is attestation, not borrowing. Three
+# measured DAN DA DAN refusals were all confirmed by the native dub track:
+#
+#   'for your'                     -> 'For your information,'   (length_ratio)
+#   'What are you looking at...'   -> "What're you lookin' at..." (invents_name)
+#   'Miss Momoa, that's it.'       -> 'Miss Momo Ayase, that's it.' (invents_name)
+#
+# For role=dub only, a proposal whose every ADDED word appears in that card's dub-caption
+# window ("all-vouched") replaces ref_borrow with the positive signal and swaps the upper
+# length band for DUB_VOUCHED_MAX_RATIO. role=translation and an unclassified reference
+# (the legacy merged pool) keep the classic semantics untouched, so the measured behaviour
+# on every other show is unchanged.
+#
+# REPAIR_GATE_DUB_VOUCHED=0 restores classic semantics everywhere (rollback).
+DUB_VOUCHED_DEFAULT = "1"
+DUB_VOUCHED_MAX_RATIO = float(os.environ.get("REPAIR_GATE_DUB_VOUCHED_MAX_RATIO", "3.0"))
+
+
+def _gate_dub_vouched() -> bool:
+    """REPAIR_GATE_DUB_VOUCHED=0 restores the classic gates. Read per call."""
+    return os.environ.get("REPAIR_GATE_DUB_VOUCHED", DUB_VOUCHED_DEFAULT) != "0"
+
+
+def dub_name_exemption(ref, ref_role=None):
+    """The lower-cased words of a native dub-caption window, or None when it cannot vouch.
+
+    Passed to ``invents_name`` as its exempt set: a gained proper-noun core that appears in
+    the dub captions is attested by the track that transcribes the audio, so it is a real
+    name rather than a fabrication. None (translation role, no reference, gate off) keeps the
+    guard exactly as measured.
+    """
+    if not _gate_dub_vouched() or ref_role != reftracks.ROLE_DUB or not ref:
+        return None
+    return set(_words(ref))
+
+
+def dub_vouches(orig, new, ref, ref_role=None) -> bool:
+    """True when a native dub-caption reference attests every word ``new`` ADDS to ``orig``.
+
+    The mirror image of ``borrowed_from_ref``: that guard counts added words found in a
+    *different translation* as leaked phrasing, this one treats the same words as vouched
+    when the reference is a transcript of the dub itself. Whole lower-cased words, the same
+    tokenisation both guards and the length check use. False when nothing was added (a pure
+    substitution or deletion is not vouched by this rule), when the role is not dub, when
+    the gate is switched off, or when the reference window is empty.
+    """
+    if not _gate_dub_vouched() or ref_role != reftracks.ROLE_DUB or not ref:
+        return False
+    had = set(_words(orig))
+    added = [w for w in _words(new) if w not in had]
+    return bool(added) and set(added) <= set(_words(ref))
+
 _WORD = re.compile(r"[a-z']+")
 
 
@@ -736,8 +794,13 @@ def _proper_cores(text):
     return out
 
 
-def invents_name(orig, new, gloss):
+def invents_name(orig, new, gloss, exempt=None):
     """True if ``new`` substitutes an INVENTED proper noun for one that was in ``orig``.
+
+    ``exempt`` (R3, role=dub only) is the set of lower-cased words the card's native
+    dub-caption window contains: a gained core on that list is attested by the track that
+    transcribes the audio, so it is a real name rather than a fabrication. None (the
+    default, and every translation-role call) leaves the guard exactly as measured.
 
     By the time this runs, ``glossary.correct(new, gloss)`` has already executed (see the
     call site in process(), repair.py:513): any token the deterministic tiers can match to
@@ -790,7 +853,8 @@ def invents_name(orig, new, gloss):
     orig_all = {m.group(2).lower() for m in (glossary._TOKEN_RE.match(t) for t in (orig or "").split()) if m}
     known = {n.lower() for n in gloss["names"]} | {v.lower() for v in gloss["token_fixes"].values()}
     known |= _phrase_tokens_in(new, gloss.get("phrases") or [])
-    return any(c.lower() not in orig_all and c.lower() not in known for c in proper_cores(new))
+    exempt = {w.lower() for w in (exempt or ())}
+    return any(c.lower() not in orig_all and c.lower() not in known and c.lower() not in exempt for c in proper_cores(new))
 
 
 def _core_tokens(text):
@@ -929,7 +993,7 @@ def changes_name_parts(orig, new, gloss):
     return broken(n, inserted, kept_new) or broken(o, deleted, kept_old)
 
 
-def accept_repair(orig, new, ref, dur, gloss, prev_text=None):
+def accept_repair(orig, new, ref, dur, gloss, prev_text=None, ref_role=None):
     """Whether to write ``new`` over ``orig`` on a card lasting ``dur`` seconds.
 
     A dubtitle must carry what the DUB AUDIO says. The reference is a different translation
@@ -966,8 +1030,14 @@ def accept_repair(orig, new, ref, dur, gloss, prev_text=None):
     ``gloss`` is required for the same reason ``dur`` is: the phonetic-name-guard
     (``invents_name``, below) needs to know what the show's names ARE to tell a real
     correction from a fabricated one, so a caller that cannot say what those names are
-    must not be allowed to silently skip the check by omitting the argument."""
-    return rejecting_guard(orig, new, ref, dur, gloss, prev_text=prev_text) is None
+    must not be allowed to silently skip the check by omitting the argument.
+
+    ``ref_role`` (R2's recorded role for the chosen reference track) selects the gate
+    semantics: ``dub`` means the reference is a transcript of the audio, so added words it
+    attests are evidence (``dub_vouches``). None -- an unclassified or legacy reference --
+    and ``translation`` keep the classic gates exactly.
+    """
+    return rejecting_guard(orig, new, ref, dur, gloss, prev_text=prev_text, ref_role=ref_role) is None
 
 
 def _accept_punct_case_only() -> bool:
@@ -1122,7 +1192,7 @@ def _no_new_layout_fault(new, dur, orig):
     return all(a <= b + s + reflow.EPS for a, b, s in zip(after, before, slack))
 
 
-def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=None):
+def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=None, ref_role=None):
     """The name of the FIRST guard that refuses ``new`` for ``orig``, or None when accept_repair admits it. accept_repair is
     exactly ``rejecting_guard(...) is None``; the name is what the review queue records (key 'guard') so a human, and later
     measurements, can tell why a proposal was refused:
@@ -1136,7 +1206,15 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
     judges punctuation for MEANING: 'Let's eat, Grandma' -> 'Let's eat Grandma', a moved comma or '?' -> '.'
     all pass, with the flag off as well as on; that is why the flag stays off unless a human audits a sample. Measured
     on a real queue, 7 of 100 rejected proposals changed no word, and fits_card refuses an edit that makes an already over-cps
-    card worse in ANY dimension, so one added period on a dense card was refused. Every other guard still applies."""
+    card worse in ANY dimension, so one added period on a dense card was refused. Every other guard still applies.
+
+    ``ref_role='dub'`` (R3) switches the reference from "a different translation" to "a transcript of this audio". A proposal
+    whose every ADDED word appears in that card's dub-caption window is all-vouched: ref_borrow stops counting against it (the
+    same words are now attestation) and the upper length band is replaced by DUB_VOUCHED_MAX_RATIO. Every other guard --
+    including fits_card, terminal_punct, name_part and vouched_name -- still applies, and a gained proper-noun core present in
+    the dub window is exempt from invents_name. Any added word the window does NOT carry falls back to the classic gates
+    unchanged. ``translation`` and None keep the classic gates exactly; REPAIR_GATE_DUB_VOUCHED=0 restores them everywhere.
+    """
     if not new:
         return "empty"
     if punct_case_ok is None:
@@ -1146,18 +1224,22 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
         return "unchanged"  # nothing changed
     if _guard_terminal_punct() and terminal_punct_changed(orig, new):
         return "terminal_punct"  # a question became a statement (or the reverse), or an ellipsis became '.'/'!'
-    if invents_name(orig, new, gloss):
+    vouched = dub_vouches(orig, new, ref, ref_role)
+    if invents_name(orig, new, gloss, dub_name_exemption(ref, ref_role)):
         return "invents_name"  # phonetic-name-guard: fabricated proper noun, not a real correction
     if _keep_name_parts() and changes_name_parts(orig, new, gloss):
         return "name_part"  # a name said alone stays alone, a full name stays full
     if not ref and substitutes_a_vouched_name(orig, new, gloss):
         return "vouched_name"  # S-14: no reference, so no standing to overrule a vouched name
     ratio = len(new) / max(1, len(orig))
-    if not (LEN_RATIO_MIN <= ratio <= LEN_RATIO_MAX):
+    # All-vouched keeps the lower bound (a vouched repair still cannot collapse the line) and
+    # swaps only the upper band for the generous dub cap -- 3x by default, admitting the
+    # 8 -> 21 char 'For your information,' case. fits_card below still decides displayability.
+    if not (LEN_RATIO_MIN <= ratio <= (DUB_VOUCHED_MAX_RATIO if vouched else LEN_RATIO_MAX)):
         return "length_ratio"  # added or dropped a clause
     if not (_no_new_layout_fault(new, dur, orig) if special else fits_card(new, dur, orig)):
         return "fits_card"  # unreadable/undisplayable on THIS card
-    if len(borrowed_from_ref(orig, new, ref)) >= MAX_REF_BORROW:
+    if not vouched and len(borrowed_from_ref(orig, new, ref)) >= MAX_REF_BORROW:
         return "ref_borrow"
     return None
 
@@ -1643,8 +1725,10 @@ def _process_episode(conf_path):
         # Recorded per queue entry and summarised as anchor_mode: which role the reference
         # came from. Optional fields on the queue (absent = unclassified, i.e. legacy runs).
         ref_fields = {}
+        ref_role = None
         if ref_track is not None:
             roles_used.add(ref_track.role)
+            ref_role = ref_track.role
             ref_fields = {
                 "ref_role": ref_track.role,
                 "ref_provenance": ref_track.provenance,
@@ -1818,13 +1902,13 @@ def _process_episode(conf_path):
         # Every applying verdict is admitted here, so `not admitted` below can only be
         # reached with no ruling at all -- which is why that branch needs no ruling guard of
         # its own to avoid re-queueing a settled line.
-        admitted = ruling in APPLYING or accept_repair(c["text"], new, ref, dur, gloss, prev_text)
+        admitted = ruling in APPLYING or accept_repair(c["text"], new, ref, dur, gloss, prev_text, ref_role=ref_role)
         if (
             admitted
             and ruling not in APPLYING
             and _accept_punct_case_only()
             and is_punct_case_only(c["text"], new, gloss, prev_text)
-            and rejecting_guard(c["text"], new, ref, dur, gloss, punct_case_ok=False) is not None
+            and rejecting_guard(c["text"], new, ref, dur, gloss, punct_case_ok=False, ref_role=ref_role) is not None
         ):
             accepted_punct_case_only += 1  # admitted only because of REPAIR_ACCEPT_PUNCT_CASE_ONLY
         if not admitted:
@@ -1832,7 +1916,7 @@ def _process_episode(conf_path):
                 rejected += 1  # surfaced in the summary so the guard stays visible
                 # ...but the PROPOSAL was discarded, and it is the whole evidence a human
                 # needs to judge whether the guard was right or overzealous.
-                if invents_name(c["text"], new, gloss):
+                if invents_name(c["text"], new, gloss, dub_name_exemption(ref, ref_role)):
                     reason = "rejected_name_invented"
                 elif _keep_name_parts() and changes_name_parts(c["text"], new, gloss):
                     reason = "rejected_name_part"
@@ -1841,7 +1925,7 @@ def _process_episode(conf_path):
                     reason = "rejected_guard"
                 dismissed_fields = unresolved.dismissal(c["text"], new, phrases=gloss.get("phrases") or [])
                 dismissed_large_change += bool(dismissed_fields)
-                guard_name = rejecting_guard(c["text"], new, ref, dur, gloss, prev_text=prev_text)
+                guard_name = rejecting_guard(c["text"], new, ref, dur, gloss, prev_text=prev_text, ref_role=ref_role)
                 rejected_terminal_punct += guard_name == "terminal_punct"
                 unresolved.record(
                     stem,
@@ -1887,7 +1971,7 @@ def _process_episode(conf_path):
                     # the first pass with no validation at all -- same gate, same card. When
                     # it fails, the already-accepted first-pass repair stands rather than the
                     # card being left garbled.
-                    if new2 and accept_repair(c["text"], new2, ref, dur, gloss, prev_text):
+                    if new2 and accept_repair(c["text"], new2, ref, dur, gloss, prev_text, ref_role=ref_role):
                         new = new2
                     elif new2 and new2.lower() != new.lower():
                         rejected_secondary += 1
