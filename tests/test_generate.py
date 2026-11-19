@@ -426,6 +426,58 @@ def test_lastrun_json_show_falls_back_when_unset(monkeypatch, tmp_path):
     assert lr["show"] == "unknown_show"
 
 
+# --- no-glossary warning: a show generated with no name protection ---------------------
+#
+# DAN DA DAN ran on 2026-11-19 with `glossary_version: none` and nothing said so: the run
+# looked normal in the log and in lastrun.json. A glossary-less episode carries no name
+# protection at all -- the decoder prompt has no cast list, glossary.correct is a no-op and
+# repair has no anchors -- so it must be visible while it happens and countable afterwards.
+
+
+def _no_gloss_run(monkeypatch, tmp_path, glossary=None):
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 1000)
+    monkeypatch.setattr(generate, "eng_audio_index", lambda video: 1)
+    monkeypatch.setattr(generate, "extract_wav", lambda video, idx, wav: True)
+    monkeypatch.setenv("SKIP_IF_SRT", "0")
+    monkeypatch.setenv("SHOW_NAME", "Test Show")
+    monkeypatch.setattr(generate, "GLOSS_DIR", str(tmp_path))
+    monkeypatch.delenv("GLOSSARY_FILE", raising=False)
+    if glossary is not None:
+        gpath = tmp_path / "Test Show.json"
+        gpath.write_text(json.dumps(glossary))
+        monkeypatch.setenv("GLOSSARY_FILE", str(gpath))
+
+    words = [_FakeWord(" Hello", 0.0, 0.3, 0.95)]
+    seg = _FakeSegment(0.0, 0.3, 0.05, words)
+    monkeypatch.setattr(generate, "WhisperModel", lambda *a, **kw: _FakeModel([seg]))
+    monkeypatch.setattr(sys, "argv", ["generate.py", str(v)])
+    return v
+
+
+def test_a_glossaryless_run_warns_per_episode_and_counts_it(monkeypatch, tmp_path, capsys):
+    _no_gloss_run(monkeypatch, tmp_path)
+    generate.main()
+
+    out = capsys.readouterr().out
+    assert "WARNING: generated without glossary (no name protection)" in out
+    assert "Test Show" in out and "ep.mkv" in out, "the line must name the show and the episode"
+    lr = json.loads((tmp_path / "Test Show.lastrun.json").read_text())
+    assert lr["no_glossary"] == 1, "the sweep summary must carry the count"
+    assert lr["glossary_version"] == "none"
+
+
+def test_a_run_with_a_glossary_does_not_warn(monkeypatch, tmp_path, capsys):
+    _no_gloss_run(monkeypatch, tmp_path, glossary={"show": "Test Show", "names": ["Luffy"], "hard_fixes": {}})
+    generate.main()
+
+    out = capsys.readouterr().out
+    assert "generated without glossary" not in out
+    lr = json.loads((tmp_path / "Test Show.lastrun.json").read_text())
+    assert lr["no_glossary"] == 0
+    assert lr["glossary_version"] != "none"
+
+
 # --- V2 C15: CUDA error gating uses exception TYPE, not a "cuda" substring match -------
 
 

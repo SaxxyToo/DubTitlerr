@@ -274,6 +274,26 @@ def _glossary_version() -> str:
         return "none"
 
 
+def _no_glossary_warning(show, episode) -> int:
+    """One line per episode generated with no glossary; 1 when it fired, else 0.
+
+    A show can reach generate with no glossary at all: DAN DA DAN did on 2026-11-19
+    (`glossary_version: none` in lastrun.json) and the run looked entirely normal. Nothing
+    downstream says so either -- the decoder prompt carries no cast list, glossary.correct()
+    is a no-op and repair has no name anchors -- so the failure mode is "shipped with wrong
+    names and no one knew". The line names the show and the episode; main() counts it into
+    lastrun.json as `no_glossary` and prints the total at the end of the run.
+
+    TODO(notify): route this through dubtitlerr.core.notify once the loops emit a stage/event
+    for it (the notify core itself is merged; generate.py has no event path of its own yet).
+    Log-only for now, deliberately: a run must never fail or slow down over a notification.
+    """
+    if _glossary_version() != "none":
+        return 0
+    log(f"WARNING: generated without glossary (no name protection): {show} / {episode}")
+    return 1
+
+
 def eng_audio_index(video):
     try:
         r = subprocess.run(
@@ -1668,13 +1688,17 @@ def process(video):
     return text_stages(stem, words, segments, audio_duration, rec, fail)
 
 
-def build_lastrun(show, elapsed_s, episodes_total, transcribed, totals, census, words_totals=None):
+def build_lastrun(show, elapsed_s, episodes_total, transcribed, totals, census, words_totals=None, no_glossary=0):
     """The per-show run summary written to glossaries/<show>.lastrun.json.
 
     One builder rather than a dict literal plus a parallel list of field names: the
     per-tier staleness counts only earn their keep if something actually reports them,
     and two declarations of "what lastrun contains" would drift until one of them lied.
-    Tests assert against this function, so the file and the assertion cannot disagree."""
+    Tests assert against this function, so the file and the assertion cannot disagree.
+
+    `no_glossary` is the count of episodes this run generated with no glossary at all --
+    the DAN DA DAN case: `glossary_version: none` alone did not say the episodes had
+    shipped without name protection, and nothing counted them."""
     words_totals = words_totals or {}
     return {
         "show": show,
@@ -1691,6 +1715,7 @@ def build_lastrun(show, elapsed_s, episodes_total, transcribed, totals, census, 
         "words_missing": words_totals.get("words_missing", 0),
         "words_version_mismatch": words_totals.get("words_version_mismatch", 0),
         "words_reused": words_totals.get("words_reused", 0),
+        "no_glossary": no_glossary,
         "model": MODEL,
         "model_version": _model_version(),
         "glossary_version": _glossary_version(),
@@ -1752,6 +1777,8 @@ def main():
     else:
         files = args
     load_glossary()
+    # One derivation, used by the per-episode glossary warning and by lastrun.json.
+    show = os.environ.get("SHOW_NAME", "") or GLOSS.get("show", "") or "unknown_show"
 
     # Cheap pre-filter (stat only, no ffprobe/model): drop files already done so a perpetual
     # re-scan doesn't pay the ~40s model load when there's nothing new to transcribe.
@@ -1824,6 +1851,7 @@ def main():
         log("text-tier work only — skipping the model load")
     t0 = time.monotonic()  # V2 C1: per-show run summary
     transcribed = 0
+    no_glossary = 0  # episodes generated with no glossary at all (see _no_glossary_warning)
     totals = {"cards_written": 0, "dropped_hallucination": 0, "collapsed_runs": 0, "flagged": 0}
     # Text tier first: it is CPU-minutes per episode, so the cheap wins land before the
     # GPU queue starts consuming the night.
@@ -1832,6 +1860,7 @@ def main():
             log("stop requested: not starting", os.path.basename(v))
             break
         log("→", os.path.basename(v), "(text)")
+        no_glossary += _no_glossary_warning(show, os.path.basename(v))
         try:
             statuses[v] = process_text(v)
             log("  ", statuses[v])
@@ -1843,6 +1872,7 @@ def main():
             log("stop requested: not starting", os.path.basename(v))
             break
         log("→", os.path.basename(v))
+        no_glossary += _no_glossary_warning(show, os.path.basename(v))
         if _force_redo():
             force_park_sidecars(os.path.splitext(v)[0])
         try:
@@ -1906,10 +1936,16 @@ def main():
                     pass
     # V2 C1: per-show run summary (glossaries/<show>.lastrun.json) -- one file per --root
     # invocation, since SHOW_NAME/GLOSSARY_FILE are per-run env (see load_glossary()).
-    show = os.environ.get("SHOW_NAME", "") or GLOSS.get("show", "") or "unknown_show"
-    lastrun = build_lastrun(show, round(time.monotonic() - t0, 1), len(todo), transcribed, totals, census)
+    lastrun = build_lastrun(
+        show, round(time.monotonic() - t0, 1), len(todo), transcribed, totals, census, no_glossary=no_glossary
+    )
     report = scope_report(files, since, statuses)
     _write_run_report(report)
+    if no_glossary:
+        log(
+            f"generated without glossary: {no_glossary} episode(s) — no name protection "
+            f"(glossary_version: none); see the WARNING lines above"
+        )
     if isinstance(lastrun, dict):
         lastrun["scope"] = report  # "done" carries its evidence: what was asked for vs what exists
     try:

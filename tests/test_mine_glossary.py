@@ -751,3 +751,135 @@ def test_an_invalid_scope_pattern_mines_nothing(tmp_path, monkeypatch):
     monkeypatch.setenv("GENERATE_ONLY_RE", "S01E(")
     mine_glossary.main()
     assert read == []
+
+
+# --- bootstrap: a show that shipped with no glossary -----------------------------------
+#
+# DAN DA DAN (2026-11-19) was generated and delivered with `glossary_version: none`. Mining is
+# the only stage that creates a glossary, and it skips any episode carrying a delivery stamp or
+# a .eng.dubtitles.* sibling -- so once the show is delivered the mining window is closed for
+# good. `--bootstrap` re-opens it, but ONLY for a show with no glossary file: it exists to
+# create the first one, never to widen the normal mining window.
+
+
+def _bootstrap_tree(tmp_path, monkeypatch, episodes=3, delivered=True, glossary=None):
+    """A show with `episodes` episodes, optionally all delivered (stamp + sidecar)."""
+    show = tmp_path / "Some Show"
+    show.mkdir()
+    for i in range(1, episodes + 1):
+        (show / f"Some Show - S01E{i:02d}.mkv").write_text("")
+        if delivered:
+            (show / f"Some Show - S01E{i:02d}.dubtitles.done").write_text("{}")
+            (show / f"Some Show - S01E{i:02d}.eng.dubtitles.ass").write_text("")
+    gloss = tmp_path / "gloss"
+    gloss.mkdir()
+    gpath = gloss / "Some Show.json"
+    if glossary is not None:
+        gpath.write_text(json.dumps(glossary))
+    monkeypatch.setattr(mine_glossary, "GLOSS_DIR", str(gloss))
+    monkeypatch.delenv("GENERATE_ONLY_RE", raising=False)
+    monkeypatch.setattr(mine_glossary, "MIN_COUNT", 3)
+    read = []
+    text = "I saw Brownbeard come.\nI saw Brownbeard leave.\nI saw Brownbeard sing."
+    monkeypatch.setattr(mine_glossary, "eng_sub_text", lambda p: read.append(os.path.basename(p)) or text)
+    return show, gpath, read
+
+
+def test_bootstrap_refuses_when_the_show_already_has_a_glossary(tmp_path, monkeypatch, capsys):
+    """Bootstrap creates the FIRST glossary. On a show that already has one it must refuse --
+    that is the gate that keeps it from becoming a way to re-mine delivered episodes."""
+    cfg = {"show": "Some Show", "names": ["Luffy"], "hard_fixes": {}}
+    show, gpath, read = _bootstrap_tree(tmp_path, monkeypatch, glossary=cfg)
+    before = gpath.read_text()
+    monkeypatch.setattr(sys, "argv", ["mine_glossary.py", str(show), "--bootstrap"])
+
+    assert mine_glossary.main() == 2, "a refusal must be a nonzero exit, not a silent no-op"
+    out = capsys.readouterr().out
+    assert "bootstrap refused" in out and str(gpath) in out
+    assert read == [], "nothing may be read: the glossary exists, so the normal window applies"
+    assert gpath.read_text() == before, "the existing glossary is untouched"
+
+
+def test_bootstrap_mines_delivered_episodes_when_no_glossary_exists(tmp_path, monkeypatch):
+    show, gpath, read = _bootstrap_tree(tmp_path, monkeypatch, episodes=2)
+    monkeypatch.setattr(sys, "argv", ["mine_glossary.py", str(show), "--bootstrap"])
+
+    assert mine_glossary.main() == 0
+    assert sorted(read) == ["Some Show - S01E01.mkv", "Some Show - S01E02.mkv"], "delivered episodes are mined"
+    assert json.loads(gpath.read_text())["names"] == ["Brownbeard"]
+
+
+def test_the_normal_mining_path_still_skips_delivered_episodes(tmp_path, monkeypatch):
+    """Regression: without --bootstrap nothing changes. The per-episode skip is what stops the
+    re-mining loop, and bootstrap may not weaken it."""
+    show, gpath, read = _bootstrap_tree(tmp_path, monkeypatch, episodes=2)
+    monkeypatch.setattr(sys, "argv", ["mine_glossary.py", str(show)])
+
+    assert mine_glossary.main() == 0
+    assert read == []
+    assert not gpath.exists(), "nothing mined, so no file is created"
+
+
+def test_bootstrap_is_bounded_to_the_most_recent_episodes(tmp_path, monkeypatch):
+    show, gpath, read = _bootstrap_tree(tmp_path, monkeypatch, episodes=15)
+    monkeypatch.setattr(sys, "argv", ["mine_glossary.py", str(show), "--bootstrap"])
+
+    assert mine_glossary.main() == 0
+    assert read[0] == "Some Show - S01E15.mkv", "newest first"
+    assert sorted(read) == [f"Some Show - S01E{i:02d}.mkv" for i in range(4, 16)], "12 episodes, not 15"
+    assert mine_glossary.DEFAULT_BOOTSTRAP_LIMIT == 12
+
+
+def test_episodes_with_nothing_to_mine_do_not_consume_the_bound(tmp_path, monkeypatch):
+    """DAN DA DAN, measured 2026-11-19: the newest 12 files (all of season 2) carry no English
+    subtitle track, so a bound counted in FILES mined nothing while looking like a finished
+    run. The bound counts episodes that actually yielded text."""
+    show, gpath, read = _bootstrap_tree(tmp_path, monkeypatch, episodes=6)
+    silent = {f"Some Show - S01E{i:02d}.mkv" for i in (6, 5, 4, 3)}
+    text = "I saw Brownbeard come.\nI saw Brownbeard leave.\nI saw Brownbeard sing."
+
+    def fake_text(path):
+        name = os.path.basename(path)
+        read.append(name)
+        return "" if name in silent else text
+
+    monkeypatch.setattr(mine_glossary, "eng_sub_text", fake_text)
+    monkeypatch.setattr(
+        sys, "argv", ["mine_glossary.py", str(show), "--bootstrap", "--bootstrap-limit", "2"]
+    )
+
+    assert mine_glossary.main() == 0
+    assert read == [f"Some Show - S01E{i:02d}.mkv" for i in (6, 5, 4, 3, 2, 1)], (
+        "kept walking past the 4 silent episodes to mine 2 that had text"
+    )
+
+
+def test_the_bootstrap_bound_is_overridable(tmp_path, monkeypatch):
+    show, gpath, read = _bootstrap_tree(tmp_path, monkeypatch, episodes=5)
+    monkeypatch.setattr(
+        sys, "argv", ["mine_glossary.py", str(show), "--bootstrap", "--bootstrap-limit", "2"]
+    )
+
+    assert mine_glossary.main() == 0
+    assert read == ["Some Show - S01E05.mkv", "Some Show - S01E04.mkv"]
+
+
+def test_a_junk_bootstrap_bound_falls_back_to_the_default():
+    # An unbounded bootstrap is the one failure the bound exists to prevent.
+    assert mine_glossary._bootstrap_limit(None) == mine_glossary.DEFAULT_BOOTSTRAP_LIMIT
+    assert mine_glossary._bootstrap_limit(0) == mine_glossary.DEFAULT_BOOTSTRAP_LIMIT
+    assert mine_glossary._bootstrap_limit(-4) == mine_glossary.DEFAULT_BOOTSTRAP_LIMIT
+    assert mine_glossary._bootstrap_limit("nonsense") == mine_glossary.DEFAULT_BOOTSTRAP_LIMIT
+    assert mine_glossary._bootstrap_limit(3) == 3
+
+
+def test_bootstrap_never_writes_into_the_show_directory(tmp_path, monkeypatch):
+    """Bootstrap reads the media tree and writes only the glossary file. Guardrail, not a
+    nicety: the episodes it mines are delivered, so a stray write lands in the library."""
+    show, gpath, read = _bootstrap_tree(tmp_path, monkeypatch, episodes=2)
+    before = {p.name for p in show.iterdir()}
+    monkeypatch.setattr(sys, "argv", ["mine_glossary.py", str(show), "--bootstrap"])
+
+    assert mine_glossary.main() == 0
+    assert {p.name for p in show.iterdir()} == before
+    assert gpath.exists() and gpath.parent == tmp_path / "gloss"

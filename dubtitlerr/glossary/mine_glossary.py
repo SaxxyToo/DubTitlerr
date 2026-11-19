@@ -6,11 +6,23 @@ Never rebuilds from scratch: curated names, hard_fixes and a curated initial_pro
 preserved; mining only appends. Runs BEFORE generate (in gen_loop) so the grown dictionary
 applies to the very episodes being transcribed, and grows again whenever new episodes appear.
 
+BOOTSTRAP (`--bootstrap`): the one deliberate exception to the per-episode skip below. A show
+can be generated and delivered with no glossary at all (DAN DA DAN, 2026-11-19: mining
+admitted nothing, no request file existed, both episodes show `glossary_version: none`), and
+delivery closes the mining window for good — so nothing ever creates the file. `--bootstrap`
+mines DELIVERED episodes too, but only for a show that has NO glossary file; with one present
+it refuses (exit 2) and reads nothing. Same gates (deny-list, MINE_MIN_COUNT, lowercase share,
+mid-sentence) and still purely additive. Bounded to the most recent episodes that actually carry
+a mineable English track (DEFAULT_BOOTSTRAP_LIMIT, or `--bootstrap-limit`), so a rescue run cannot
+re-read a whole show: a file whose newest releases have no such track costs a probe, not an
+extraction. It writes only the glossary file, never the media tree.
+
 CPU only (ffmpeg + pysubs2). Env: GLOSSARY_DIR (default /config/glossaries),
 MINE_MIN_COUNT (a name must recur >= this across the new episodes, default 3).
 Built with help of Claude (Anthropic).
 """
 
+import argparse
 import contextlib
 import json
 import math
@@ -38,6 +50,10 @@ EXTRA_DIRS = load_extras()  # data/extras.txt is the source (see common.load_ext
 
 GLOSS_DIR = os.environ.get("GLOSSARY_DIR", "/config/glossaries")
 MIN_COUNT = int(os.environ.get("MINE_MIN_COUNT", "3"))
+# Bootstrap's bound: the most recent N episode files, by path name. A rescue run exists to
+# create a first glossary cheaply; walking a 400-episode show at ~37 s each is the sweep
+# this bound prevents. Overridable per run with --bootstrap-limit.
+DEFAULT_BOOTSTRAP_LIMIT = 12
 # Lowercase-share gate (see admit): ordinary words show up lowercase in the same text.
 # Measured over five shows: real names sit at 0.0, the highest real word-name is Merry at 0.10;
 # plain junk runs 0.62 (School) to 0.95 (Life). 0.6 does NOT clear every ordinary word: Triple .55,
@@ -378,21 +394,66 @@ def queue_for_review(cfg, queue):
     return sorted(added)
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("usage: mine_glossary.py <show_dir>")
-        return
-    show_dir = sys.argv[1].rstrip("/")
+def _bootstrap_limit(explicit: int | str | None = None) -> int:
+    """How many episodes a bootstrap may read: the flag's value, else DEFAULT_BOOTSTRAP_LIMIT.
+    A value that is not positive gives the default -- an unbounded bootstrap is the one
+    failure this bound exists to prevent."""
+    if explicit is None:
+        return DEFAULT_BOOTSTRAP_LIMIT
+    try:
+        value = int(explicit)
+    except (TypeError, ValueError):
+        return DEFAULT_BOOTSTRAP_LIMIT
+    return value if value > 0 else DEFAULT_BOOTSTRAP_LIMIT
+
+
+def _parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog="mine_glossary.py",
+        description="ADDITIVE glossary mining for one show: append recurring proper nouns from "
+        "the embedded English subtitles of its not-yet-dubtitled episodes.",
+    )
+    parser.add_argument("show_dir")
+    parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="create the FIRST glossary for a show that was delivered without one: mines "
+        "delivered episodes too. Refused when the show already has a glossary.",
+    )
+    parser.add_argument(
+        "--bootstrap-limit",
+        type=int,
+        default=None,
+        help=f"most recent episodes a bootstrap may read (default {DEFAULT_BOOTSTRAP_LIMIT})",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = _parse_args(argv)
+    show_dir = args.show_dir.rstrip("/")
     show = os.path.basename(show_dir)
     gpath = os.path.join(GLOSS_DIR, show + ".json")
     from dubtitlerr.glossary import glossary_lock
 
     with glossary_lock.locked(gpath, "mine") as ok:  # the whole read-count-write: a busy glossary skips this sweep's mining
-        if ok:
-            _mine(show_dir, show, gpath)
+        if not ok:
+            return 0
+        if args.bootstrap and os.path.exists(gpath):
+            # The gate, checked inside the lock so a concurrent writer cannot slip between the
+            # test and the read. Bootstrap exists to create the first glossary; on a show that
+            # has one, the ordinary window (new episodes only) is what should apply.
+            print(
+                f"mine[{show}]: bootstrap refused: {gpath} already exists.\n"
+                "  Bootstrap only creates the FIRST glossary; this show has one, so its "
+                "normal mining window (new episodes only) applies. Nothing was read or written."
+            )
+            return 2
+        _mine(show_dir, show, gpath, bootstrap=args.bootstrap, bootstrap_limit=_bootstrap_limit(args.bootstrap_limit))
+    return 0
 
 
-def _mine(show_dir, show, gpath):
+def _mine(show_dir, show, gpath, bootstrap=False, bootstrap_limit=DEFAULT_BOOTSTRAP_LIMIT):
     cfg = {"show": show, "initial_prompt": "", "names": [], "hard_fixes": {}}
     if os.path.exists(gpath):
         try:
@@ -414,6 +475,8 @@ def _mine(show_dir, show, gpath):
     except re.error as e:
         print(f"mine[{show}]: invalid GENERATE_ONLY_RE {only!r} ({e}); mining nothing")
         return
+
+    episodes = []
     for dp, dns, fs in os.walk(show_dir):
         dns[:] = [d for d in dns if d.lower() not in EXTRA_DIRS]
         for fn in fs:
@@ -421,31 +484,59 @@ def _mine(show_dir, show, gpath):
                 continue
             if only_rx is not None and not only_rx.search(fn):
                 continue
-            stem = os.path.splitext(os.path.join(dp, fn))[0]
-            # only NEW episodes -> each episode mined exactly once, additively. "Not new" is a
-            # pipeline transcript OR a delivery stamp: delivery removes the transcript (mux deletes
-            # it, sidecar mode renames it to SIDECAR_SUFFIX), so without the stamp check every
-            # delivered episode read as new and was re-mined on every run.
-            if any(os.path.exists(stem + suf) for suf in (".eng.dubtitles.ass", ".eng.dubtitles.srt", STAMP_SUFFIX)):
-                continue
-            # Soft stop (SIGTERM at window close). Between episodes is the safe point: nothing
-            # is persisted until the whole walk is counted, so leave WITHOUT writing -- a
-            # glossary admitted from half the episodes would apply MIN_COUNT to a partial
-            # tally. The unmined episodes still have no dubtitle, so the next sweep re-reads them.
-            if stop_requested():
-                print(f"stop requested: leaving mine after {read_eps} episodes")
-                return
-            read_eps += 1
-            print(f"mine[{show}]: {read_eps} {fn}", flush=True)
-            try:
-                with _deadline(_episode_timeout(), f"mining {fn}"):
-                    txt = eng_sub_text(os.path.join(dp, fn))
-            except TimeoutError as exc:
-                print(f"mine[{show}]: skipped {fn}: {exc}", flush=True)
-                continue
-            if txt:
-                mine_text(txt, counter, poss, mid, lower=lower)
-                mined_eps += 1
+            episodes.append(os.path.join(dp, fn))
+    if bootstrap:
+        # "Most recent" = last by path name, which is episode order for the SxxExx naming every
+        # media server uses (and season order across the season folders). Newest-first, because
+        # the bound counts episodes that actually carry something to mine: DAN DA DAN's newest
+        # 12 files (all of S2) hold no English subtitle track at all, and a plain "last 12
+        # files" bound would have mined nothing while looking like a completed run -- measured
+        # 2026-11-19. A file with no mineable track costs one ffprobe and no extraction.
+        # Sorted ONLY here: the ordinary path keeps os.walk's order untouched, so a bootstrap
+        # run cannot change what a normal sweep admits.
+        episodes.sort(reverse=True)
+        print(
+            f"mine[{show}]: BOOTSTRAP -- no glossary for this show, mining delivered episodes too "
+            f"(up to {bootstrap_limit} that carry an English subtitle track)"
+        )
+
+    for path in episodes:
+        if bootstrap and mined_eps >= bootstrap_limit:
+            print(f"mine[{show}]: bootstrap bound reached ({bootstrap_limit} mineable episode(s))")
+            break
+        fn = os.path.basename(path)
+        stem = os.path.splitext(path)[0]
+        # only NEW episodes -> each episode mined exactly once, additively. "Not new" is a
+        # pipeline transcript OR a delivery stamp: delivery removes the transcript (mux deletes
+        # it, sidecar mode renames it to SIDECAR_SUFFIX), so without the stamp check every
+        # delivered episode read as new and was re-mined on every run.
+        #
+        # BOOTSTRAP is the single gated exception: a show generated with no glossary at all has
+        # nothing to re-mine INTO (no file exists), so the loop this skip prevents cannot start.
+        # The gate is the refusal in main() -- with a glossary present, --bootstrap exits 2 --
+        # so this branch is only ever reached for a show that has none.
+        if not bootstrap and any(
+            os.path.exists(stem + suf) for suf in (".eng.dubtitles.ass", ".eng.dubtitles.srt", STAMP_SUFFIX)
+        ):
+            continue
+        # Soft stop (SIGTERM at window close). Between episodes is the safe point: nothing
+        # is persisted until the whole walk is counted, so leave WITHOUT writing -- a
+        # glossary admitted from half the episodes would apply MIN_COUNT to a partial
+        # tally. The unmined episodes still have no dubtitle, so the next sweep re-reads them.
+        if stop_requested():
+            print(f"stop requested: leaving mine after {read_eps} episodes")
+            return
+        read_eps += 1
+        print(f"mine[{show}]: {read_eps} {fn}", flush=True)
+        try:
+            with _deadline(_episode_timeout(), f"mining {fn}"):
+                txt = eng_sub_text(path)
+        except TimeoutError as exc:
+            print(f"mine[{show}]: skipped {fn}: {exc}", flush=True)
+            continue
+        if txt:
+            mine_text(txt, counter, poss, mid, lower=lower)
+            mined_eps += 1
 
     dropped = []
     new, queue = admit(counter, poss, mid, MIN_COUNT, COMMON, existing, lower, dropped)
@@ -470,4 +561,4 @@ def _mine(show_dir, show, gpath):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
