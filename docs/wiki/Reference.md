@@ -404,15 +404,17 @@ The muxed `Dubtitles` track is appended last and flagged default, so the relativ
 | `WATCH_QUEUE_WINDOW_DAYS`                  | _(unset: step skipped)_     | Days of watch history to consider                                                                                                                                                                                         |
 | `WATCH_QUEUE_PIN`                          | _(unset)_                   | Always queue this show first, watched or not                                                                                                                                                                              |
 | `WATCHSTATE_URL` / `WATCHSTATE_API_KEY`    | _(empty)_                   | WatchState source                                                                                                                                                                                                         |
+| `JELLYFIN_URL` / `JELLYFIN_API_KEY` / `JELLYFIN_USER` | _(empty)_ / _(empty)_ / _(empty: every user)_ | Jellyfin direct watch source; an empty user aggregates all users                                                                                                                                        |
 | `PLEX_URL` / `PLEX_TOKEN` / `PLEX_SECTION` | _(empty)_ / _(empty)_ / `7` | Plex refresh and watch source                                                                                                                                                                                             |
 | `PLEX_PATH`                                | _(empty)_                   | Path prefix Plex sees, if it differs                                                                                                                                                                                      |
 
 **How a watched show finds its folder:** by the show's TVDB id first — WatchState's
-`parent.guid_tvdb`, or the `tvdb://` Guid on the Plex show — against the `{tvdb-N}` in the
-folder name. Without an id it falls back to the title: exact, then with the `(YYYY)` kept,
-then with it stripped, then case/punctuation-insensitive. A title two folders share (e.g.
-`JoJo's Bizarre Adventure` for both the 1993 and 2012 series) is reported as unmatched, never
-guessed — so name your folders `Title (YYYY) {tvdb-N}` and the id settles it.
+`parent.guid_tvdb`, the `tvdb://` Guid on the Plex show, or Jellyfin's `ProviderIds.Tvdb` —
+against the `{tvdb-N}` in the folder name. Without an id it falls back to the title: exact,
+then with the `(YYYY)` kept, then with it stripped, then case/punctuation-insensitive. A
+title two folders share (e.g. `JoJo's Bizarre Adventure` for both the 1993 and 2012 series)
+is reported as unmatched, never guessed — so name your folders `Title (YYYY) {tvdb-N}` and
+the id settles it.
 
 ### Loop cadence
 

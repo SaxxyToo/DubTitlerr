@@ -28,7 +28,7 @@ CATEGORIES = [
     {"id": "connections", "label": "Connections", "summary": "The LLM servers each stage talks to."},
     {"id": "output", "label": "Output", "summary": "Merged subtitle styling, review gate and merge pace."},
     {"id": "schedule", "label": "Schedule", "summary": "When the builder runs and what it queues."},
-    {"id": "connect", "label": "Connect", "summary": "Plex, WatchState and webhook access."},
+    {"id": "connect", "label": "Connect", "summary": "Plex, WatchState, Jellyfin and webhook access."},
 ]
 CATEGORY_IDS = tuple(c["id"] for c in CATEGORIES)
 APPLIES = ("next_sweep", "next_show", "next_merge_pass", "next_episode", "restart")
@@ -126,6 +126,9 @@ _wave('PLEX_TOKEN', 'connect', 'Plex token', 'Token the builder uses to refresh 
 _wave('PLEX_SECTION', 'connect', 'Plex library section', 'Plex library section id to refresh.', 'string', '7', ['gen', 'merge'], 'next_show', pattern=r"[A-Za-z0-9_-]{1,32}", pattern_help='must be a section id')
 _wave('WATCHSTATE_URL', 'connect', 'WatchState URL', 'Address of your WatchState server; tokens belong in a secret field.', 'url', '', 'gen', 'next_show')
 _wave('WATCHSTATE_API_KEY', 'connect', 'WatchState API key', 'API key for WatchState.', 'secret', None, 'gen', 'next_show')
+_wave('JELLYFIN_URL', 'connect', 'Jellyfin URL', 'Address of your Jellyfin server; tokens belong in a secret field.', 'url', '', 'gen', 'next_show')
+_wave('JELLYFIN_API_KEY', 'connect', 'Jellyfin API key', 'API key the builder uses to read Jellyfin watch history.', 'secret', None, 'gen', 'next_show')
+_wave('JELLYFIN_USER', 'connect', 'Jellyfin user', 'User whose watch history counts; empty aggregates every user.', 'string', '', 'gen', 'next_show')
 _wave('WEBHOOK_TOKEN', 'connect', 'Webhook token', 'Secret in the Sonarr and Radarr webhook URL.', 'secret', None, 'server', 'restart')
 # Read-only in v0.3.0 (not first wave per binding review fix)
 _add('ANIME_ORDER', 'schedule', 'Show order file', 'File listing the shows in the order the builder sweeps them.', 'string', '/config/anime_order.txt', 'gen', 'next_sweep', pattern=r"/[^\x00-\x1f]{0,500}", pattern_help='must be an absolute path')

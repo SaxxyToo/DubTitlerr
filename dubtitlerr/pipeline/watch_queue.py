@@ -6,7 +6,7 @@ module only has to regenerate that file. It answers exactly one question -- **is
 live?** -- and never narrows within a show: once queued, the whole series regenerates,
 because the value of a subtitle track is in the episodes ahead of the viewer, not behind.
 
-TWO SOURCES, NEITHER OPTIONAL. Measured 2026-08-21:
+THREE SOURCES, NONE OF THEM A SUPERSET. Measured 2026-08-21; Jellyfin added 2026-11-19:
 
   WatchState only   One Pace after 2026-07-11. Playback is on Jellyfin; WatchState syncs
                     the watched flag into Plex WITHOUT bumping Plex's show-level
@@ -14,14 +14,29 @@ TWO SOURCES, NEITHER OPTIONAL. Measured 2026-08-21:
   Plex only         SPY x FAMILY, Serial Experiments Lain, Mashle, SK8 the Infinity.
                     WatchState is configured for ONE Plex user (account 1) plus the
                     household Jellyfin; other Plex users are invisible to it.
+  Jellyfin direct   The server those two are downstream of. WatchState imports only the
+                    slice it syncs and Plex only the accounts it was pointed at; a Jellyfin
+                    row is the play itself, so the queue stops depending on what the sync
+                    layer managed to copy.
 
-Each source alone returns a confident, correctly-sorted, incomplete list. Neither is a
+Each source alone returns a confident, correctly-sorted, incomplete list. No one is a
 superset, so the queue is their union.
 
+TODO(deploy): the Jellyfin entry above is the reason it was added, not a measurement. On the
+live library the deploy phase must compare Jellyfin against the WatchState∪Plex union on a
+spread of shows and record what it adds; `Filters=IsPlayed,IsResumable` and the `/Users`
+permission of the API key need the same live confirmation.
+
 TRI-STATE, after tools/vad.py: reachable-with-data / reachable-empty / unreachable. An empty
-answer and an unreachable source are different facts, and only one of them is evidence. If
-either source cannot be read, the order file is left ALONE -- a stale queue is safe; a queue
-silently narrowed by an outage is not.
+answer and an unreachable source are different facts, and only one of them is evidence. If a
+CONFIGURED source cannot be read, the order file is left ALONE -- a stale queue is safe; a
+queue silently narrowed by an outage is not.
+
+  One deliberate asymmetry: WatchState and Plex predate Jellyfin, and an unset one still
+  REFUSES (their callers were written when the queue had no other way to exist). Jellyfin is
+  additive: with neither JELLYFIN_URL nor JELLYFIN_API_KEY set it is simply not a source, so
+  every existing deployment keeps working with no new configuration. A HALF-configured
+  Jellyfin (one of the two set) is a mistake, not an absent source, and refuses.
 """
 
 from __future__ import annotations
@@ -34,6 +49,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 from dubtitlerr.core.atomic_file import atomic_write
 
@@ -42,6 +58,9 @@ WATCHSTATE_API_KEY = os.environ.get("WATCHSTATE_API_KEY", "")
 PLEX_URL = os.environ.get("PLEX_URL", "")
 PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "")
 PLEX_SECTION = os.environ.get("PLEX_SECTION", "7")
+JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "")
+JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
+JELLYFIN_USER = os.environ.get("JELLYFIN_USER", "")
 ANIME_ROOT = os.environ.get("ANIME_ROOT", "/media/Anime Library")
 TIMEOUT = int(os.environ.get("WATCH_QUEUE_TIMEOUT", "30"))
 PER_PAGE = 1000
@@ -151,6 +170,128 @@ def _plex_show_tvdb(key: str, cache: dict) -> str | None:
     return cache[key]
 
 
+_JELLYFIN_ID_RE = re.compile(r"[0-9a-fA-F]{32}")
+_ISO_FRAC_RE = re.compile(r"\.(\d+)")
+
+
+def _jellyfin_ts(value) -> int:
+    """Epoch seconds from Jellyfin's ISO-8601 `LastPlayedDate`, or 0 when it is absent or
+    unusable. .NET writes seven fractional digits; `fromisoformat` reads at most six, so the
+    fraction is truncated first. A naive value is treated as UTC, which is what the server
+    emits when it omits the offset."""
+    if not value:
+        return 0
+    text = str(value).strip().replace("Z", "+00:00")
+    text = _ISO_FRAC_RE.sub(lambda m: "." + (m.group(1) + "000000")[:6], text)
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return 0
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
+
+
+def _jellyfin_users(base: str) -> list:
+    """The server's users, for aggregation or name resolution. Raises Unreachable."""
+    body = _get(f"{base}/Users", {"X-Emby-Token": JELLYFIN_API_KEY})
+    try:
+        users = json.loads(body)
+    except ValueError as e:
+        raise Unreachable(f"jellyfin: bad JSON from /Users: {e}") from e
+    if not isinstance(users, list):
+        raise Unreachable("jellyfin: /Users did not return a list")
+    return users
+
+
+def _jellyfin_user_ids(users: list, wanted: str) -> list:
+    """The user ids to read: one when JELLYFIN_USER names one, every user when it is empty.
+
+    `JELLYFIN_USER` accepts a user id (32 hex characters) or the account name. A raw id skips
+    /Users, so an API key that cannot enumerate users still works for a deployment that knows
+    the id. An empty user list, an unknown name, or a user without an id is a configuration
+    failure, never "nobody watched anything"."""
+    if wanted:
+        if _JELLYFIN_ID_RE.fullmatch(wanted):
+            return [wanted]
+        for u in users:
+            if (u.get("Name") or "").strip().casefold() == wanted.casefold():
+                uid = str(u.get("Id") or "")
+                if uid:
+                    return [uid]
+        raise Unreachable(f"jellyfin: user {wanted!r} not found")
+    ids = [str(u["Id"]) for u in users if u.get("Id")]
+    if not ids:
+        raise Unreachable("jellyfin: /Users returned no users")
+    return ids
+
+
+def _jellyfin_scan_user(base: str, user_id: str, since: int, out: dict) -> None:
+    """Merge one user's series rows into `out`, every page. Raises Unreachable."""
+    start, pages = 0, 0
+    while True:
+        url = (
+            f"{base}/Users/{user_id}/Items?Recursive=true&IncludeItemTypes=Series"
+            f"&Fields=UserData,ProviderIds&Filters=IsPlayed,IsResumable"
+            f"&EnableTotalRecordCount=false&StartIndex={start}&Limit={PER_PAGE}"
+        )
+        body = _get(url, {"X-Emby-Token": JELLYFIN_API_KEY})
+        try:
+            doc = json.loads(body)
+        except ValueError as e:
+            raise Unreachable(f"jellyfin: bad JSON for user {user_id} at StartIndex {start}: {e}") from e
+        items = doc.get("Items")
+        if items is None:
+            raise Unreachable("jellyfin: no `Items` key in response")
+        for it in items:
+            ud = it.get("UserData") or {}
+            ts = _jellyfin_ts(ud.get("LastPlayedDate"))
+            title = (it.get("Name") or "").strip()
+            if title and ts >= since:
+                key = tag_tvdb(title, (it.get("ProviderIds") or {}).get("Tvdb"))
+                out[key] = max(out.get(key, 0), ts)
+        # EVERY page. The selection is not ordered by recency, so the window filter above
+        # cannot stop the walk early; StartIndex is the only way to see the rest.
+        pages += 1
+        start += len(items)
+        total = doc.get("TotalRecordCount")
+        if not items:
+            if isinstance(total, int) and total > start:
+                raise Unreachable(f"jellyfin: empty page at StartIndex {start} below TotalRecordCount {total}")
+            return
+        if isinstance(total, int) and total > 0 and start >= total:
+            return
+        if pages >= MAX_PAGES:
+            # Silently returning here would be the exact failure this module exists to
+            # prevent: a complete-looking queue built from the pages that happened to fit.
+            raise Unreachable(f"jellyfin: more than {MAX_PAGES} pages for user {user_id}")
+
+
+def from_jellyfin(since: int) -> dict:
+    """{show title -> last played unix ts} from Jellyfin directly. Raises Unreachable.
+
+    `Filters=IsPlayed,IsResumable` narrows the walk to series somebody watched or left
+    part-way; `Fields=UserData,ProviderIds` carries both the timestamp and the tvdb id, so
+    no per-show metadata request is needed (unlike Plex). Dates are filtered CLIENT-SIDE:
+    `LastPlayedDate` has no dependable server-side lower bound and the filter combination is
+    not identical on every server build, so a row counts only when its parsed timestamp is
+    at or after `since` -- the same reason Plex ignores `viewedAt>>=` below.
+
+    With JELLYFIN_USER empty every user's rows are merged and the newest play wins, because
+    the queue asks "is ANYONE watching this". A configured-but-unreadable server raises;
+    build() is what decides that an entirely unconfigured Jellyfin is not a source."""
+    if not (JELLYFIN_URL and JELLYFIN_API_KEY):
+        missing = "/".join(n for n, v in (("JELLYFIN_URL", JELLYFIN_URL), ("JELLYFIN_API_KEY", JELLYFIN_API_KEY)) if not v)
+        raise Unreachable(f"{missing} not set")
+    base = JELLYFIN_URL.rstrip("/")
+    wanted = (JELLYFIN_USER or "").strip()
+    users = [] if (wanted and _JELLYFIN_ID_RE.fullmatch(wanted)) else _jellyfin_users(base)
+    out: dict[str, int] = {}
+    for user_id in _jellyfin_user_ids(users, wanted):
+        _jellyfin_scan_user(base, user_id, since, out)
+    return out
+
+
 def library_dirs(root: str) -> list:
     try:
         return sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)))
@@ -242,14 +383,20 @@ def match_dirs(titles: dict, dirs: list) -> tuple[list, list]:
 
 
 def build(since: int, root: str, pins: list | None = None) -> tuple[list, dict]:
-    """Union both sources. Raises Unreachable if EITHER cannot be read."""
+    """Union every configured source. Raises Unreachable if a configured one cannot be read.
+
+    WatchState and Plex are required, as they always were. Jellyfin is skipped when neither
+    JELLYFIN_URL nor JELLYFIN_API_KEY is set; a half-configured pair still goes through
+    from_jellyfin() and refuses there instead of silently disappearing."""
     ws = from_watchstate(since)
     px = from_plex(since)
-    if not ws and not px:
-        raise Unreachable("both sources reachable but empty -- cannot tell, refusing to write")
+    jf = from_jellyfin(since) if (JELLYFIN_URL or JELLYFIN_API_KEY) else {}
+    if not ws and not px and not jf:
+        raise Unreachable("all sources reachable but empty -- cannot tell, refusing to write")
     merged: dict[str, int] = dict(ws)
-    for t, ts in px.items():
-        merged[t] = max(merged.get(t, 0), ts)
+    for source in (px, jf):
+        for t, ts in source.items():
+            merged[t] = max(merged.get(t, 0), ts)
     dirs = library_dirs(root)
     order, misses = match_dirs(merged, dirs)
     # A pin is resolved through the SAME three tiers as a watched title, and only a pin
@@ -271,6 +418,7 @@ def build(since: int, root: str, pins: list | None = None) -> tuple[list, dict]:
     return order, {
         "watchstate": len(ws),
         "plex": len(px),
+        "jellyfin": len(jf),
         "union": len(merged),
         "matched": len(order),
         "unmatched": misses,
@@ -296,7 +444,7 @@ def main(argv=None):
         print(f"watch_queue: REFUSING TO WRITE -- {e}", file=sys.stderr)
         return 2
     print(
-        f"watch_queue: watchstate={rep['watchstate']} plex={rep['plex']} "
+        f"watch_queue: watchstate={rep['watchstate']} plex={rep['plex']} jellyfin={rep['jellyfin']} "
         f"union={rep['union']} matched={rep['matched']} window={a.window_days}d"
     )
     if rep["bad_pins"]:
