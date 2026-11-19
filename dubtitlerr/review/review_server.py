@@ -483,6 +483,32 @@ def _triage_key(e: dict) -> tuple:
     )
 
 
+# R5: the reference a repair was anchored on, folded into one class the page can chip and
+# filter on. r2 records `ref_role`/`ref_provenance`/`ref_track_title` on new entries only;
+# the 1,917 items already open when it shipped carry none of them, so the split is:
+#
+#   dub / translation  the entry names the role of the track its reference came from
+#   unanchored         no reference at all -- the same condition as `permanent` below
+#   unclassified       there WAS a reference but no recorded role (every legacy entry)
+#
+# "unclassified" is deliberately not folded into "unanchored": they ask the reviewer
+# different questions. An unanchored card cannot be repaired again without a guess; a
+# legacy anchored one can, we simply cannot say from which track.
+REF_CLASSES = ("dub", "translation", "unanchored", "unclassified")
+
+
+def ref_class(entry: dict) -> str:
+    """Which kind of anchor this entry's repair used, from R2's per-entry fields.
+
+    Only dub and translation reach here: reftracks never selects a signs track and `ours`
+    is never a reference, so a recorded role outside those two cannot name an anchor and
+    falls through to the reference-text test like a legacy entry."""
+    role = str(entry.get("ref_role") or "").strip().lower()
+    if role in ("dub", "translation"):
+        return role
+    return "unanchored" if not (entry.get("reference") or "").strip() else "unclassified"
+
+
 def entry_id(entry: dict) -> str:
     """Identity of the exact question, independent of its position in a rewritten queue."""
     fields = [entry.get(k, "") for k in ("stage", "reason", "original_text", "proposed_text")]
@@ -505,6 +531,13 @@ def _decorate(stem: str, e: dict, index: int, starts: dict, context: dict | None
     # `starts`, one entry per occurrence, so context and seek target stay paired.
     d["context"] = (context or {}).get(decisions.key(e.get("original_text", "")), [])
     d["offered"] = list(OFFERED.get((str(e.get("stage", "")), str(e.get("reason", ""))), DEFAULT_OFFERED))
+    # R5. Normalised, so a consumer never has to tell "absent" from "empty" -- and the whole
+    # ref block is present on every entry, legacy ones included, as nulls. `ref_class` is the
+    # only field the page filters on; it is always one of REF_CLASSES.
+    d["ref_role"] = e.get("ref_role") or None
+    d["ref_provenance"] = e.get("ref_provenance") or None
+    d["ref_track_title"] = e.get("ref_track_title") or None
+    d["ref_class"] = ref_class(e)
     # No reference means nothing downstream can repair this card again -- a bad force here
     # is permanent. Every S31 card is unanchored, so this is the common case, not an edge.
     d["permanent"] = not (e.get("reference") or "").strip()
@@ -603,8 +636,16 @@ def handle_shared() -> dict:
             if e.get("stage") != "repair_applied":
                 continue
             orig, prop = e.get("original_text", ""), e.get("proposed_text", "")
-            g = groups.setdefault((show, decisions.key(orig), decisions.key(prop)), {"stems": set(), "e": e})
+            g = groups.setdefault(
+                (show, decisions.key(orig), decisions.key(prop)),
+                {"stems": set(), "e": e, "classes": set()},
+            )
             g["stems"].add(stem)
+            # R5: a shared pair can be anchored differently in different episodes (the same
+            # line, a different release's tracks). Report a class only when they agree; a
+            # single value taken from whichever episode was walked first would be a claim
+            # about all of them that nothing checked.
+            g["classes"].add(ref_class(e))
     rows = []
     for (show, _ko, _kp), g in groups.items():
         if len(g["stems"]) < 2:
@@ -618,6 +659,8 @@ def handle_shared() -> dict:
                 "proposed_text": e.get("proposed_text", ""),
                 "episodes": len(g["stems"]),
                 "risk": risk_class(e.get("original_text", ""), e.get("proposed_text", "")),
+                # None when the copies disagree (see the loop above).
+                "ref_class": next(iter(g["classes"])) if len(g["classes"]) == 1 else None,
                 "offered": list(OFFERED[("repair_applied", "accepted")]),
             }
         )

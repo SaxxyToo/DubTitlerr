@@ -37,7 +37,16 @@
   import { isSaveShortcut } from './lib/settingsModel.js';
   import { EPISODE_SORTS, LINE_SORTS, readSortPref, sortEpisodes, writeSortPref } from './lib/episodeSort.js';
   import type { Draft, Entry, Episode, SaveResult, Shared, Verdict } from './types';
-  import { blank, diffParts, nextOpenIndex, riskLabels, timecode, verdictLabels } from './review';
+  import {
+    blank,
+    diffParts,
+    nextOpenIndex,
+    refChip,
+    refNote,
+    riskLabels,
+    timecode,
+    verdictLabels,
+  } from './review';
 
   type View = 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
   const VIEW_TITLES: Record<View, string> = {
@@ -77,6 +86,10 @@
   let show = $state('all');
   let showRefused = $state(false);
   let risk = $state('all');
+  // R5: which reference role the reviewer wants to look at. 'all' is the default because the
+  // existing backlog is almost entirely unclassified, and hiding it behind a filter on first
+  // open would read as work lost.
+  let refFilter = $state('all');
   // Both sort choices are remembered per browser; a stored value this build does not know falls back to the default.
   const EPISODE_SORT_KEY = 'dubtitlerr_episode_sort';
   const LINE_SORT_KEY = 'dubtitlerr_line_sort';
@@ -143,6 +156,9 @@
       .filter(
         (e) =>
           (risk === 'all' || e.risk === risk) &&
+          // A shared pair whose episodes disagree carries no class; it belongs to "All
+          // anchors" only, where it is honestly shown without a chip.
+          (refFilter === 'all' || e.ref_class === refFilter) &&
           `${e.original_text} ${e.proposed_text}`.toLowerCase().includes(lineQuery.toLowerCase()),
       )
       .slice()
@@ -331,6 +347,7 @@
     activeId = '';
     lineQuery = '';
     risk = 'all';
+    refFilter = 'all';
     mobileNav = false;
     message = '';
     error = '';
@@ -386,6 +403,7 @@
       order = storedLineSort();
       lineQuery = '';
       risk = 'all';
+      refFilter = 'all';
       void revealReviewPanel();
     } catch (exc) {
       report(exc);
@@ -834,6 +852,16 @@
                       >Punctuation / case</option
                     ></select
                   ></label
+                ><label class="filter-control"
+                  ><BookOpen size={14} /><select
+                    aria-label="Filter by reference anchor"
+                    bind:value={refFilter}
+                    ><option value="all">All anchors</option><option value="dub">Dub-anchored</option><option
+                      value="translation">Translation-anchored</option
+                    ><option value="unanchored">Unanchored</option><option value="unclassified"
+                      >Unclassified</option
+                    ></select
+                  ></label
                 ><select
                   aria-label="Sort review lines"
                   bind:value={order}
@@ -869,6 +897,14 @@
                             status="stale"
                             label="Turned down, original kept"
                           />{/if}{:else}<span class="badge neutral">{current.episodes} episodes</span>{/if}
+                      <!-- R5: what this repair was anchored on. A shared pair carries a class
+                           only when every episode holding it agrees; otherwise no chip. -->
+                      {#if 'stage' in current || current.ref_class}{@const anchor = refChip(current)}<span
+                          class="badge"
+                          data-tone={anchor.tone}
+                          data-ref-class={anchor.kind}
+                          title={anchor.title}>{anchor.label}</span
+                        >{/if}
                     </div>
                     <span class="muted">Line {activeIndex + 1} of {visible.length}</span>
                   </div>
@@ -928,7 +964,7 @@
                       <div>
                         <strong>Subtitle reference</strong>
                         <p>{current.reference}</p>
-                        <small>A different translation, not the answer. Follow the dub audio.</small>
+                        <small>{refNote(current)}</small>
                       </div>
                     </div>{:else if 'permanent' in current && current.permanent}<div
                       class="reference no-reference"
@@ -1000,10 +1036,14 @@
                 </div>
               {:else}<div class="empty-state">
                   <Check size={32} aria-hidden="true" />
-                  <h3>{lineQuery || risk !== 'all' ? 'No matching changes' : 'This queue is clear.'}</h3>
+                  <h3>
+                    {lineQuery || risk !== 'all' || refFilter !== 'all'
+                      ? 'No matching changes'
+                      : 'This queue is clear.'}
+                  </h3>
                   <p>
-                    {lineQuery || risk !== 'all'
-                      ? 'Try another search or risk filter.'
+                    {lineQuery || risk !== 'all' || refFilter !== 'all'
+                      ? 'Try another search, risk filter or anchor.'
                       : 'No undecided repairs remain in this view.'}
                   </p>
                 </div>{/if}

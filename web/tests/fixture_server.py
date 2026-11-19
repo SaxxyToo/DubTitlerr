@@ -100,6 +100,13 @@ def main():
         rs.ROOTS = [str(media)]
         decisions.GLOSSARY_DIR = str(glossary_dir)
         decisions.DECISIONS_DIR = str(ddir)
+        # R5: queue rows carry the reference role the pipeline recorded for them. Some rows
+        # deliberately keep the pre-R2 shape (a reference and no role) so the page's
+        # "unclassified" label has something real to render, and Paper Moon S02E04 has no
+        # reference at all ("unanchored"). Format: (original, proposed, stage, reason,
+        # reference, ref fields).
+        DUB = {"ref_role": "dub", "ref_provenance": "native", "ref_track_title": "English Dub"}
+        TRANS = {"ref_role": "translation", "ref_provenance": "native", "ref_track_title": "Full Subtitles"}
         fixtures = [
             (
                 "Neon Harbor",
@@ -111,37 +118,54 @@ def main():
                         "repair_applied",
                         "accepted",
                         "We need to find the factory.",
+                        DUB,
                     ),
-                    ("meet me at the harbor", "Meet me at the harbor.", "repair_applied", "accepted", "Meet at the port."),
+                    (
+                        "meet me at the harbor",
+                        "Meet me at the harbor.",
+                        "repair_applied",
+                        "accepted",
+                        "Meet at the port.",
+                        TRANS,
+                    ),
                     (
                         "The blue compass is ours.",
                         "The compass is ours.",
                         "repair_applied",
                         "accepted",
                         "That blue compass belongs to us.",
+                        {},
                     ),
-                    ("Wait for me!", "Weigh four me!", "repair", "rejected_guard", "Wait!"),
+                    ("Wait for me!", "Weigh four me!", "repair", "rejected_guard", "Wait!", {}),
                 ],
             ),
             (
                 "Neon Harbor",
                 "S01E02",
                 [
-                    ("meet me at the harbor", "Meet me at the harbor.", "repair_applied", "accepted", "Meet at the port."),
-                    ("we can do this", "We can do this.", "repair_applied", "accepted", "We can manage."),
+                    (
+                        "meet me at the harbor",
+                        "Meet me at the harbor.",
+                        "repair_applied",
+                        "accepted",
+                        "Meet at the port.",
+                        TRANS,
+                    ),
+                    ("we can do this", "We can do this.", "repair_applied", "accepted", "We can manage.", {}),
                 ],
             ),
             (
                 "Paper Moon",
                 "S02E03",
                 [
-                    ("The stars are bright.", "The scars are bright.", "repair_applied", "accepted", "Bright stars."),
+                    ("The stars are bright.", "The scars are bright.", "repair_applied", "accepted", "Bright stars.", DUB),
                     (
                         "<img src=x onerror=alert(1)>",
                         "<script>bad</script>",
                         "repair_applied",
                         "accepted",
                         "Untrusted subtitle text.",
+                        {},
                     ),
                 ],
             ),
@@ -149,7 +173,7 @@ def main():
                 "Paper Moon",
                 "S02E04",
                 [
-                    ("Stop there!", "Shop where!", "repair", "rejected_guard", ""),
+                    ("Stop there!", "Shop where!", "repair", "rejected_guard", "", {}),
                 ],
             ),
         ]
@@ -161,8 +185,8 @@ def main():
             stem = str(folder / f"{show} - {ep}")
             cards = [{"start": 2 + i * 3, "end": 4 + i * 3, "text": row[0]} for i, row in enumerate(rows)]
             Path(stem + rs.CONF_SUFFIX).write_text(json.dumps(cards))
-            for orig, prop, stage, reason, ref in rows:
-                unresolved.record(stem, stage, reason, original_text=orig, proposed_text=prop, reference=ref)
+            for orig, prop, stage, reason, ref, ref_fields in rows:
+                unresolved.record(stem, stage, reason, original_text=orig, proposed_text=prop, reference=ref, **ref_fields)
             # A sine wave, not copyrighted dialogue. One tagged English audio stream.
             subprocess.run(
                 [
