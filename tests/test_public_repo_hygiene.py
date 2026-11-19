@@ -74,10 +74,8 @@ def test_the_wiki_discloses_when_repair_unanchored_was_deployed():
 def test_repair_backend_secondary_is_retired_not_referenced_outside_history():
     """REPAIR_BACKEND_SECONDARY was proposed, never implemented, and retired 2026-09-22 (S-13 of
     the v0.2.0 hardening pass). A name that keeps reappearing in ACTIVE docs after retirement is
-    exactly the kind of drift the retired review notes used to carry themselves.
-
-    CHANGELOG.md is the one allowed home: it is history, and history is allowed to name it."""
-    allowed_prefixes = ("CHANGELOG.md",)
+    exactly the kind of drift the retired review notes used to carry themselves."""
+    allowed_prefixes = ()
     offenders = []
     for path in _tracked("*.md"):
         if any(path.startswith(p) for p in allowed_prefixes):

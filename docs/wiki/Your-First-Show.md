@@ -17,9 +17,12 @@ episode takes roughly 5–15 minutes to transcribe depending on your card.
 
 You need:
 
-1. **An NVIDIA card with CUDA.** 6 GB is enough if the language model lives elsewhere; see
-   [How-to guides](How-To-Guides.md#choose-a-quantisation-for-your-card).
-2. **Docker**, with the NVIDIA container runtime working. Check it:
+1. **Either an NVIDIA card with CUDA, or nothing at all.** 6 GB is enough if the language model
+   lives elsewhere; see
+   [How-to guides](How-To-Guides.md#choose-a-quantisation-for-your-card). With
+   `ASR_BACKEND=endpoint` the transcription happens on a server you point at instead, and the host
+   needs no GPU — this lesson works either way.
+2. **Docker.** For the GPU path the NVIDIA container runtime must work. Check it:
    ```sh
    docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
    ```
@@ -98,12 +101,13 @@ Nothing else goes in this file yet. One show is the whole point of this lesson.
 
 ## Step 3 — Start the container
 
-Save this as `docker-compose.yml`:
+Clone this repository (`git clone https://github.com/SaxxyToo/DubTitlerr && cd DubTitlerr`) and
+save this beside the Dockerfiles as `compose.yaml`, so `build: .` finds them:
 
 ```yaml
 services:
   dubtitlerr:
-    image: ghcr.io/xenarathon/dubtitlerr:latest
+    build: .
     restart: unless-stopped
     ports:
       - "8842:8842"
@@ -151,7 +155,8 @@ docker compose up -d
 docker compose logs -f
 ```
 
-To build the image from source instead of pulling it, use `docker compose up -d --build` (it builds `Dockerfile.builder`).
+`docker compose up -d` builds `Dockerfile.builder` from the tree you cloned. For the endpoint-only
+image, build `Dockerfile.lite` instead (`docker build -f Dockerfile.lite -t dubtitlerr:lite .`).
 
 **`ANIME_ROOT` and `MERGE_ROOTS` have different built-in defaults**, which is why the
 compose file sets all three roots explicitly. Do not remove them.

@@ -189,7 +189,7 @@ def test_from_env_rejects_bad_enum_and_malformed_numbers():
 
 
 def test_url_help_mentions_tokens():
-    for key in ("PLEX_URL", "WATCHSTATE_URL", "GITHUB_WIKI", "FORGEJO_WIKI"):
+    for key in ("PLEX_URL", "WATCHSTATE_URL"):
         assert "tokens belong in a secret field" in reg.REGISTRY[key]["help"]
 
 

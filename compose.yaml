@@ -1,13 +1,11 @@
 # Example Docker Compose file for DubTitlerr.
 #
 # This is the Compose equivalent of the README's `docker pull` + `docker run`
-# Quick start, and mirrors the tested example in the wiki's "Your first show"
-# tutorial (docs/wiki/Your-First-Show.md: read that for the full walkthrough,
-# including serving the repair model). Only the variables set below reach the
-# container: this file is an explicit allowlist, not a pass-through. The
-# optional flags (docs/wiki/Reference.md and CHANGELOG.md, "Optional flags")
-# reach the container only when listed in the `environment:` block; the decided
-# defaults apply without any line, and a line is only needed to change one.
+# quick start, and mirrors the tested example, including serving the repair
+# model. Only the variables set below reach the container: this file is an
+# explicit allowlist, not a pass-through. Optional flags reach the container
+# only when listed in the `environment:` block; the decided defaults apply
+# without any line, and a line is only needed to change one.
 #
 #   docker compose pull && docker compose up -d   # use the published image
 #   docker compose up -d --build                  # or build from source instead
@@ -25,11 +23,11 @@
 
 services:
   dubtitlerr:
-    # Beta status: pin a release tag (e.g. DUBTITLERR_TAG=v0.3.0 in .env)
-    # instead of :latest if you want reproducible version stamps.
-    image: ghcr.io/xenarathon/dubtitlerr:${DUBTITLERR_TAG:-latest}
-    # Only used by `docker compose up --build` / `docker compose build`;
-    # ignored when you pull the published image above.
+    # Built locally -- this fork publishes no image, so `docker compose up -d
+    # --build` is the normal path. Pin DUBTITLERR_TAG to a release tag if you
+    # want reproducible version stamps.
+    image: dubtitlerr:${DUBTITLERR_TAG:-latest}
+    # The full image (Whisper model baked in, review UI built).
     build:
       context: .
       dockerfile: Dockerfile.builder
@@ -59,7 +57,7 @@ services:
       REPAIR_MODEL: qwen3-4b-instruct
       REPAIR_LLAMACPP_URL: http://host.docker.internal:8090/v1/chat/completions
 
-      # --- optional flags (CHANGELOG.md, "Optional flags"). Only variables listed in
+      # --- optional flags. Only variables listed in
       # this block reach the container. The values below are the DECIDED DEFAULTS
       # (2026-10-09): they apply when the line stays commented out. Uncomment a
       # line only to change it; set "0" (or the noted off value) for the old behaviour.

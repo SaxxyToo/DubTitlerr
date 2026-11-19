@@ -31,8 +31,7 @@ it, on either GPU generation tested. That is the entire content of `WHISPER_MODE
 Figures are word error rate against a real reference transcript — not agreement between
 models, an actual ground-truth script (how that happened is below). Lower is better. The
 per-entrant numbers behind this table — VRAM peak, load and wall time, confidence
-distributions — are in
-[`docs/asr-bakeoff/`](https://github.com/xenarathon/DubTitlerr/tree/main/docs/asr-bakeoff).
+distributions — are in [ASR bakeoff data](ASR-bakeoff-data.md).
 
 ---
 
@@ -151,6 +150,70 @@ architecture, not on a bad result.
 
 ---
 
+## If you transcribe through an endpoint
+
+Everything above is the **local** backend: the model runs inside the container on your own card, and
+the choice is `WHISPER_MODEL` plus `COMPUTE_TYPE`. The **endpoint** backend
+(`ASR_BACKEND=endpoint`) sends the same audio to an OpenAI-compatible `/audio/transcriptions`
+endpoint and never loads a model at all — so the choice of model moves to whoever serves that
+endpoint, and `WHISPER_MODEL` / `COMPUTE_TYPE` stop applying.
+
+That changes the tradeoff, because a serving host has different constraints from a container sharing
+a card with everything else. The measured comparison, from an RTX 5060 serving `whisper.cpp` through
+`llama-swap` on the pipeline's own audio path:
+
+| | `large-v3-turbo` | `large-v3` |
+| --- | ---: | ---: |
+| WER (mean of four episodes with a real dub reference) | 20.43% | **18.01%** |
+| Wall time | **1.00×** | 1.46× |
+| `no_speech_prob` alive, max | 0.0005, 1.9e-05 | **0.166, 0.9248** |
+| Segments the music guard could act on | **0** | **12** |
+| Cards on cue | **91.79%** | 91.57% |
+| Median absolute onset error | **136.6 ms** | 145.2 ms |
+
+**Recommendation: stay on `large-v3-turbo` unless you specifically want the confidence guard armed.**
+It is ~1.5× faster, its timing is indistinguishable in practice, and its WER penalty is real but
+modest (2.4 pp, and on one of four episodes it was *better*). Choose `large-v3` when the extra
+accuracy matters more than the time, and accept one caveat honestly: large-v3 also emits the
+silence-and-music hallucination family about 1.7× more often — same patterns, all caught by the
+existing blocklist filter, but not explained. See
+[ASR bakeoff data](ASR-bakeoff-data.md#the-confidence-signal-which-is-the-reason-this-run-happened).
+
+Two endpoint-specific traps worth knowing:
+
+- **`no_speech_prob` only exists on segments.** An endpoint asked for word granularity alone may
+  omit segment data entirely, in which case the confidence signal a guard reads is simply absent.
+  Ask for both granularities.
+- **A serving sidecar is a separate security boundary.** The endpoint receives your audio; keep it
+  on a trusted network unless you mean to send a commercial dub script to a third party.
+
+### Hosted endpoints, and a date worth knowing
+
+If you point `ASR_URL` at a hosted provider, what decides whether it works at all is which fields come
+back:
+
+| Provider | Word timestamps | `no_speech_prob` | Notes |
+| --- | --- | --- | --- |
+| OpenAI `whisper-1` | word + segment | **yes**, per segment, with `avg_logprob` and `compression_ratio` | The only hosted shape carrying both signals — and it is being withdrawn. |
+| OpenRouter | word + segment | **not normalized** — present or missing depending on which upstream provider serves the request | Fine for speed, not something to build a guard on. |
+| Cloudflare Workers AI (`whisper-large-v3-turbo`) | word | thresholds as request knobs, not as output | Turbo's signal is dead in every backend; see below. |
+| `gpt-4o-transcribe` / `gpt-transcribe` family | **no** | no | Plain JSON text. Token logprobs on request, but no segment confidences and no timestamp granularity control. |
+
+**`whisper-1` shuts down on 2027-02-26.** OpenAI gave notice on 2026-08-26 for `whisper-1`, the
+whole `gpt-4o-transcribe` family, and `/v1/audio/translations`. This lands harder here than it looks,
+because **`timestamp_granularities[]` is supported by `whisper-1` alone** — the recommended
+replacements return text, not word timings, and the API reference says so plainly. A pipeline that
+builds subtitle cues out of word-level timing cannot migrate by changing a model ID.
+
+The practical answer is the reason this fork's endpoint backend exists: point the endpoint at
+something you control. `llama-swap` serving `whisper.cpp` returns the same signal set `whisper-1`
+did — word timestamps, and a live `no_speech_prob` from `large-v3` — with no shutdown date attached.
+The deprecation notice makes the general point for anyone relying on any of the withdrawn
+capabilities: check the output formats and metadata you need *before* migrating, because swapping the
+model ID does not preserve every one.
+
+---
+
 ## When this could change
 
 - **A from-scratch Turing (or newer) environment, torch version pinned deliberately rather
@@ -165,3 +228,41 @@ architecture, not on a bad result.
 
 Until one of those changes, `WHISPER_MODEL=large-v3-turbo` and `COMPUTE_TYPE=int8` are not
 a placeholder default. They are the measured answer.
+
+---
+
+## Where the field stands (November 2026)
+
+None of this changes the default today. It is here so nobody re-derives it.
+
+**Turbo's dead `no_speech_prob` is not a quirk of this pipeline.** It is a documented property of the
+model across every backend that has been asked about it: Faster-Whisper users report every turbo
+segment at `0.0` ([faster-whisper#1028](https://github.com/SYSTRAN/faster-whisper/issues/1028)),
+`whisper.cpp` users report `--no-speech-thold` simply discarding turbo output
+([whisper.cpp#2696](https://github.com/ggml-org/whisper.cpp/issues/2696)), and the same behaviour was
+raised against OpenAI's own implementation
+([openai/whisper#2363](https://github.com/openai/whisper/discussions/2363)). The bakeoff above reached
+the conclusion by measurement first; those reports are worth reading because they show the collapse
+surviving quantisation, backend and host.
+
+**Distillation carries the failure forward.** A 2026 study of Whisper hallucination found the model
+emits words on 61.9% of pure room-tone clips, and that students fitted on a teacher's correct outputs
+still inherit its failure modes ([arXiv 2609.32560](https://arxiv.org/abs/2609.32560)). Expect any
+distilled variant — turbo included — to keep the collapsed `no_speech_prob` rather than recover it.
+
+**The open-weight field has moved past Whisper, but not in a direction that helps here.** More than
+twenty open-weight models now beat `large-v3` on the Open ASR Leaderboard, whose average changed on
+2026-11-02 when the two LibriSpeech sets were dropped — so numbers published before that date are not
+comparable with numbers after it. The leaders are mostly non-Whisper: NeMo's Parakeet and Canary,
+Qwen3-ASR, Granite Speech, and the larger Nemotron Transcribe models. Every one of them fails the same
+architectural test this page already applied to `canary-qwen-2.5b` — **word timestamps without
+`no_speech_prob`, or sometimes neither.** A better word error rate does not build a card, and a guard
+needs a confidence signal to read. That is why the default has not moved.
+
+**Hallucination is a documented Whisper-family property, not an implementation bug.** OpenAI's own
+transcription code falls back on temperature when `avg_logprob < -1.0` or the gzip compression ratio
+exceeds 2.4, with `no_speech_threshold` 0.6 checked alongside the logprob
+([Whisper paper](https://cdn.openai.com/papers/whisper.pdf)) — the same three signals this pipeline's
+gate reads, so the gate is not improvised. Work since has put the share of *harmful* hallucinations
+around 38–40% of all of them, rising with longer non-vocal pauses
+([Careless Whisper, 2024](https://arxiv.org/abs/2402.08021)).

@@ -403,7 +403,7 @@ class StopRequested(Exception):
         self.step, self.done, self.unit = step, done, unit
 
 
-# Stored adjudications live in TWO places and the older one wins; the help and the CHANGELOG say how to clear them.
+# Stored adjudications live in TWO places and the older one wins; BUST_HELP below says how to clear them.
 BUST_HELP = (
     "Stored answers: pair adjudications are remembered in <glossary>.acquire-cache.json (the older cache, consulted FIRST, so it "
     "shadows the journal) and every completed adjudication in <glossary>.acquire.journal.jsonl. To re-ask the model, delete BOTH "

@@ -9,7 +9,8 @@ default differs between modules, that is stated rather than smoothed over.
 
 ## Container
 
-**Image:** `ghcr.io/xenarathon/dubtitlerr`
+**Image:** built from this repository (`Dockerfile.builder` for the full build, `Dockerfile.lite`
+for the endpoint-only image)
 
 **Tags:** the git tag of a release (for example `v0.2.2`), plus `latest` pointing at the most recent
 release. `latest` never tracks `main`.
@@ -42,15 +43,13 @@ default), so set `-t` above your longest single unit of work. Inside the glossar
 episodes, terms and escalation pairs. Releases up to 0.2.2 check it only before a glossary step
 starts, so an acquire step runs to its end or to `ACQUIRE_TIMEOUT`.
 
-The container runs as **root**, so `generate.py` can chown into the media tree. `Dockerfile.builder` is the image; build from it and only from it.
+The container runs as **root**, so `generate.py` can chown into the media tree. `Dockerfile` builds a merge-only image (signs and dub merge, no transcribe or repair) and is deprecated. `Dockerfile.builder` is the recommended image.
 
 ---
 
 ## Per-episode files
 
 All are written beside the video, sharing its basename. The merged `.ass` keeps the same `...eng.dubtitles.*` name, so it still shows up as the Dubtitles track with signs included. If the sidecar came from subgen with `SKIP_IF_EXTERNAL_SUBTITLES_EXIST`, replacing the `.srt` with the merged `.ass` does not trigger a re-transcribe loop.
-
-A subtitle track can load and still hold no sign — a mixed dialogue track on an episode that has none, or a release that ships dialogue-only `.ass`. When no event survives `keep_event()`, `dub_signs_merge.py` reports `no-signs`, writes no `.ass` at all, and the dialogue-only `.srt` stays the artifact: sidecar mode delivers an `.srt`, and mux mode embeds from it. `mux.py`'s signs-regression guard accepts the `no-signs` outcome as safe to fall back for (see `tests/test_mux.py`), so this is not confused with a failed signs build.
 
 | Suffix                           | Written by                                                   | Read by                                      | Contents                                                                                                            |
 | -------------------------------- | ------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -61,7 +60,7 @@ A subtitle track can load and still hold no sign — a mixed dialogue track on a
 | `.dubtitles.done`                | `common.py`, `mux.py`                                        | `generate.py`, `mux.py`                      | Completion stamp: muxed size, mtime, tier versions                                                                  |
 | `.dubtitles.fail`                | `generate.py`                                                | `generate.py`                                | Poison marker after a hard crash. Delete it to retry. Stopping the container no longer leaves one (0.2.2 and later) |
 | `.dubtitles.stages.json`         | `repair.py`, `dub_signs_merge.py`, `mux.py`, `merge_pass.sh` | `merge_pass.sh`, `mux.py`                    | One outcome per stage (repair, signs, mux). See [Stage outcomes](#stage-outcomes)                                   |
-| `.dubtitles.mux-recovery`        | `mux.py`                                                     | `mux.py`                                     | Written when a failed cross-device copy may have damaged the episode. While it exists, mux refuses that episode     |
+| `.dubtitles.mux-recovery`        | `mux.py`                                                     | `mux.py`, the `deploy/` close unit           | Written when a failed cross-device copy may have damaged the episode. While it exists, mux refuses that episode     |
 | `.muxtmp.mkv.recovered`          | `mux.py`                                                     | you                                          | The complete muxed file that failed copy kept. The marker names its path                                            |
 | `.dubtitles.crash.json`          | `generate.py`                                                | -                                            | Exception type, message and time from that crash                                                                    |
 | `.dubtitles.qc.json`             | `generate.py`                                                | `mux.py`                                     | Quality counters, cps quantiles, layout violations, and duration flags (schema version 5: overlong and drip_chain)  |
@@ -166,18 +165,38 @@ line for review, and the stage still records `ok`.
 | `WHISPER_MODEL`                      | `large-v3-turbo` | Whisper model. `large-v3` scores higher; see [Choosing an ASR model](Choosing-an-ASR-Model.md) |
 | `COMPUTE_TYPE`                       | `int8`           | Precision. On Pascal cards `float16` does not load at all — this is not a quality knob there   |
 | `WHISPER_BEAM_SIZE`                  | `7`              | Beam width                                                                                     |
-| `ASR_BACKEND`                        | `local`          | `local` runs Whisper in-process; `endpoint` posts the audio to an OpenAI-compatible URL        |
-| `ASR_URL`                            | OpenRouter       | Full `/audio/transcriptions` URL, used when `ASR_BACKEND=endpoint`                             |
-| `ASR_MODEL`                          | `openai/whisper-1` | Model name sent to the endpoint                                                              |
-| `ASR_KEY_ENV`                        | `OPENROUTER_API_KEY` | Name of the variable holding the endpoint key, and the only one read; empty sends no key. A key is sent only over https or to loopback, otherwise the run is refused |
-| `ASR_TIMEOUT`                        | `900`            | Per-request timeout in seconds for the endpoint call                                           |
-| `ENDPOINT_MAX_ATTEMPTS`              | `3`              | Consecutive endpoint failures before the episode is marked no-speech and stops retrying        |
-| `ASR_REFERER`                        | fork repo URL    | `HTTP-Referer`, sent to OpenRouter only                                                        |
 | `REQUIRE_ENG`                        | `1`              | Skip episodes with no English audio track                                                      |
 | `SKIP_IF_SRT`                        | `1`              | Skip an episode that already has a dubtitle sidecar                                            |
 | `SHOW_NAME`                          | _(empty)_        | Override the show name derived from the path                                                   |
 | `GLOSSARY_FILE`                      | _(empty)_        | Override the glossary resolved from the show                                                   |
 | `FFMPEG_TIMEOUT` / `FFPROBE_TIMEOUT` | `1800` / `60`    | Seconds                                                                                        |
+
+### ASR backend
+
+`ASR_BACKEND` decides where transcription happens. Everything downstream — reflow, glossary
+correction, repair, the hallucination gate, the signs merge — is identical on both paths, so this is
+the only place the choice shows up. [Choosing an ASR model](Choosing-an-ASR-Model.md) is about which
+model to point an endpoint at.
+
+| Var                                  | Default                                            | Meaning                                                                                                                                                                                    |
+| ------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ASR_BACKEND`                        | `local`                                            | `local` runs Whisper inside this container; `endpoint` posts the audio to an OpenAI-compatible `/audio/transcriptions` URL and needs no local model, no torch and no CUDA                      |
+| `ASR_URL`                            | `https://openrouter.ai/api/v1/audio/transcriptions` | Full `/audio/transcriptions` URL, used when the backend is `endpoint`                                                                                                                      |
+| `ASR_MODEL`                          | `openai/whisper-1`                                 | Model name sent to the endpoint — for a router, this must be the router's entry name. **Read the shutdown note below before relying on the default**                                        |
+| `ASR_KEY_ENV`                        | `OPENROUTER_API_KEY`                               | Name of the environment variable that holds the key, and the only one read. Empty sends no key. A key is sent only over https, or plain http to loopback, whatever this is set to           |
+| `ASR_TIMEOUT`                        | `900`                                              | Per-request timeout, seconds                                                                                                                                                               |
+| `ASR_REFERER`                        | this fork's URL                                    | `HTTP-Referer`, sent to OpenRouter only; other endpoints ignore it                                                                                                                         |
+| `ASR_DEVICE`                         | `cuda`                                             | Device faster-whisper runs on. `local` backend only; ignored in endpoint mode                                                                                                              |
+| `OUTPUT_MODE`                        | `mux`                                              | `mux` embeds the subtitle as a Dubtitles track and rewrites the video; `sidecar` leaves it beside the video and never opens the video for writing                                          |
+| `SIDECAR_SUFFIX`                     | `.eng.dubtitles`                                   | Sidecar mode only. The text between the episode name and the extension, e.g. `.dub.en` gives `Episode.dub.en.srt`                                                                          |
+| `ADOPT_DUB_EN`                       | `false`                                            | Feed an existing `.dub.en.srt` / `.ass` from another pipeline through repair and signs merge. Off, the pass never moves files it did not produce                                           |
+
+> **The `ASR_URL` and `ASR_MODEL` defaults point at a service being withdrawn.** `openai/whisper-1`
+> shuts down on **2027-02-26**, and no replacement returns word-level timestamps — the
+> `timestamp_granularities[]` parameter that provides them is supported by `whisper-1` alone. Point
+> the endpoint at a server you run, or at a provider that returns both word timings and a live
+> `no_speech_prob`; [Choosing an ASR model](Choosing-an-ASR-Model.md#hosted-endpoints-and-a-date-worth-knowing)
+> compares the hosted options field by field.
 
 ### Repair
 
@@ -245,9 +264,7 @@ new wording. Set `REPAIR_KEEP_NAME_PARTS=0` to restore the old prompt.
 | --------------------- | ---------------------------------- | ------------------------------------------ |
 | `RESTORE_PUNCTUATION` | `1`                                | Enable the punctuation-restore stage       |
 | `RESTORE_MODEL`       | _(falls back to `REPAIR_MODEL`)_   | Model for this stage                       |
-| `RESTORE_BACKEND`     | _(falls back to `REPAIR_BACKEND`)_ | `llamacpp`, `ollama` or `openai`; `openai` needs the two vars below |
-| `RESTORE_OPENAI_URL`  | _(falls back to `REPAIR_OPENAI_URL`)_ | Chat-completions URL for the `openai` backend |
-| `RESTORE_OPENAI_KEY_ENV` | _(falls back to `REPAIR_OPENAI_KEY_ENV`)_ | Variable holding the key for that URL |
+| `RESTORE_BACKEND`     | _(falls back to `REPAIR_BACKEND`)_ | Backend for this stage                     |
 | `RESTORE_MIN_RUN`     | `2`                                | Minimum run of unpunctuated cues to act on |
 | `RESTORE_MAX_TOKENS`  | `2048`                             | Generation cap                             |
 
@@ -354,27 +371,11 @@ Every wiki fetch is https-only. A redirect to another scheme is refused before t
 | `MIN_FREE_GB`             | `5`                      | Skip a mux below this free space rather than failing                                              |
 | `DUR_TOL`                 | `2`                      | Seconds of duration mismatch tolerated                                                            |
 | `DUB_SUFFIX`              | `.eng.dubtitles.srt`     | Sidecar the merge step looks for                                                                  |
-| `OUTPUT_MODE`             | `mux`                    | `mux` embeds the subtitle; `sidecar` leaves it beside the video and rewrites nothing              |
-| `SIDECAR_SUFFIX`          | `.eng.dubtitles`         | Sidecar mode: text between the episode name and the extension (`.dub.en` → `Episode.dub.en.srt`)  |
-| `ADOPT_DUB_EN`            | `0`                      | `1` feeds an existing `.dub.en.srt/.ass` (dubsub) through repair and signs merge; off never moves a file the pass did not produce |
-| `MUX_KEEP_ALL_SUBS`       | `0`                      | `1` keeps every subtitle track; `0` applies the `KEEP_LANGS` whitelist, which can drop a mislabeled English track |
-| `PUBLISH_GATE`            | `1`                      | `1` refuses to deliver an uncovered, unpunctuated, off-screen or misheard subtitle; `0` publishes whatever was assembled |
-| `REVIEW_GATE_SHOWS`       | _(empty)_                | Shows whose **unreviewed repairs** wait before delivery; an episode with no applied repair is not held |
+| `REVIEW_GATE_SHOWS`       | _(empty)_                | Shows whose episodes wait for review before muxing                                                |
 | `REVIEW_GATE_STALE_DAYS`  | `7`                      | A hold older than this is reported loudly and **stays held**. It buys a log line, never a release |
 | `MEDIA_UID` / `MEDIA_GID` | `1000` / `100`           | Ownership set on written files                                                                    |
 
 The muxed `Dubtitles` track is appended last and flagged default, so the relative order of the other subtitle tracks is unchanged while players pick it up through the default flag. An MP4 or M4V source is removed only after the remuxed MKV verifies and the stamp writes. If the stamp write itself fails, the new MKV is rolled back and the original file is left untouched, so a failed run always leaves something complete on disk. Plex reads `.ass` sidecars and renders styling and positioning on direct-play clients; transcoding clients burn them in.
-
-**Sidecar mode.** `OUTPUT_MODE=sidecar` ends the pipeline at the assembled subtitle instead of embedding it: the artifact is left beside the video as `<episode><SIDECAR_SUFFIX>.<ass|srt>` (`.ass` when signs and songs were merged, so their positioning survives; `.srt` for a dialogue-only episode) and the video is never opened for writing. The same version-aware `.dubtitles.done` stamp is written, with `"mode": "sidecar"` recorded, so the pass stays idempotent and a later switch back to `mux` re-muxes instead of reading the sidecar stamp as done. This is the mode for libraries that deliver external subtitles, and for anyone whose GPU cannot run the bundled ASR: `SKIP_IF_SRT=1` plus pre-generated transcripts now leads somewhere useful. Nothing is deleted, so the `KEEP_LANGS` track-loss class cannot occur. A delivered episode is skipped, not re-assembled: before assembling, the pass asks `mux.py --delivered` about the stem, and an episode whose `.dubtitles.done` stamp is current for its video **and** records the running `OUTPUT_MODE` is left alone. This matters most in sidecar mode at the default `SIDECAR_SUFFIX`, where the published file carries the artifact's own name and the finder would otherwise see it on every pass. Dropping the stamp — a review verdict, `tools/reapply_glossary.py`, `tools/reopen_for_signs.py` — puts the episode back through repair, signs and mux.
-
-**Publish gate.** With `PUBLISH_GATE` on (the default), the merge pass runs `publish_gate.py` on the assembled subtitle before mux and refuses to deliver one a reviewer would reject in ten seconds. It reads the subtitle text and the container duration and never opens the video. It refuses when:
-
-- **the caption does not cover the episode** — the last cue ends before 90% of the container duration, or there are fewer than 6 cards per minute of runtime;
-- **it is not read as text** — under 65% of cards carry terminal punctuation, more than 15% are lowercase orphans (a lowercase start right after a card that ended a sentence), or the first cue starts after 290 s, which is a missing cold open;
-- **it does not fit the screen** — a line over 46 characters, a card over 88 characters, or a card on screen longer than 7.5 s;
-- **it uses a wrong name** — the text carries a `hard_fixes` key from the show glossary (or a glossary `token_fixes` / `phrase_fixes` key) of three characters or more whose replacement is a different word. A fix that only changes case (`ikari` → `Ikari`) or expands a name (`asuka langley` → `Asuka Langley Soryu`) is not a mishear and does not fire this check.
-
-The gate runs on the pipeline's own `stem.eng.dubtitles.<srt|ass>` (auditing a library reads `stem.dub.en.<srt|ass>` as well), and for a styled `.ass` it counts only the `Dubtitles` style, so signs, lyrics and title cards are not mistaken for dialogue. A refusal is recorded on the mux stage as `refused` (detail `publish-gate`) so the census reports the episode as incomplete rather than done, and mux is skipped. `PUBLISH_GATE=0` is the escape hatch, for a library whose subtitles this gate does not describe.
 
 ### Review server
 
@@ -627,32 +628,13 @@ Access is controlled by `ROUTE_ROLES`. Every route requires a specific role: `pu
 | PUT    | `/api/users/*`            | `admin`   | Update a user's role or password                                         |
 | DELETE | `/api/users/*`            | `admin`   | Delete a user account                                                    |
 
-### How a run request is filed
-
-A request (`POST /api/requests`, or a JSON file in `$CONFIG_DIR/requests`) names a show, and optionally a season, an episode pattern and `"force": true`. The generate loop serves it, then files it as `done` or `failed` from a scope report that `generate.py` writes from the files on disk, never from the exit code alone. The report is attached to the filed request as `report`.
-
-Every episode in scope lands in one bucket:
-
-| Bucket | Meaning |
-| :-- | :-- |
-| `rebuilt` | its transcript record (`.dubtitles.conf.json`) was written after the request started |
-| `delivered` | a current `.dubtitles.done` stamp, untouched by this request |
-| `awaiting_merge` | a transcript from an earlier run that the merge loop has not published yet |
-| `not_done` | counted by reason: `no-eng-dub`, `extract-failed`, `prior crash (.dubtitles.fail)`, `endpoint gave up (.dubtitles.no-speech)`, `error: <type>`, `not attempted`, or, for a forced request, `still delivered from an earlier run` |
-
-The request is `done` only when nothing is `not_done`. It fails when no episode matched, when a forced request rebuilt nothing, or when the report is missing. The error names the counts, for example `forced run rebuilt nothing (28 in scope: 28 still delivered from an earlier run)`.
-
-`"force": true` rebuilds delivered episodes too, each one once per request: a resume pass after a crash does not rebuild an episode this request already rebuilt. A `.dubtitles.fail` marker still wins and is reported.
-
-Delivery is the merge loop's job and happens after the request is filed, so `rebuilt` means a new transcript exists, not that it is published yet.
-
 ### Authentication and security
 
 Authentication uses role-based access control with two roles: `admin` and `user`.
 
 - **User sessions:** Browsers authenticate against scrypt password hashes in `$CONFIG_DIR/users.json`. A successful login sets an HttpOnly, SameSite=Strict session cookie backed by `$CONFIG_DIR/sessions.json`.
 - **CSRF protection:** Browser state-changing requests (POST, PUT, DELETE) must provide an `X-DubTitlerr-Request: 1` header. Origin headers are validated against Host and X-Forwarded-Host headers.
-- **Admin API key:** Automation scripts send the `X-Api-Key` header instead of browser cookies. The key is stored with mode 0600 at `$CONFIG_DIR/apikey`.
+- **Admin API key:** Automation scripts send the `X-Api-Key` header instead of browser cookies. The key is stored with mode 0600 at `$CONFIG_DIR/apikey`. `X-Review-Token` is accepted as a deprecated alias for the API key.
 - **First-run setup:** When no accounts exist, unauthenticated requests to protected routes return 409, directing browsers to `/review/setup`. Setting `REVIEW_USERNAME` and `REVIEW_PASSWORD` (or `REVIEW_PASSWORD_FILE`) automatically creates the initial admin account at first boot.
 - **Disabling authentication:** Setting `REVIEW_AUTH=off` disables role checks on all routes and treats all requests as administrator. Only use this on a private, trusted network.
 - **Audit logging:** Actions that modify settings, connections, accounts, glossaries, or trigger container restarts write log lines that explicitly name the acting user or API key principal.

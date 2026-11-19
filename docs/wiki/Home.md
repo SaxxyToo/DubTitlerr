@@ -25,7 +25,10 @@ It runs as one container, per episode, incrementally.
 | Look up a variable, a filename, a schema    | **[Reference](Reference.md)**                                                             |
 | Understand why it behaves the way it does   | **[Why it works this way](Why-It-Works-This-Way.md)**                                     |
 | Pick a transcription model for your GPU     | **[Choosing an ASR model](Choosing-an-ASR-Model.md)**                                     |
-| Point an AI agent at the project            | **[Agent guide](https://github.com/xenarathon/DubTitlerr/blob/main/docs/AGENT-GUIDE.md)** |
+| Pick the model that repairs the lines       | **[Choosing a repair model](Choosing-a-repair-model.md)**                                 |
+| See the numbers behind the model choice     | **[ASR bakeoff data](ASR-bakeoff-data.md)**                                                |
+| Read a design decision before reversing it  | **[Design decisions](Design-decisions.md)**                                                |
+| Point an AI agent at the project            | **[Agent notes](https://github.com/SaxxyToo/DubTitlerr/blob/main/AGENTS.md)**              |
 
 ---
 
@@ -42,6 +45,10 @@ It runs as one container, per episode, incrementally.
 5. **Merge** the on-screen signs and song lyrics back in.
 6. **Mux** the finished track into the file with its original fonts, so signs render in their
    real typeface.
+
+The last step is a choice. By default the track is muxed into the episode; `OUTPUT_MODE=sidecar`
+writes `<episode>.dub.en.ass` beside the video instead and never opens the video for writing, which
+is the safe mode for seeded or hardlinked files.
 
 Then it stops and waits for you. The lines it was unsure about are queued at
 **http://localhost:8842**, and a verdict you give there applies to that line everywhere in
@@ -61,14 +68,18 @@ the show.
 
 ## Requirements
 
-- An NVIDIA card with CUDA for transcription. 6 GB works; see
-  [choosing a quantisation](How-To-Guides.md#choose-a-quantisation-for-your-card).
-- Docker with the NVIDIA container runtime.
+- **Transcription** takes one of two paths. Either an NVIDIA card with CUDA — 6 GB works, see
+  [choosing a quantisation](How-To-Guides.md#choose-a-quantisation-for-your-card) — or an
+  OpenAI-compatible `/audio/transcriptions` endpoint, which needs no GPU, no model and no torch at
+  all. The lite image exists for the second path.
+- **Docker.** The NVIDIA container runtime is needed only for the GPU path.
 - An OpenAI-compatible endpoint for repair: a small GGUF model you serve yourself, or a hosted
   API with a key (see [Repair with a hosted model](How-To-Guides.md#repair-with-a-hosted-model)).
 - A library with English dub audio, laid out as `Show Name (Year)/Season 01/…S01E01…`.
 
-**Image:** `ghcr.io/xenarathon/dubtitlerr`
+**Image:** built from this repository. `Dockerfile.builder` is the standalone full build (Whisper
+model baked in, review UI built); `Dockerfile.lite` is endpoint-only and under 1 GB; `Dockerfile.fork`
+is a thin overlay for exercising a change on a host that already has a release image.
 
 ---
 

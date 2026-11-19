@@ -93,7 +93,7 @@ When you move further along, bump the number and restart the container.
 
 The pipeline never reads its own previous output here: stages that look at embedded subtitles skip the track named `Dubtitles`, and the mux replaces the old `Dubtitles` track in the same pass that adds the new one, so re-running needs no separate strip step for the old track.
 
-Library-wide regeneration follows the pipeline's version stamps, `TRANSCRIBE_VERSION` and `TEXT_VERSION` in `common.py`. When a release raises one, episodes whose stamp records an older version are redone on later sweeps and their track is replaced in place; a failed run leaves the old track untouched. The [CHANGELOG](https://github.com/XenaRathon/DubTitlerr/blob/main/CHANGELOG.md) says which releases changed them.
+Library-wide regeneration follows the pipeline's version stamps, `TRANSCRIBE_VERSION` and `TEXT_VERSION` in `common.py`. When a release raises one, episodes whose stamp records an older version are redone on later sweeps and their track is replaced in place; a failed run leaves the old track untouched. The reasoning behind the two-tier split is in [Design decisions](Design-decisions.md#1-idempotency-is-keyed-on-two-version-tiers-not-one).
 
 Delete its sidecars and completion stamp:
 
@@ -166,10 +166,12 @@ softly: it starts no new work, lets the unit already running finish, and exits 0
    docker inspect -f '{{.State.ExitCode}}' dubtitle-builder
    ```
 
-If you want the container to run only inside a nightly window, set that up in the web UI: the
-**Runs** page has a **Schedule** section (switch, open time, close time, timezone) that opens and
-soft-closes the builder on that window. This replaced the `dubtitlerr-window-open`/`-close` systemd
-units, which are no longer shipped — there is nothing to install on the host.
+If you run a nightly window, `deploy/` has the systemd units for it. `dubtitlerr-window-open`
+runs `docker start` at 00:00 and `dubtitlerr-window-close` runs `docker stop -t 900` at 10:00
+(America/New_York), each from its own timer. The close unit logs the exit code, prints a warning
+when it is not 0, and deletes orphan `*.muxtmp.mkv` files. It skips any episode that has a
+`.dubtitles.mux-recovery` marker. The units use the author's container name and library path, so
+edit those and the times before you install them.
 
 Releases up to 0.2.2 check the stop flag only before a glossary step starts, so an acquire step
 that is already running ends at its own end or at `ACQUIRE_TIMEOUT`. Set the grace period
