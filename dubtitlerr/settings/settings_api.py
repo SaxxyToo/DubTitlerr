@@ -12,8 +12,10 @@ import socket
 import urllib.parse
 import urllib.request
 
+from dubtitlerr.core import notify
 from dubtitlerr.review import review_auth, review_settings
 from dubtitlerr.settings import settings_connections as conns
+from dubtitlerr.settings import settings_notifications as notif
 from dubtitlerr.settings import settings_registry as reg
 from dubtitlerr.settings import settings_store as store
 
@@ -135,6 +137,23 @@ def public_connection(conn, state):
     return out
 
 
+def public_notification(prov, state):
+    """A notification as the page sees it: its visible fields, its triggers, and whether each secret is stored. Never a
+    secret. A Discord or webhook URL is credential-bearing, so it is reported as set or not set like the others."""
+    out = {
+        "name": prov["name"],
+        "kind": prov["kind"],
+        "enabled": bool(prov.get("enabled", True)),
+        "triggers": list(prov.get("triggers", [])),
+    }
+    for field in notif.VISIBLE_FIELDS.get(prov["kind"], ()):
+        out[field] = prov.get(field, "")
+    stored = state.notif_secrets.get(prov["name"], {})
+    for field in notif.SECRET_FIELDS.get(prov["kind"], ()):
+        out[field] = {"set": field in stored}
+    return out
+
+
 def get_settings(environ=None):
     environ = _env(environ)
     state = store.load(environ)
@@ -144,6 +163,7 @@ def get_settings(environ=None):
     return 200, {
         "values": values,
         "connections": [public_connection(c, state) for c in state.connections],
+        "notifications": [public_notification(n, state) for n in state.notifications],
         "stages": dict(state.stages),
         "restart_pending": any(values[k]["pending"] for k, e in reg.REGISTRY.items() if e["applies"] == "restart"),
         "revision": state.rev,
@@ -331,11 +351,104 @@ def _apply_connections(state, clean, actions):
     return changed, secret_keys, urls
 
 
+def _validate_notifications(items):
+    """(clean notifications, {name: {secret field: ("set", value) | ("clear", None)}}, errors). Absent, "" or null mean no
+    change."""
+    clean, actions, errors, seen = [], {}, {}, set()
+    if not isinstance(items, list):
+        return [], {}, {"notifications": "must be a list"}
+    for index, item in enumerate(items):
+        prov, problems = notif.validate_notification(item)
+        label = (
+            item.get("name")
+            if isinstance(item, dict) and isinstance(item.get("name"), str) and item.get("name")
+            else str(index)
+        )
+        for field, message in problems.items():
+            errors[f"notifications.{label}.{field}"] = message
+        if problems:
+            continue
+        if prov["name"] in seen:
+            errors[f"notifications.{label}.name"] = "is already used by another notification"
+            continue
+        seen.add(prov["name"])
+        clean.append(prov)
+        fields = {}
+        for field in notif.SECRET_FIELDS.get(prov["kind"], ()):
+            raw = item.get(field)
+            if raw == {"clear": True}:
+                fields[field] = ("clear", None)
+            elif isinstance(raw, str) and raw:
+                why = notif.secret_problem(prov["kind"], field, raw)
+                if why:
+                    errors[f"notifications.{label}.{field}"] = why
+                else:
+                    fields[field] = ("set", raw)
+            elif raw not in (None, ""):
+                errors[f"notifications.{label}.{field}"] = 'must be text, or {"clear": true}'
+        if fields:
+            actions[prov["name"]] = fields
+    return clean, actions, errors
+
+
+def _apply_notifications(state, clean, actions):
+    """Replace the notification list. A changed kind, or a changed ntfy server, drops the stored secret unless a new secret
+    arrives in the same save. Returns (changed labels, secret labels, url map). The Discord and webhook URLs are secrets, so
+    they never reach the audit log; only an ntfy server (no credentials in it) is passed as a URL."""
+    old = {n["name"]: n for n in state.notifications}
+    changed, secret_keys, urls = [], [], {}
+
+    def touch(name, secret_fields=()):
+        label = f"notification:{name}"
+        if label not in changed:
+            changed.append(label)
+        for field in secret_fields:
+            entry = f"{label}.{field}"
+            if entry not in secret_keys:
+                secret_keys.append(entry)
+
+    for prov in clean:
+        name, prior = prov["name"], old.get(prov["name"])
+        before = dict(state.notif_secrets.get(name, {}))
+        kept = dict(before)
+        dropped = []
+        if prior is not None and prior["kind"] != prov["kind"]:
+            dropped = list(kept)  # a secret belongs to the kind that reads it
+            kept = {}
+        elif prov["kind"] == "ntfy" and prior is not None and prior.get("server") != prov.get("server"):
+            if "token" in kept:
+                kept.pop("token")
+                dropped.append("token")
+        for field, (action, value) in actions.get(name, {}).items():
+            if action == "clear":
+                if field in kept:
+                    kept.pop(field)
+                    dropped.append(field)
+            elif kept.get(field) != value:
+                kept[field] = value
+                dropped.append(field)
+        if kept != before:
+            if kept:
+                state.notif_secrets[name] = kept
+            else:
+                state.notif_secrets.pop(name, None)
+        if prior != prov:
+            touch(name)
+        touch(name, dropped)
+        if prov["kind"] == "ntfy" and (prior is None or prior.get("server") != prov.get("server")):
+            urls[f"notification {name}"] = prov.get("server", "")
+    for name in sorted(set(old) - {p["name"] for p in clean}):
+        gone = state.notif_secrets.pop(name, None)
+        touch(name, list(gone) if gone else ())
+    state.notifications = clean
+    return changed, secret_keys, urls
+
+
 def put_settings(body, environ=None, who="admin"):
     environ = _env(environ)
     if not isinstance(body, dict) or not isinstance(body.get("values", {}), dict):
         return 400, {"errors": {"body": 'send {"values": {KEY: value}}'}}
-    extra = sorted(set(body) - {"values", "revision", "connections", "stages"})
+    extra = sorted(set(body) - {"values", "revision", "connections", "stages", "notifications"})
     if extra:
         return 400, {"errors": {"body": f"unknown field: {extra[0]}"}}
     if type(body.get("revision")) is not int:
@@ -345,6 +458,10 @@ def put_settings(body, environ=None, who="admin"):
     if "connections" in body:
         clean, actions, problems = _validate_connections(body["connections"])
         errors.update(problems)
+    clean_notifs, notif_actions = None, {}
+    if "notifications" in body:
+        clean_notifs, notif_actions, problems = _validate_notifications(body["notifications"])
+        errors.update(problems)
     stages_in = body.get("stages")
     if stages_in is not None and not (
         isinstance(stages_in, dict)
@@ -352,7 +469,11 @@ def put_settings(body, environ=None, who="admin"):
     ):
         errors["stages"] = "must map a stage to a connection name, or null"
         stages_in = None
-    touches_secrets = any(action.startswith("secret") for action, _ in plan.values()) or bool(actions)
+    touches_secrets = (
+        any(action.startswith("secret") for action, _ in plan.values())
+        or bool(actions)
+        or bool(notif_actions)
+    )
     if touches_secrets and not _secrets_writable():
         return 403, {"error": SECRETS_NEED_LOGIN}
     if errors:
@@ -366,6 +487,9 @@ def put_settings(body, environ=None, who="admin"):
         urls = {k: state.values[k] for k in changed if k in state.values and reg.REGISTRY[k]["type"] == "url" and state.values[k]}
         if clean is not None:
             more, more_secrets, more_urls = _apply_connections(state, clean, actions)
+            changed, secret_keys, urls = changed + more, secret_keys + more_secrets, {**urls, **more_urls}
+        if clean_notifs is not None:
+            more, more_secrets, more_urls = _apply_notifications(state, clean_notifs, notif_actions)
             changed, secret_keys, urls = changed + more, secret_keys + more_secrets, {**urls, **more_urls}
         if stages_in is not None:
             before = dict(state.stages)
@@ -419,7 +543,12 @@ def reset_settings(body, environ=None, who="admin"):
         if (reg.REGISTRY[k]["editable"] or reg.REGISTRY[k].get("legacy_override")) and (writable or not reg.REGISTRY[k]["secret"])
     ]
     clears_connections = everything or body.get("category") == "connections"
-    touches_secrets = any(reg.REGISTRY[k]["secret"] for k in keys) or (clears_connections and writable)
+    clears_notifications = everything or body.get("category") == "connect"
+    touches_secrets = (
+        any(reg.REGISTRY[k]["secret"] for k in keys)
+        or (clears_connections and writable)
+        or (clears_notifications and writable)
+    )
 
     def prepare():
         if not everything:
@@ -445,6 +574,14 @@ def reset_settings(body, environ=None, who="admin"):
                 state.conn_keys = {}
                 changed.append("connection keys")
                 secret_keys.append("connection keys")
+        if clears_notifications:
+            if state.notifications:
+                state.notifications = []
+                changed.append("notifications")
+            if writable and state.notif_secrets:
+                state.notif_secrets = {}
+                changed.append("notification secrets")
+                secret_keys.append("notification secrets")
         return changed, secret_keys, {}
 
     status, payload = _commit(environ, who, build, touches_secrets, prepare if everything else None)
@@ -562,6 +699,23 @@ def test_connection(name, environ=None, opener=None, context=None):
     return 200, {**result, "error": store.scrub(result["error"], state)}
 
 
+def test_notification(name, environ=None):
+    """Send one test event to a saved notification provider. Always 200 with {ok, error}; the secret is read from disk by
+    notify.py itself and never travels through this function's return. This is the same code path as
+    `python3 -m dubtitlerr.core.notify test --name <n>` (its CLI calls test_provider)."""
+    environ = _env(environ)
+    state = store.load(environ)
+    prov = next((n for n in state.notifications if n["name"] == name), None) if isinstance(name, str) else None
+    if prov is None:
+        return 400, {"error": "unknown notification"}
+    try:
+        result = notify.test_provider(name, config_dir=store.config_dir(environ))
+    except LookupError:
+        return 200, {"ok": False, "error": "the provider is not saved yet"}
+    error = store.scrub(str(result.get("detail") or ""), state)
+    return 200, {"ok": result.get("ok") is True, "error": error}
+
+
 def request_restart(environ=None, who="admin"):
     """Ask the builder for a soft stop: touch the flag every loop checks between units of work. The episode in flight (a mux
     included) finishes, the loops exit 0, and the container's restart policy brings the container back with a new boot id."""
@@ -583,7 +737,7 @@ def request_restart(environ=None, who="admin"):
 def handle(method, path, body=None, environ=None, who="admin", opener=None, context=None):
     route = (path or "").split("?", 1)[0]
     if method == "GET" and route == "/api/settings/schema":
-        return 200, {**reg.schema(), "connections": conns.rules()}
+        return 200, {**reg.schema(), "connections": conns.rules(), "notifications": notif.rules()}
     if method == "GET" and route == "/api/settings":
         return get_settings(environ)
     if method == "PUT" and route == "/api/settings":
@@ -593,6 +747,8 @@ def handle(method, path, body=None, environ=None, who="admin", opener=None, cont
     if method == "POST" and route == "/api/settings/test":
         if isinstance(body, dict) and "connection" in body:
             return test_connection(body["connection"], environ, opener, context=context)
+        if isinstance(body, dict) and "notification" in body:
+            return test_notification(body["notification"], environ)
         return review_settings.handle(method, route, body, environ=environ, opener=opener)
     if method == "POST" and route == "/api/system/restart":
         return request_restart(environ, who)

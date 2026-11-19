@@ -78,6 +78,7 @@ def run_server_function(tmp_path, secrets, env=None):
         ("settings", "settings_registry.py"),
         ("settings", "settings_store.py"),
         ("settings", "settings_connections.py"),
+        ("settings", "settings_notifications.py"),
         ("glossary", "glossary_lock.py"),
         ("core", "common.py"),
         ("core", "atomic_file.py"),

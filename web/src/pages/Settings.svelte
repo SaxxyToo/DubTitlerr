@@ -16,12 +16,15 @@
     fieldErrors,
     isDirty,
     loadShowAdvanced,
+    notificationsBody,
+    notificationsChanged,
     restartStep,
     saveLabel,
     saveShowAdvanced,
     stagesBody,
   } from '../lib/settingsModel.js';
   import ConnectionsPanel from './settings/ConnectionsPanel.svelte';
+  import NotificationsPanel from './settings/NotificationsPanel.svelte';
   import RestartDialog from './settings/RestartDialog.svelte';
   import RestartOverlay from './settings/RestartOverlay.svelte';
   import { isAdmin } from '../lib/roles.js';
@@ -59,6 +62,8 @@
   // Connections: working copies of the saved list (a typed key rides on `key`), and the stage choices.
   let connWork = $state<any[]>([]);
   let picks = $state<Record<string, string>>({});
+  // Notifications (Connect): working copies of the saved provider list (a typed secret rides on `secret`).
+  let notifWork = $state<any[]>([]);
   let saving = $state(false);
   let saveError = $state('');
   let saveMessage = $state('');
@@ -93,8 +98,13 @@
     loaded && connectionsChanged(loaded.connections ?? [], connWork) ? connectionsBody(connWork) : null,
   );
   const stagesPayload = $derived(loaded ? stagesBody(loaded.stages, picks) : null);
+  const notificationsPayload = $derived(
+    loaded && notificationsChanged(loaded.notifications ?? [], notifWork)
+      ? notificationsBody(notifWork)
+      : null,
+  );
   $effect(() => {
-    dirty = isDirty(valuesBody, connectionsPayload, stagesPayload);
+    dirty = isDirty(valuesBody, connectionsPayload, stagesPayload, notificationsPayload);
   });
   // A different category page starts clean: App has already asked before letting an edited page go.
   $effect(() => {
@@ -111,6 +121,7 @@
   function seedConnections() {
     connWork = (loaded?.connections ?? []).map((c: any) => ({ ...c }));
     picks = { ...(loaded?.stages ?? {}) };
+    notifWork = (loaded?.notifications ?? []).map((n: any) => ({ ...n, triggers: [...(n.triggers ?? [])] }));
   }
 
   function setDraft(key: string, value: unknown) {
@@ -159,6 +170,7 @@
           revision: loaded?.revision,
           ...(connectionsPayload ? { connections: connectionsPayload } : {}),
           ...(stagesPayload ? { stages: stagesPayload } : {}),
+          ...(notificationsPayload ? { notifications: notificationsPayload } : {}),
         },
       });
       drafts = {};
@@ -321,6 +333,17 @@
         saved={loaded.connections ?? []}
         bind:working={connWork}
         bind:picks
+        {errors}
+        {secretsWritable}
+        {canEdit}
+        {api}
+      />
+    {/if}
+    {#if category === 'connect'}
+      <NotificationsPanel
+        rules={schema.notifications}
+        saved={loaded.notifications ?? []}
+        bind:working={notifWork}
         {errors}
         {secretsWritable}
         {canEdit}
