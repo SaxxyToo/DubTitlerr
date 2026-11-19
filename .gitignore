@@ -39,6 +39,7 @@ skills/
 
 # agent-harness scratch worktrees (created under the repo root, never meant to ship)
 .claude/worktrees/
+.worktrees/
 
 # skill-tooling lockfile scaffold, regenerated locally, not a project artifact
 skills-lock.json
