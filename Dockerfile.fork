@@ -9,4 +9,11 @@
 # Keep the base tag in step with the release the fork is based on.
 FROM ghcr.io/xenarathon/dubtitlerr:v0.3.0
 
-COPY mux.py atomic_file.py common.py settings_registry.py merge_pass.sh publish_gate.py /app/
+# The fork runtime now lives in the dubtitlerr package; the overlay carries the package,
+# the fork shells, and the same data/shell/tools the standalone images ship.
+COPY dubtitlerr/ /app/dubtitlerr/
+COPY gen_loop.sh container_run.sh merge_pass.sh /app/
+COPY data/ /app/data/
+COPY shell/ /app/shell/
+COPY tools/ /app/tools/
+ENV PYTHONPATH=/app
