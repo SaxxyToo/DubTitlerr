@@ -61,7 +61,15 @@ from urllib.parse import quote
 from dubtitlerr.core import common, decisions, unresolved
 from dubtitlerr.core.common import log
 from dubtitlerr.core.decisions import show_for
-from dubtitlerr.review import review_apply, review_auth, review_glossary, review_requests, review_status, review_webhooks
+from dubtitlerr.review import (
+    review_api_v1,
+    review_apply,
+    review_auth,
+    review_glossary,
+    review_requests,
+    review_status,
+    review_webhooks,
+)
 from dubtitlerr.settings import settings_api
 
 review_auth.register_routes(settings_api.ROLE_ENTRIES)
@@ -1086,6 +1094,21 @@ def _route(method: str, path: str, bare: str, body: dict, decision, client: str,
         p = decision.principal
         who = f"{p.kind}:{p.name}" if p and p.name else ("token" if auth_required() else "anonymous")
         return review_glossary.handle(method, path, body, operator=who, role=decision.role or "user")
+    # The versioned, frozen contract for agents and scripts. Additive: the classic /api/* routes
+    # above are untouched and are still what the web UI calls. Auth already ran in route_full, so a
+    # /api/v1 path this module does not serve was judged by the role table (unlisted = admin).
+    if bare == review_api_v1.API_PREFIX or bare.startswith(review_api_v1.API_PREFIX + "/"):
+        p = decision.principal
+        who = f"{p.kind}:{p.name}" if p and p.name else ("token" if auth_required() else "anonymous")
+        return review_api_v1.handle(
+            method,
+            bare,
+            body,
+            snapshot=_STEMS_CACHE,
+            anime_root=_anime_root(),
+            health=handle_healthz,
+            who=who,
+        )
     return 404, {"error": "no such route"}
 
 
