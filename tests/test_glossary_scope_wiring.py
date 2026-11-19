@@ -275,7 +275,12 @@ def add_episode(show, season, episode):
 def test_a_missing_wiki_scope_module_is_an_incomplete_scope_not_a_crash(tmp_path, wiki, monkeypatch):
     import sys
 
-    monkeypatch.setitem(sys.modules, "dubtitlerr.glossary.wiki_scope", None)  # the lazy import now raises ImportError
+    import dubtitlerr.glossary as _glossary_pkg
+
+    # Simulate the module being absent from the image: no sys.modules entry AND no cached
+    # attribute on the package, so the lazy from-import raises ImportError.
+    monkeypatch.setitem(sys.modules, "dubtitlerr.glossary.wiki_scope", None)
+    monkeypatch.delattr(_glossary_pkg, "wiki_scope", raising=False)
     show = library(tmp_path, {1: [1, 2]})
     path = gloss(tmp_path, ARC_INDEX)
     rep = gv.tag_arcs(str(path), str(show))

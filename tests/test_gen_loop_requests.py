@@ -232,7 +232,7 @@ pathlib.Path(os.environ["STOP_FLAG"]).touch()
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.Popen(["sh", str(REPO / "gen_loop.sh")], env=env)
+    proc = subprocess.Popen(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"])
     try:
         time.sleep(1.0)
     finally:
@@ -300,7 +300,7 @@ pathlib.Path(r"{call_log}").write_text("called")
         RESCAN_INTERVAL="0",
     )
 
-    proc = subprocess.Popen(["sh", str(REPO / "gen_loop.sh")], env=env)
+    proc = subprocess.Popen(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"])
     try:
         # Loop sleeps when closed; verify no work was started
         time.sleep(1.5)
@@ -366,7 +366,7 @@ else:
         REQUEST_POLL_INTERVAL="1",
     )
 
-    proc = subprocess.Popen(["sh", str(REPO / "gen_loop.sh")], env=env)
+    proc = subprocess.Popen(["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"])
     try:
         # Wait until the initial show sweep is done and loop is IDLE
         sweep_deadline = time.monotonic() + 30.0

@@ -8,65 +8,90 @@ import os
 import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# modules gen_loop.sh / container_run.sh actually run inside the container
+# modules gen_loop.sh / container_run.sh actually run inside the container (as `python3 -m ...`)
 ENTRYPOINTS = [
-    "generate.py",
-    "repair.py",
-    "mux.py",
-    "mine_glossary.py",
-    "glossary_verify.py",
-    "glossary_acquire.py",
-    "recreate_srt.py",
-    "dub_signs_merge.py",
-    "plex_refresh.py",
-    "watch_queue.py",
+    "dubtitlerr.pipeline.generate",
+    "dubtitlerr.pipeline.repair",
+    "dubtitlerr.pipeline.mux",
+    "dubtitlerr.glossary.mine_glossary",
+    "dubtitlerr.glossary.glossary_verify",
+    "dubtitlerr.glossary.glossary_acquire",
+    "dubtitlerr.pipeline.recreate_srt",
+    "dubtitlerr.pipeline.dub_signs_merge",
+    "dubtitlerr.pipeline.plex_refresh",
+    "dubtitlerr.pipeline.watch_queue",
     # [S-8/later] merge_pass.sh runs the publish gate before mux (PUBLISH_GATE defaults on), so
     # the gate is an entrypoint the image must carry -- the shell checks it exists, but this
     # list is what proves its imports arrived too (the qc.py failure shape).
-    "publish_gate.py",
+    "dubtitlerr.pipeline.publish_gate",
     # [S-8]: the review server is a third container loop, so everything it imports has to
     # be in the image. qc.py passed 987 tests and ImportError'd on container start for
     # exactly this reason.
-    "review_server.py",
-    "review_users.py",
+    "dubtitlerr.review.review_server",
+    "dubtitlerr.review.review_users",
     # The shell loops and the container entrypoint run these directly: the settings exporter (imports the registry and the
     # store) and the request helper (writes the effective-env reports).
-    "review_settings_write.py",
-    "review_requests.py",
+    "dubtitlerr.review.review_settings_write",
+    "dubtitlerr.review.review_requests",
 ]
 
 
+def _entry_path(module):
+    """'dubtitlerr.pipeline.generate' -> repo-relative 'dubtitlerr/pipeline/generate.py'."""
+    return os.path.join(*module.split(".")) + ".py"
+
+
 def _copied():
+    """Repo-relative paths of every .py the builder image's COPY lines bring in.
+
+    Dockerfile.builder copies the whole dubtitlerr/ tree; expand that from the working
+    tree so a new module under the package is covered without editing the Dockerfile."""
     with open(os.path.join(ROOT, "Dockerfile.builder")) as f:
         body = f.read().replace("\\\n", " ")
     names = set()
     for line in body.splitlines():
-        if line.startswith("COPY "):
-            names.update(re.findall(r"[\w./-]+\.py", line))
-    return {os.path.basename(n) for n in names}
+        if not line.startswith("COPY "):
+            continue
+        names.update(re.findall(r"[\w./-]+\.py", line))
+        if re.search(r"COPY\s+dubtitlerr/\s", line):
+            for base, _dirs, files in os.walk(os.path.join(ROOT, "dubtitlerr")):
+                for fn in files:
+                    if fn.endswith(".py"):
+                        names.add(os.path.relpath(os.path.join(base, fn), ROOT))
+    return {n.lstrip("./") for n in names}
 
 
 def _local_imports(path):
+    """Repo-relative paths of every dubtitlerr module this file imports (any depth)."""
     tree = ast.parse(open(path).read())
     out = set()
     for node in ast.walk(tree):
+        mods = []
         if isinstance(node, ast.Import):
-            out.update(a.name.split(".")[0] for a in node.names)
+            mods = [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            out.add(node.module.split(".")[0])
-    return {m for m in out if os.path.exists(os.path.join(ROOT, m + ".py"))}
+            mods = [node.module]
+            if node.module.startswith("dubtitlerr"):
+                mods += [node.module + "." + a.name for a in node.names]
+        for m in mods:
+            if not m.startswith("dubtitlerr"):
+                continue
+            rel = os.path.join(*m.split(".")) + ".py"
+            if os.path.exists(os.path.join(ROOT, rel)):
+                out.add(rel)
+    return out
 
 
 def test_every_module_an_entrypoint_imports_is_copied_into_the_image():
     copied = _copied()
     missing = {}
     for ep in ENTRYPOINTS:
-        p = os.path.join(ROOT, ep)
+        p = os.path.join(ROOT, _entry_path(ep))
         if not os.path.exists(p):
             continue
-        for mod in _local_imports(p):
-            if mod + ".py" not in copied:
-                missing.setdefault(mod + ".py", []).append(ep)
+        for dep in _local_imports(p):
+            if dep not in copied:
+                missing.setdefault(dep, []).append(ep)
     assert not missing, f"not COPY'd into the image but imported at runtime: {missing}"
 
 
@@ -78,7 +103,7 @@ def test_every_entrypoint_is_itself_copied_into_the_image():
 
     That is the qc.py failure exactly -- 987 tests green, ImportError on container start."""
     copied = _copied()
-    absent = [ep for ep in ENTRYPOINTS if os.path.exists(os.path.join(ROOT, ep)) and ep not in copied]
+    absent = [ep for ep in ENTRYPOINTS if os.path.exists(os.path.join(ROOT, _entry_path(ep))) and _entry_path(ep) not in copied]
 
     assert not absent, f"entrypoints missing from the image: {absent}"
 
@@ -120,7 +145,7 @@ def test_the_baked_model_and_generates_fallback_cannot_drift():
     re-downloads the missing model into /models on every container start (Dockerfile.builder
     says so in its own comment). Nothing else in the suite compares these two files."""
     baked = _dockerfile_arg_default("WHISPER_MODEL")
-    fallback = _module_env_default("generate.py", "MODEL", "WHISPER_MODEL")
+    fallback = _module_env_default(_entry_path("dubtitlerr.pipeline.generate"), "MODEL", "WHISPER_MODEL")
     assert baked, "Dockerfile.builder has no ARG WHISPER_MODEL=<default>"
     assert fallback, "generate.py does not default MODEL from WHISPER_MODEL"
     assert baked == fallback, f"baked model {baked!r} != generate.py fallback {fallback!r}"
@@ -145,9 +170,9 @@ def test_container_run_starts_the_review_server_as_a_background_loop():
     gen = [i for i, ln in enumerate(code) if "gen_loop.sh" in ln]
 
     assert launches, "the server has to actually be started, not just mentioned"
-    assert 'exec python3 "$APP_DIR/review_server.py"' in code, "the function ends by becoming the server"
+    assert "exec python3 -m dubtitlerr.review.review_server" in code, "the function ends by becoming the server"
     assert gen and code[gen[0]].endswith("&"), "the generate loop is started in the background and supervised"
-    assert [ln for ln in code if ln.startswith("exec ")] == ['exec python3 "$APP_DIR/review_server.py"'], (
+    assert [ln for ln in code if ln.startswith("exec ")] == ["exec python3 -m dubtitlerr.review.review_server"], (
         "exec would drop the SIGTERM trap (soft stop) anywhere but in the backgrounded server function"
     )
     assert 'wait "$gen_pid"' in code, "the supervisor waits on the generate loop, not the review server"
@@ -194,17 +219,16 @@ def test_healthcheck_targets_healthz():
 def test_every_module_reachable_from_an_entrypoint_is_copied_into_the_image():
     """One hop deeper than the check above: a helper that a helper imports is just as absent from the image."""
     copied = _copied()
-    seen, queue, missing = set(), [ep for ep in ENTRYPOINTS if os.path.exists(os.path.join(ROOT, ep))], {}
+    seen, queue, missing = set(), [_entry_path(ep) for ep in ENTRYPOINTS if os.path.exists(os.path.join(ROOT, _entry_path(ep)))], {}
     while queue:
-        module = queue.pop()
-        if module in seen:
+        rel = queue.pop()
+        if rel in seen:
             continue
-        seen.add(module)
-        for imported in _local_imports(os.path.join(ROOT, module)):
-            name = imported + ".py"
-            if name not in copied:
-                missing.setdefault(name, []).append(module)
-            queue.append(name)
+        seen.add(rel)
+        for imported in _local_imports(os.path.join(ROOT, rel)):
+            if imported not in copied:
+                missing.setdefault(imported, []).append(rel)
+            queue.append(imported)
     assert not missing, f"not COPY'd into the image but reachable from an entrypoint: {missing}"
 
 

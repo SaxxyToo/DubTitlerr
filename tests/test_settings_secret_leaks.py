@@ -34,8 +34,9 @@ def env(tmp_path, monkeypatch):
 
 def exported_environment(scope, tmp_path):
     out = subprocess.run(
-        [sys.executable, os.path.join(REPO, "review_settings_write.py"), "export", "--scope", scope, "--plain"],
+        [sys.executable, "-m", "dubtitlerr.review.review_settings_write", "export", "--scope", scope, "--plain"],
         env={**os.environ, "CONFIG_DIR": str(tmp_path)},
+        cwd=REPO,
         capture_output=True,
         text=True,
         timeout=30,
@@ -174,8 +175,9 @@ def test_a_connection_key_reaches_the_pipeline_env_but_no_report_or_plain_export
         reports.append(path.read_text())
     assert any("REPAIR_BACKEND=openai" in r for r in reports), "the report is not empty: the secret was filtered, not missing"
     shell = subprocess.run(
-        [sys.executable, os.path.join(REPO, "review_settings_write.py"), "export", "--scope", "merge"],
+        [sys.executable, "-m", "dubtitlerr.review.review_settings_write", "export", "--scope", "merge"],
         env={**os.environ, "CONFIG_DIR": str(tmp_path)},
+        cwd=REPO,
         capture_output=True,
         text=True,
         timeout=30,

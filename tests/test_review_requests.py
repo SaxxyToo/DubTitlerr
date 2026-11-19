@@ -566,7 +566,7 @@ def test_is_window_open_and_cli(tmp_path, capsys):
 
     # CLI check with closed window
     with patch.object(sys, "argv", ["review_requests.py", "window-open", str(schedule_file)]):
-        with patch("review_requests.is_window_open", return_value=False):
+        with patch("dubtitlerr.review.review_requests.is_window_open", return_value=False):
             review_requests.main()
     assert capsys.readouterr().out.strip() == "closed"
 
@@ -1276,7 +1276,8 @@ def test_shows_cli_prints_one_show_per_line(tmp_path):
     _req(tmp_path, "", "a", "Show A", "pending")
     _req(tmp_path, "", "b", "Show B", "pending")
     out = subprocess.run(
-        [sys.executable, str(Path(review_requests.__file__)), "shows", str(tmp_path), "7"],
+        [sys.executable, "-m", "dubtitlerr.review.review_requests", "shows", str(tmp_path), "7"],
+        cwd=str(Path(__file__).resolve().parent.parent),
         capture_output=True,
         text=True,
         check=True,

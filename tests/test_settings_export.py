@@ -10,7 +10,7 @@ import pytest
 from dubtitlerr.settings import settings_store as store
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXPORTER = os.path.join(REPO, "review_settings_write.py")
+EXPORTER = "-m dubtitlerr.review.review_settings_write"  # the exporter runs as a module; the shell snippets below interpolate this string
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def save(cfg, values=None, secrets=None):
 def run(cfg, *args, env=None):
     full = {k: v for k, v in os.environ.items() if k not in ("WHISPER_BEAM_SIZE", "REQUIRE_ENG")}
     full.update({"CONFIG_DIR": str(cfg), **(env or {})})
-    return subprocess.run([sys.executable, EXPORTER, *args], env=full, capture_output=True, text=True, timeout=30)
+    return subprocess.run([sys.executable, *EXPORTER.split(), *args], env=full, cwd=REPO, capture_output=True, text=True, timeout=30)
 
 
 def test_gen_scope_exports_the_stored_gen_keys_and_nothing_else(cfg):
@@ -116,9 +116,9 @@ def test_secrets_are_withheld_when_secrets_json_cannot_be_trusted(cfg):
 
 
 def test_usage_errors_exit_2():
-    assert subprocess.run([sys.executable, EXPORTER], capture_output=True).returncode == 2
-    assert subprocess.run([sys.executable, EXPORTER, "export", "--scope", "nope"], capture_output=True).returncode == 2
-    assert subprocess.run([sys.executable, EXPORTER, "snapshot", "--scope", "server"], capture_output=True).returncode == 2
+    assert subprocess.run([sys.executable, *EXPORTER.split()], capture_output=True, cwd=REPO).returncode == 2
+    assert subprocess.run([sys.executable, *EXPORTER.split(), "export", "--scope", "nope"], capture_output=True, cwd=REPO).returncode == 2
+    assert subprocess.run([sys.executable, *EXPORTER.split(), "snapshot", "--scope", "server"], capture_output=True, cwd=REPO).returncode == 2
 
 
 @pytest.mark.parametrize("flag", ["--plain", "--boot"])
@@ -149,7 +149,7 @@ def test_a_hostile_key_in_settings_json_creates_no_file_when_the_output_is_evalu
     work = cfg / "work"
     work.mkdir()
     env = {k: v for k, v in os.environ.items() if k != "REQUIRE_ENG"}
-    env.update(CONFIG_DIR=str(cfg), WORK=str(work))
+    env.update(CONFIG_DIR=str(cfg), WORK=str(work), PYTHONPATH=str(REPO))
     out = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=30)
     assert out.stdout.strip() == "0", out.stderr
     assert not (work / "PWNED").exists() and not (cfg / "PWNED").exists() and list(work.iterdir()) == []

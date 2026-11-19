@@ -154,7 +154,7 @@ def test_a_hostile_settings_file_is_never_executed(harness):
 
 
 def test_a_missing_exporter_does_not_stop_the_pass(harness):
-    (harness.app / "review_settings_write.py").unlink()
+    (harness.app / "dubtitlerr" / "review" / "review_settings_write.py").unlink()
     seen, res = harness({"WHISPER_BEAM_SIZE": "7"}, values={"WHISPER_BEAM_SIZE": 5})
     assert seen is not None, res.stdout + res.stderr
     assert seen["WHISPER_BEAM_SIZE"] == "7", "fails open to the container environment"
