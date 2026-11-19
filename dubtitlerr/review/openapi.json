@@ -1,0 +1,1333 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "DubTitlerr API",
+    "version": "1.0.0",
+    "description": "The frozen, versioned contract for external consumers (agents, scripts, other tools). The classic /api/* surface is the web UI's backend and is not part of this contract. Reads require the user role or higher; writes require admin. X-Api-Key (the admin key) is accepted on every route. Paths not listed here are not part of v1 and fail closed."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The review server"
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "system",
+      "description": "Status, health and the OpenAPI document"
+    },
+    {
+      "name": "library",
+      "description": "Shows, the run-request queue and delivery history"
+    },
+    {
+      "name": "commands",
+      "description": "arr-style command endpoint"
+    },
+    {
+      "name": "notifications",
+      "description": "Notification provider management"
+    },
+    {
+      "name": "settings",
+      "description": "Read-only effective settings"
+    }
+  ],
+  "paths": {
+    "/api/v1/system/status": {
+      "get": {
+        "summary": "Pipeline and server status",
+        "description": "Version, uptime, the loop's state from the builder heartbeat, the run-request queue depth, and the episode cache's size and age. Never walks the media tree.",
+        "operationId": "getSystemStatus",
+        "tags": [
+          "system"
+        ],
+        "x-dubtitlerr-role": "user",
+        "responses": {
+          "200": {
+            "description": "Status document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "summary": "Health probe",
+        "description": "Same semantics as GET /healthz (200 {\"ok\": true} or 503 with reasons), under the versioned namespace.",
+        "operationId": "getHealth",
+        "tags": [
+          "system"
+        ],
+        "x-dubtitlerr-role": "user",
+        "responses": {
+          "200": {
+            "description": "Healthy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unhealthy; reasons names why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/queue": {
+      "get": {
+        "summary": "Queued and running run requests",
+        "description": "The run requests currently pending or running, newest first, read from $REQUESTS_DIR.",
+        "operationId": "getQueue",
+        "tags": [
+          "library"
+        ],
+        "x-dubtitlerr-role": "user",
+        "responses": {
+          "200": {
+            "description": "Queue document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Queue"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history": {
+      "get": {
+        "summary": "Recent deliveries and stage outcomes",
+        "description": "Delivered episodes (done stamps) and stage outcome records, newest first. Built once per library-walk lifetime, so the first call after a cache fill is the expensive one; later calls are served from that index. Pages with an explicit limit and offset.",
+        "operationId": "getHistory",
+        "tags": [
+          "library"
+        ],
+        "x-dubtitlerr-role": "user",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 25
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "Rows to skip.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "History page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/History"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "limit or offset is outside its bounds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The library cache is still warming.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library": {
+      "get": {
+        "summary": "Shows in the library",
+        "description": "The same show list GET /api/shows returns: directory names directly under ANIME_ROOT that a run request can name.",
+        "operationId": "getLibrary",
+        "tags": [
+          "library"
+        ],
+        "x-dubtitlerr-role": "user",
+        "responses": {
+          "200": {
+            "description": "Show names.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Library"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/command": {
+      "post": {
+        "summary": "Run a command",
+        "description": "arr-style command endpoint. run.request mirrors POST /api/requests (same validation and status codes; params are show, season, episode_re, require_eng, webhook, force). system.restart writes the soft-stop flag and returns 202. notification.test sends one test event to a saved provider (params: {\"name\": ...}).",
+        "operationId": "runCommand",
+        "tags": [
+          "commands"
+        ],
+        "x-dubtitlerr-role": "admin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command completed (notification.test).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Run request created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Restart requested.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown command, bad params, or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An identical run request is already pending.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "summary": "List notification providers",
+        "description": "Every configured provider with its secrets reported only as set or not set.",
+        "operationId": "listNotifications",
+        "tags": [
+          "notifications"
+        ],
+        "x-dubtitlerr-role": "user",
+        "responses": {
+          "200": {
+            "description": "Provider list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a notification provider",
+        "description": "Adds one provider through the same validated, audited settings store Settings > Connect uses.",
+        "operationId": "createNotification",
+        "tags": [
+          "notifications"
+        ],
+        "x-dubtitlerr-role": "admin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created; the body is the masked provider.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notification": {
+                      "$ref": "#/components/schemas/Notification"
+                    },
+                    "revision": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed; errors keys are notifications.<name>.<field>.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "That name already exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notification/{name}": {
+      "get": {
+        "summary": "Read one notification provider",
+        "description": "The masked provider document.",
+        "operationId": "getNotification",
+        "tags": [
+          "notifications"
+        ],
+        "x-dubtitlerr-role": "user",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The provider.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notification": {
+                      "$ref": "#/components/schemas/Notification"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such provider.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a notification provider",
+        "description": "Merges the given fields into the saved provider and re-validates it. A secret field is a string to set it, {\"clear\": true} to drop it, or absent to keep it.",
+        "operationId": "updateNotification",
+        "tags": [
+          "notifications"
+        ],
+        "x-dubtitlerr-role": "admin",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated; the body is the masked provider.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notification": {
+                      "$ref": "#/components/schemas/Notification"
+                    },
+                    "revision": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such provider.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a notification provider",
+        "description": "Removes the provider and its stored secret.",
+        "operationId": "deleteNotification",
+        "tags": [
+          "notifications"
+        ],
+        "x-dubtitlerr-role": "admin",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Provider name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "revision": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such provider.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "summary": "Effective settings (read-only)",
+        "description": "The same masked read shape GET /api/settings serves: every effective value with its source and pending state. Secrets are always masked; credential-bearing URLs lose user info and query.",
+        "operationId": "getSettings",
+        "tags": [
+          "settings"
+        ],
+        "x-dubtitlerr-role": "user",
+        "responses": {
+          "200": {
+            "description": "Settings document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apikey/info": {
+      "get": {
+        "summary": "API key rotation state",
+        "description": "Whether a key is configured, where it is stored, whether the legacy review token still stands in, and when it last changed. The key value is never returned.",
+        "operationId": "getApiKeyInfo",
+        "tags": [
+          "system"
+        ],
+        "x-dubtitlerr-role": "user",
+        "responses": {
+          "200": {
+            "description": "Rotation state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "summary": "This document",
+        "description": "The OpenAPI specification for /api/v1, served from a static file in the repository.",
+        "operationId": "getOpenApi",
+        "tags": [
+          "system"
+        ],
+        "x-dubtitlerr-role": "user",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Api-Key"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "Every error body has an error string; some add errors (field-keyed validation messages).",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "integer",
+            "description": "The HTTP status the /healthz probe would return."
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when ok is false."
+          }
+        },
+        "required": [
+          "ok",
+          "status"
+        ]
+      },
+      "SystemStatus": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "object",
+            "properties": {
+              "api": {
+                "type": "string",
+                "enum": [
+                  "v1"
+                ]
+              },
+              "app": {
+                "type": "string",
+                "nullable": true,
+                "description": "Installed distribution version, or null when nothing is installed."
+              },
+              "transcribe_version": {
+                "type": "integer"
+              },
+              "text_version": {
+                "type": "integer"
+              }
+            }
+          },
+          "boot_id": {
+            "type": "string",
+            "description": "Changes on every container start."
+          },
+          "uptime_s": {
+            "type": "number",
+            "description": "Review server process uptime in seconds."
+          },
+          "loop": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "unknown",
+                  "idle",
+                  "running",
+                  "stalled",
+                  "stopping"
+                ]
+              },
+              "current_show": {
+                "type": "string",
+                "nullable": true
+              },
+              "last_sweep_start": {
+                "type": "number",
+                "nullable": true
+              },
+              "last_sweep_end": {
+                "type": "number",
+                "nullable": true
+              },
+              "last_sweep_end_at": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "stop_requested": {
+                "type": "boolean"
+              },
+              "roots_readable": {
+                "type": "boolean",
+                "nullable": true
+              },
+              "order_file_present": {
+                "type": "boolean",
+                "nullable": true
+              }
+            }
+          },
+          "queue": {
+            "$ref": "#/components/schemas/QueueCounts"
+          },
+          "library": {
+            "type": "object",
+            "properties": {
+              "episodes_cached": {
+                "type": "integer",
+                "nullable": true
+              },
+              "cache_age_s": {
+                "type": "number",
+                "nullable": true
+              }
+            }
+          },
+          "health": {
+            "$ref": "#/components/schemas/Health"
+          }
+        }
+      },
+      "QueueCounts": {
+        "type": "object",
+        "properties": {
+          "pending": {
+            "type": "integer"
+          },
+          "running": {
+            "type": "integer"
+          },
+          "depth": {
+            "type": "integer"
+          }
+        }
+      },
+      "QueueItem": {
+        "type": "object",
+        "description": "One queued or running run request from $REQUESTS_DIR.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running"
+            ]
+          },
+          "show": {
+            "type": "string"
+          },
+          "season": {
+            "type": "integer",
+            "nullable": true
+          },
+          "episode_re": {
+            "type": "string",
+            "nullable": true
+          },
+          "force": {
+            "type": "boolean"
+          },
+          "require_eng": {
+            "type": "integer",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "webhook": {
+            "type": "boolean",
+            "description": "Whether an inbound webhook payload is attached; the payload itself is never returned."
+          }
+        }
+      },
+      "Queue": {
+        "type": "object",
+        "properties": {
+          "queue": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueItem"
+            }
+          },
+          "count": {
+            "type": "integer"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/QueueCounts"
+          }
+        }
+      },
+      "HistoryEvent": {
+        "type": "object",
+        "description": "A delivery (the episode's done stamp) or one stage outcome (repair, signs, mux). Newest first.",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "delivery",
+              "stage"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "stem": {
+            "type": "string"
+          },
+          "show": {
+            "type": "string"
+          },
+          "season": {
+            "type": "string"
+          },
+          "episode": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "description": "stage events only: repair, signs or mux."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "stage events only; one of the pipeline's restricted outcomes."
+          },
+          "detail": {
+            "type": "string",
+            "description": "stage events only."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "mux",
+              "sidecar"
+            ],
+            "description": "delivery events only."
+          },
+          "transcribe_version": {
+            "type": "integer",
+            "nullable": true,
+            "description": "delivery events only."
+          },
+          "text_version": {
+            "type": "integer",
+            "nullable": true,
+            "description": "delivery events only."
+          },
+          "muxed": {
+            "type": "boolean",
+            "description": "delivery events only."
+          }
+        }
+      },
+      "History": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryEvent"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "scanned": {
+            "type": "integer",
+            "description": "Episodes inspected for this index."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the library is larger than the index cap; the oldest episodes may be absent."
+          }
+        }
+      },
+      "Library": {
+        "type": "object",
+        "properties": {
+          "shows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Notification": {
+        "type": "object",
+        "description": "A provider as the API reports it. Secrets are never returned: each secret field is {\"set\": boolean}.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "discord",
+              "ntfy",
+              "webhook"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "server": {
+            "type": "string",
+            "description": "ntfy only."
+          },
+          "topic": {
+            "type": "string",
+            "description": "ntfy only."
+          },
+          "url": {
+            "type": "object",
+            "properties": {
+              "set": {
+                "type": "boolean"
+              }
+            },
+            "description": "discord/webhook secret, reported as set or not set."
+          },
+          "token": {
+            "type": "object",
+            "properties": {
+              "set": {
+                "type": "boolean"
+              }
+            },
+            "description": "ntfy secret, reported as set or not set."
+          }
+        }
+      },
+      "NotificationList": {
+        "type": "object",
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            }
+          }
+        }
+      },
+      "NotificationWrite": {
+        "type": "object",
+        "description": "A provider to create or update. Same validation as Settings > Connect; a secret field is a string to set it, {\"clear\": true} to drop it, or absent to keep it.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "discord",
+              "ntfy",
+              "webhook"
+            ]
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "server": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "url": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "clear": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            ]
+          },
+          "token": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "clear": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ]
+      },
+      "Settings": {
+        "type": "object",
+        "description": "The same masked read shape GET /api/settings serves: every effective value, its source and pending state, with secrets masked and credential-bearing URLs stripped of user info and query.",
+        "additionalProperties": true
+      },
+      "ApiKeyInfo": {
+        "type": "object",
+        "description": "API key rotation state. The key value is never part of this document.",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "storage": {
+            "type": "string",
+            "enum": [
+              "file",
+              "review-token",
+              "none"
+            ]
+          },
+          "legacy_fallback": {
+            "type": "boolean"
+          },
+          "retired": {
+            "type": "boolean"
+          },
+          "rotated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "header": {
+            "type": "string",
+            "enum": [
+              "X-Api-Key"
+            ]
+          }
+        }
+      },
+      "CommandRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "run.request",
+              "system.restart",
+              "notification.test"
+            ]
+          },
+          "params": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "CommandResult": {
+        "type": "object",
+        "description": "arr-style command acknowledgement. result is the underlying operation's own payload.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "result": {
+            "type": "object"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

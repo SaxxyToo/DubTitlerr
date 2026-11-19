@@ -9,6 +9,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import dataclasses
+import datetime
 import hashlib
 import json
 import os
@@ -936,6 +937,32 @@ def handle_logout(principal, headers=None) -> tuple:
 
 def handle_me(principal) -> tuple:
     return 200, {"username": principal.name or "anonymous", "role": principal.role}
+
+
+def api_key_info() -> dict:
+    """Rotation state for the admin API key: never the key itself.
+
+    ``storage`` is "file" once a key has been stored (the normal case), "review-token" while the
+    0.2.x review token still stands in, "none" when no key is accepted. ``rotated_at`` is the key
+    file's mtime, which moves on init, upgrade and reset -- the only rotation record this store
+    has."""
+    state, key = _key_file()
+    legacy = state == "missing" and _legacy_allowed()
+    rotated_at = None
+    try:
+        rotated_at = datetime.datetime.fromtimestamp(
+            os.path.getmtime(apikey_path()), datetime.timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except OSError:
+        pass
+    return {
+        "configured": bool(key) or legacy,
+        "storage": "file" if state == "ok" else "review-token" if legacy else "none",
+        "legacy_fallback": legacy,
+        "retired": os.path.exists(_retired_path()),
+        "rotated_at": rotated_at,
+        "header": API_KEY_HEADER,
+    }
 
 
 def handle_apikey(method: str, path: str) -> tuple:
