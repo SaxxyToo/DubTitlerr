@@ -8,8 +8,8 @@ import subprocess
 
 import pytest
 
-import glossary_acquire as ga
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_verify as gv
 
 ARC_TITLES = {
     "Dressrosa": {"Donquixote Doflamingo", "Monkey D. Luffy", "Rebecca", "Kyros"},

@@ -6,7 +6,7 @@ import stat
 
 import pytest
 
-import settings_store as store
+from dubtitlerr.settings import settings_store as store
 
 SECRET = "tok-9f8e7d6c5b4a-do-not-log"
 

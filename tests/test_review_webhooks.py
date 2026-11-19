@@ -12,8 +12,8 @@ import secrets
 
 import pytest
 
-import review_requests as rr
-import review_webhooks as wh
+from dubtitlerr.review import review_requests as rr
+from dubtitlerr.review import review_webhooks as wh
 
 TOKEN = "hook-token-fixture"
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "webhooks")

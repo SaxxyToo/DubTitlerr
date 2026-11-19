@@ -60,6 +60,7 @@ RUN apt-get update \
 ARG WHISPER_MODEL=large-v3-turbo
 ENV WHISPER_MODEL=${WHISPER_MODEL}
 ENV MODEL_DIR=/models
+ENV PYTHONPATH=/app
 RUN python3 -c "import os; from faster_whisper import WhisperModel; WhisperModel(os.environ['WHISPER_MODEL'], device='cpu', compute_type='int8', download_root='/models')"
 
 # [S-7] the review page. EXPOSE documents it; publishing still needs -p on docker run,
@@ -68,6 +69,9 @@ EXPOSE 8842
 HEALTHCHECK --interval=5m --timeout=10s --start-period=10m --retries=3 CMD python3 -c "import os,urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('REVIEW_PORT', '8842'), timeout=5).status==200 else 1)"
 
 WORKDIR /app
+# The pipeline is the importable dubtitlerr package (core/, pipeline/, glossary/, review/,
+# settings/); the shells stay at /app and drive stages with `python3 -m dubtitlerr.<pkg>.<mod>`.
+# ENV PYTHONPATH=/app above makes that resolve everywhere, including `docker exec`.
 # NOTE (V2-U3 B7/B9): common.py was missing from this COPY list since V1 introduced it --
 # every `from common import ...` (generate.py, mine_glossary.py, mux.py, repair.py,
 # dub_signs_merge.py) would ImportError at container start. Added here alongside the new
@@ -82,9 +86,8 @@ WORKDIR /app
 # before mux, so a missing file made the pass print "MERGE PASS COMPLETE" having delivered
 # nothing -- the in-loop `exit 1` only ended that piped subshell. It sits in ENTRYPOINTS in
 # tests/test_dockerfile_copy.py now, so its own imports are checked against this list too.
-COPY generate.py reflow.py glossary.py glossary_verify.py glossary_acquire.py hallucination.py ordering.py atomic_file.py common.py \
-     repair.py dub_signs_merge.py mux.py plex_refresh.py mine_glossary.py recreate_srt.py merge_pass.sh card_split.py publish_gate.py \
-     qc.py punctuation.py unresolved.py decisions.py review_apply.py review_server.py review_glossary.py review_auth.py settings_registry.py settings_store.py settings_api.py settings_connections.py settings_migrate.py review_users.py review_status.py review_requests.py review_settings.py review_settings_write.py review_webhooks.py watch_queue.py acquire_cache.py adjudication_journal.py decision_client.py glossary_decision.py glossary_lock.py wiki_scope.py gen_loop.sh container_run.sh /app/
+COPY dubtitlerr/ /app/dubtitlerr/
+COPY gen_loop.sh container_run.sh merge_pass.sh /app/
 COPY data/ /app/data/
 COPY shell/ /app/shell/
 COPY --from=review-ui /ui/dist/ /app/web/dist/

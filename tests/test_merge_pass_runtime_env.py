@@ -6,6 +6,7 @@ environment it was started with, so the test sees exactly what a repair run woul
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 
@@ -27,9 +28,11 @@ import json, os, sys
 keys = %r
 seen = {k: os.environ.get(k) for k in keys}
 if os.environ.get("CALL_BACKEND"):
-    # Load the REAL repair module (the stub shadows it on sys.path) and make one hosted call, as a repair run would.
+    # Load the REAL repair module (the stub shadows it on the app copy) and make one hosted call, as a repair run would.
     import importlib.util
-    spec = importlib.util.spec_from_file_location("real_repair", os.path.join(os.environ["REPO"], "repair.py"))
+    spec = importlib.util.spec_from_file_location(
+        "real_repair", os.path.join(os.environ["REPO"], "dubtitlerr", "pipeline", "repair.py")
+    )
     real = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(real)
     seen["answer"] = real.llm_openai("hello", None)
@@ -41,12 +44,11 @@ open(os.environ["DUMP"], "w").write(json.dumps(seen))
 def harness(tmp_path):
     app = tmp_path / "app"
     app.mkdir()
-    for name in os.listdir(REPO):
-        if name.endswith(".py") and name != "repair.py":
-            os.symlink(os.path.join(REPO, name), app / name)
+    # The app owns a copy of the package (as the image does); the repair stage is stubbed.
+    shutil.copytree(os.path.join(REPO, "dubtitlerr"), app / "dubtitlerr")
     for sub in ("shell", "data"):
         os.symlink(os.path.join(REPO, sub), app / sub)
-    (app / "repair.py").write_text(STUB_REPAIR % (WATCHED,))
+    (app / "dubtitlerr" / "pipeline" / "repair.py").write_text(STUB_REPAIR % (WATCHED,))
     config = tmp_path / "config"
     config.mkdir()
     root = tmp_path / "library"
@@ -152,7 +154,7 @@ def test_a_hostile_settings_file_is_never_executed(harness):
 
 
 def test_a_missing_exporter_does_not_stop_the_pass(harness):
-    (harness.app / "review_settings_write.py").unlink()
+    (harness.app / "dubtitlerr" / "review" / "review_settings_write.py").unlink()
     seen, res = harness({"WHISPER_BEAM_SIZE": "7"}, values={"WHISPER_BEAM_SIZE": 5})
     assert seen is not None, res.stdout + res.stderr
     assert seen["WHISPER_BEAM_SIZE"] == "7", "fails open to the container environment"

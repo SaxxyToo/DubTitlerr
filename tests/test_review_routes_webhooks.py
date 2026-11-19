@@ -7,7 +7,7 @@ import threading
 
 import pytest
 
-import review_server as rs
+from dubtitlerr.review import review_server as rs
 
 REVIEW = "review-token"
 HOOK = "webhook-token"
@@ -30,7 +30,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("ANIME_ROOT", str(root))
     monkeypatch.setenv("REMOTE_PATH_MAPPINGS", f"/tv={root}")
     monkeypatch.setenv("REQUESTS_DIR", str(tmp_path / "requests"))
-    import review_requests
+    from dubtitlerr.review import review_requests
 
     monkeypatch.setattr(review_requests, "REQUESTS_DIR", str(tmp_path / "requests"))
     monkeypatch.setenv("WEBHOOK_TOKEN", HOOK)

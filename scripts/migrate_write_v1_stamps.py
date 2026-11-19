@@ -36,7 +36,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from common import (  # noqa: E402
+from dubtitlerr.core.common import (  # noqa: E402
     EXTRA_DIRS,
     GRANDFATHER_VERSION,
     STAMP_SUFFIX,

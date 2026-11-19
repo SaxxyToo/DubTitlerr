@@ -31,9 +31,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import reflow
-import unresolved
-from common import STAMP_SUFFIX, TRACK_NAME, read_stamp, stamp_valid, ts_srt
+from dubtitlerr.core import unresolved
+from dubtitlerr.core.common import STAMP_SUFFIX, TRACK_NAME, read_stamp, stamp_valid, ts_srt
+from dubtitlerr.pipeline import reflow
 
 CONF_SUFFIX = ".dubtitles.conf.json"
 VIDEO_EXTS = (".mkv", ".mp4", ".m4v")
@@ -442,7 +442,7 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    import decisions  # local: only the reviewed-status path needs the store
+    from dubtitlerr.core import decisions  # local: only the reviewed-status path needs the store
 
     stems = completed_episodes(args.show, args.media_root)
     published = read_manifest(args.manifest)

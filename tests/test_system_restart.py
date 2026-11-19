@@ -6,9 +6,9 @@ import re
 import subprocess
 import time
 
-import common
-import review_status
-import settings_api as api
+from dubtitlerr.core import common
+from dubtitlerr.review import review_status
+from dubtitlerr.settings import settings_api as api
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -82,7 +82,10 @@ def test_a_restart_request_ends_the_whole_container_script_with_exit_0_after_the
     )
     (app / "gen_loop.sh").write_text(gen_loop)
     (app / "merge_pass.sh").write_text("#!/bin/sh\nexit 0\n")
-    (app / "review_server.py").write_text("import time\ntime.sleep(8)\n")
+    for pkg in ("", "review"):
+        (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
+        (app / "dubtitlerr" / pkg / "__init__.py").write_text("")
+    (app / "dubtitlerr" / "review" / "review_server.py").write_text("import time\ntime.sleep(8)\n")
     flag = tmp_path / "stop"
     env = {
         **os.environ,
@@ -93,7 +96,12 @@ def test_a_restart_request_ends_the_whole_container_script_with_exit_0_after_the
         "CONFIG_DIR": str(tmp_path),
     }
     proc = subprocess.Popen(
-        ["sh", os.path.join(REPO, "container_run.sh")], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        ["sh", os.path.join(REPO, "container_run.sh")],
+        env=env,
+        cwd=str(app),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
     try:
         deadline = time.time() + 20
@@ -111,7 +119,7 @@ def test_a_restart_request_ends_the_whole_container_script_with_exit_0_after_the
 def test_the_boot_id_name_cannot_collide_with_the_exporters_boot_copies():
     text = open(os.path.join(REPO, "container_run.sh")).read()
     assert "DT_BOOT_ID" not in text and "DT_CONTAINER_BOOT_ID" in text
-    assert "DT_BOOT_ID" not in open(os.path.join(REPO, "common.py")).read()
+    assert "DT_BOOT_ID" not in open(os.path.join(REPO, "dubtitlerr", "core", "common.py")).read()
 
 
 def test_the_healthcheck_follows_review_port():
@@ -122,15 +130,15 @@ def test_the_healthcheck_follows_review_port():
 
 
 def test_the_port_help_says_the_compose_mapping_must_match():
-    import settings_registry as reg
+    from dubtitlerr.settings import settings_registry as reg
 
     help_text = reg.REGISTRY["REVIEW_PORT"]["help"]
     assert "compose" in help_text.lower() and "port mapping" in help_text.lower()
 
 
 def test_the_server_routes_restart_through_the_settings_api_and_names_the_principal(tmp_path, monkeypatch, capsys):
-    import review_auth
-    import review_server as rs
+    from dubtitlerr.review import review_auth
+    from dubtitlerr.review import review_server as rs
 
     flag = tmp_path / "stop"
     monkeypatch.setenv("STOP_FLAG", str(flag))

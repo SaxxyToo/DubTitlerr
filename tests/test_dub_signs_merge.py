@@ -5,8 +5,8 @@ import os
 import pysubs2
 import pytest
 
-import common
-import dub_signs_merge as dsm
+from dubtitlerr.core import common
+from dubtitlerr.pipeline import dub_signs_merge as dsm
 
 
 def ev(text="hello", style="Default"):

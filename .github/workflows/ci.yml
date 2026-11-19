@@ -51,7 +51,7 @@ jobs:
       - run: pip install ruff==0.17.5
       # The whole tree, not a hand-maintained file list. The previous list named ten modules
       # and had stopped covering thirteen others as the repo grew -- including
-      # review_server.py, an authenticated HTTP write surface that runs as root, and
+      # the review server (dubtitlerr/review/review_server.py), an authenticated HTTP write surface that runs as root, and
       # decisions.py, which holds every human verdict. ruff's config lives in pyproject
       # (line-length, rule selection, the *.md exclude), so "." is the honest argument.
       - run: ruff check .

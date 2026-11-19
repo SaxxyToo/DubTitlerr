@@ -16,14 +16,14 @@
 ROOT="${MERGE_ROOTS:-/media/Anime Library}"
 APP="${APP_DIR:-$(cd "$(dirname "$0")" 2>/dev/null && pwd)}"
 # Fail as a CONFIGURATION error before the per-stem loop, not as a "crashed" repair on the
-# first episode it touches: a missing $APP/repair.py used to record {"repair": "crashed"}
+# first episode it touches: a missing $APP/dubtitlerr/pipeline/repair.py used to record {"repair": "crashed"}
 # against that stem, which then blocked every later pass until someone cleared the stage.
-_preflight="repair.py dub_signs_merge.py mux.py"
+_preflight="dubtitlerr/pipeline/repair.py dubtitlerr/pipeline/dub_signs_merge.py dubtitlerr/pipeline/mux.py"
 # publish_gate.py too, when the gate will run. The old check lived INSIDE the per-stem loop,
 # which is a pipe into `while` (a subshell): a missing file made that subshell exit 1 while
 # the pass carried on and printed "MERGE PASS COMPLETE" without delivering a single episode.
 if [ "${PUBLISH_GATE:-1}" != "0" ]; then
-	_preflight="$_preflight publish_gate.py"
+	_preflight="$_preflight dubtitlerr/pipeline/publish_gate.py"
 fi
 for _f in $_preflight; do
 	if [ ! -f "$APP/$_f" ]; then
@@ -31,20 +31,20 @@ for _f in $_preflight; do
 		exit 1
 	fi
 done
-export PYTHONPATH="$APP${PYTHONPATH:+:$PYTHONPATH}" # so inline `python3 -c "import common"` snippets resolve
+export PYTHONPATH="$APP${PYTHONPATH:+:$PYTHONPATH}" # so the `python3 -m dubtitlerr...` stages and the inline snippets resolve
 # Stored settings (settings.json / secrets.json, written by the web UI): applied at the start of EVERY pass, so a change takes
 # effect at the next pass boundary and never mid-episode. NOT `source`d: review_settings_write.py parses and re-validates the
 # files and prints only registered, shell-quoted `export` lines. The guard is the exporter, not a settings file: once the old
 # runtime.env is migrated away there is no file to test for. If the exporter is missing or fails, the pass runs on the container
 # environment. (The exporter's stderr is kept: it names anything it ignored, which would otherwise be invisible.)
-if [ -f "$APP/review_settings_write.py" ]; then
-	eval "$(python3 "$APP/review_settings_write.py" export --scope merge)" || true
+if [ -f "$APP/dubtitlerr/review/review_settings_write.py" ]; then
+	eval "$(python3 -m dubtitlerr.review.review_settings_write export --scope merge)" || true
 fi
 # Report what THIS pass runs with, to its own file: the generate loop writes effective.env from an environment that never
 # applies the repair profile, so sharing one file would make the Settings page's "pending" flip as the two take turns.
 # Written on every pass (also after a reset), but only where a config directory exists.
-if [ -d "${CONFIG_DIR:-/config}" ] && [ -f "$APP/review_requests.py" ]; then
-	python3 "$APP/review_requests.py" write-effective-env "${CONFIG_DIR:-/config}/merge-effective.env" || true
+if [ -d "${CONFIG_DIR:-/config}" ] && [ -f "$APP/dubtitlerr/review/review_requests.py" ]; then
+	python3 -m dubtitlerr.review.review_requests write-effective-env "${CONFIG_DIR:-/config}/merge-effective.env" || true
 fi
 command -v ffmpeg >/dev/null 2>&1 || {
 	echo "FATAL: ffmpeg not found — image is misbuilt"
@@ -91,7 +91,7 @@ command -v library_sweep_enabled >/dev/null 2>&1 || library_sweep_enabled() { re
 set -- "$ROOT_ABS"
 if ! library_sweep_enabled; then
 	set --
-	_req_shows=$(python3 "$APP/review_requests.py" shows "${REQUESTS_DIR:-${CONFIG_DIR:-/config}/requests}" 7 </dev/null 2>/dev/null) || _req_shows=""
+	_req_shows=$(python3 -m dubtitlerr.review.review_requests shows "${REQUESTS_DIR:-${CONFIG_DIR:-/config}/requests}" 7 </dev/null 2>/dev/null) || _req_shows=""
 	while IFS= read -r _show; do
 		[ -n "$_show" ] && [ -d "$ROOT_ABS/$_show" ] && set -- "$@" "$ROOT_ABS/$_show"
 	done <<EOF
@@ -107,12 +107,12 @@ PATTERN=$(extras_grep_pattern "$APP/data/extras.txt" 2>/dev/null || echo '(Behin
 # Prints the outcome of a stage that failed, nothing if it passed. Fails CLOSED: if the
 # check itself cannot run, report "gate-error" so mux is skipped rather than run blind.
 stage_failure() {
-	python3 -c "import common,sys; s=sys.argv[1]; f=common.failed_stage(s, only=(sys.argv[2],)); print(common.read_stages(s)[f].get('outcome') if f else '')" "$1" "$2" </dev/null 2>/dev/null || echo "gate-error"
+	python3 -c "import sys; from dubtitlerr.core import common; s=sys.argv[1]; f=common.failed_stage(s, only=(sys.argv[2],)); print(common.read_stages(s)[f].get('outcome') if f else '')" "$1" "$2" </dev/null 2>/dev/null || echo "gate-error"
 }
 
 # True if the stage left ANY record. Fails closed: a check that cannot run counts as "no".
 has_record() {
-	python3 -c "import common,sys; sys.exit(0 if sys.argv[2] in common.read_stages(sys.argv[1]) else 1)" "$1" "$2" </dev/null >/dev/null 2>&1
+	python3 -c "import sys; from dubtitlerr.core import common; sys.exit(0 if sys.argv[2] in common.read_stages(sys.argv[1]) else 1)" "$1" "$2" </dev/null >/dev/null 2>&1
 }
 
 before=$(find "$@" -type f -name "*.dubtitles.done" | wc -l)
@@ -155,7 +155,7 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 	# uses and --delivered exposes it, so there is no second definition. A dropped or
 	# invalidated stamp (review verdicts, tools/reapply_glossary.py, tools/reopen_for_signs.py)
 	# makes this false again, which is exactly how those reopen an episode.
-	if python3 "$APP/mux.py" --delivered "$stem" </dev/null >/dev/null 2>&1; then
+	if python3 -m dubtitlerr.pipeline.mux --delivered "$stem" </dev/null >/dev/null 2>&1; then
 		echo "skip: already delivered $stem"
 		continue
 	fi
@@ -163,11 +163,11 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 		echo "### assemble $stem"
 		# Drop records from older runs so the crash fallbacks and the gates below only ever see
 		# THIS run's outcome (a stale "ok" would otherwise hide a repair that died silently).
-		python3 -c "import common,sys; common.clear_stage(sys.argv[1], 'repair', 'signs')" "$stem" </dev/null >/dev/null 2>&1 || true
-		python3 "$APP/repair.py" "$stem.dubtitles.conf.json" </dev/null
+		python3 -c "import sys; from dubtitlerr.core import common; common.clear_stage(sys.argv[1], 'repair', 'signs')" "$stem" </dev/null >/dev/null 2>&1 || true
+		python3 -m dubtitlerr.pipeline.repair "$stem.dubtitles.conf.json" </dev/null
 		rc=$?
 		if [ $rc -ne 0 ]; then
-			python3 -c "import common,sys; s=sys.argv[1]; rc=sys.argv[2]; sys.exit(0 if 'repair' in common.read_stages(s) else common.write_stage(s, 'repair', 'crashed', 'rc='+rc) or 1)" "$stem" "$rc" </dev/null >/dev/null 2>&1 || true
+			python3 -c "import sys; from dubtitlerr.core import common; s=sys.argv[1]; rc=sys.argv[2]; sys.exit(0 if 'repair' in common.read_stages(s) else common.write_stage(s, 'repair', 'crashed', 'rc='+rc) or 1)" "$stem" "$rc" </dev/null >/dev/null 2>&1 || true
 			# the fallback's own write can fail (unwritable sidecar): no record at all is a failure
 			if ! has_record "$stem" repair; then
 				echo "skip mux: repair crashed (no record)"
@@ -179,10 +179,10 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 			echo "skip mux: repair failed ($bad)" # the .srt stays, no .ass: the next pass retries
 			continue
 		fi
-		python3 "$APP/dub_signs_merge.py" "$stem.eng.dubtitles.srt" </dev/null
+		python3 -m dubtitlerr.pipeline.dub_signs_merge "$stem.eng.dubtitles.srt" </dev/null
 		rc=$?
 		if [ $rc -ne 0 ]; then
-			python3 -c "import common,sys; s=sys.argv[1]; rc=sys.argv[2]; sys.exit(0 if 'signs' in common.read_stages(s) else common.write_stage(s, 'signs', 'crashed', 'rc='+rc) or 1)" "$stem" "$rc" </dev/null >/dev/null 2>&1 || true
+			python3 -c "import sys; from dubtitlerr.core import common; s=sys.argv[1]; rc=sys.argv[2]; sys.exit(0 if 'signs' in common.read_stages(s) else common.write_stage(s, 'signs', 'crashed', 'rc='+rc) or 1)" "$stem" "$rc" </dev/null >/dev/null 2>&1 || true
 			# the fallback's own write can fail (unwritable sidecar): no record at all is a failure
 			if ! has_record "$stem" signs; then
 				echo "skip mux: signs crashed (no record)"
@@ -204,21 +204,21 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 	# halfway through the episode. Inspects the subtitle text and the container duration;
 	# never touches the video. PUBLISH_GATE=0 is the escape hatch.
 	if [ "${PUBLISH_GATE:-1}" != "0" ]; then
-		if ! python3 "$APP/publish_gate.py" "$stem" </dev/null; then
+		if ! python3 -m dubtitlerr.pipeline.publish_gate "$stem" </dev/null; then
 			# Record the refusal on the mux stage: without it the census counts this stem as
 			# neither done nor failed and prints COMPLETE while an episode was refused.
-			python3 -c "import common,sys; common.write_stage(sys.argv[1],'mux','refused','publish-gate')" "$stem" </dev/null >/dev/null 2>&1 || true
+			python3 -c "import sys; from dubtitlerr.core import common; common.write_stage(sys.argv[1],'mux','refused','publish-gate')" "$stem" </dev/null >/dev/null 2>&1 || true
 			echo "skip mux: publish gate failed"
 			continue
 		fi
 	fi
 	for ext in mkv mp4 m4v; do # mux the video (root); embeds + stamps
 		[ -f "$stem.$ext" ] && {
-			python3 -c "import common,sys; common.clear_stage(sys.argv[1], 'mux')" "$stem" </dev/null >/dev/null 2>&1 || true
-			python3 "$APP/mux.py" --apply "$stem.$ext" </dev/null
+			python3 -c "import sys; from dubtitlerr.core import common; common.clear_stage(sys.argv[1], 'mux')" "$stem" </dev/null >/dev/null 2>&1 || true
+			python3 -m dubtitlerr.pipeline.mux --apply "$stem.$ext" </dev/null
 			rc=$?
 			if [ $rc -ne 0 ]; then
-				python3 -c "import common,sys; s=sys.argv[1]; rc=sys.argv[2]; sys.exit(0 if 'mux' in common.read_stages(s) else common.write_stage(s, 'mux', 'crashed', 'rc='+rc) or 1)" "$stem" "$rc" </dev/null >/dev/null 2>&1 || true
+				python3 -c "import sys; from dubtitlerr.core import common; s=sys.argv[1]; rc=sys.argv[2]; sys.exit(0 if 'mux' in common.read_stages(s) else common.write_stage(s, 'mux', 'crashed', 'rc='+rc) or 1)" "$stem" "$rc" </dev/null >/dev/null 2>&1 || true
 			fi
 			break
 		}
@@ -228,7 +228,7 @@ after=$(find "$@" -type f -name "*.dubtitles.done" | wc -l)
 
 if [ "$after" -gt "$before" ] && [ -n "${PLEX_TOKEN:-}" ]; then
 	echo "muxed $((after - before)) new episode(s) -> refreshing Plex"
-	python3 "$APP/plex_refresh.py" "watch" </dev/null
+	python3 -m dubtitlerr.pipeline.plex_refresh "watch" </dev/null
 fi
 
 # The per-stem loop above runs in a subshell (piped into `while`), so no
@@ -237,7 +237,8 @@ fi
 # of every stage sidecar under ROOT rather than from any loop-local state.
 scan_out=$(find "$@" -type f -name "*.dubtitles.stages.json" -print0 |
 	xargs -0 -r python3 -c "
-import common, sys
+import sys
+from dubtitlerr.core import common
 n = 0
 for p in sys.argv[1:]:
     stem = p[: -len(common.STAGES_SUFFIX)]

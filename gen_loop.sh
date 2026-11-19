@@ -21,30 +21,33 @@ export CONFIG_DIR RUNTIME_ENV_FILE EFFECTIVE_ENV_FILE
 # work in flight -- a killed generate.py leaves a permanent .dubtitles.fail poison marker. So
 # this script has no `trap` and no `wait`; it only looks at the flag between units.
 APP_DIR="${APP_DIR:-/app}"
+# python3 -m needs the app dir (which holds the dubtitlerr/ package) on the import path.
+PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
 
 # What this loop saw at start (the container environment), generated from the settings registry: the _INIT_ values and a
 # restore_runtime_env() that puts every key of the scope back. apply_runtime_env calls it first, so a reset reaches this
 # long-running loop without a restart and a crashing exporter cannot leave the previous show's stored value in force.
 # If the exporter is missing or fails here, nothing is restored and nothing is applied: the loop keeps the container environment.
-if [ -f "$APP_DIR/review_settings_write.py" ]; then
-	eval "$(python3 "$APP_DIR/review_settings_write.py" snapshot --scope gen 2>/dev/null)" || true
+if [ -f "$APP_DIR/dubtitlerr/review/review_settings_write.py" ]; then
+	eval "$(python3 -m dubtitlerr.review.review_settings_write snapshot --scope gen 2>/dev/null)" || true
 fi
 
 # Stored settings (settings.json / secrets.json) for the generate loop, applied at every boundary where a value may change:
 # each sweep, each show, each request -- never mid-episode. The exporter is parsed and re-validated, never sourced; its stderr is
 # logged once per sweep.
 apply_runtime_env() {
-	if [ -f "$APP_DIR/review_settings_write.py" ]; then
+	if [ -f "$APP_DIR/dubtitlerr/review/review_settings_write.py" ]; then
 		if command -v restore_runtime_env >/dev/null 2>&1; then restore_runtime_env; fi
 		_exp_err_file="${CONFIG_DIR:-/config}/.exporter.err"
-		_exp_out=$(python3 "$APP_DIR/review_settings_write.py" export --scope gen --reset-to-init 2>"$_exp_err_file") || true
+		_exp_out=$(python3 -m dubtitlerr.review.review_settings_write export --scope gen --reset-to-init 2>"$_exp_err_file") || true
 		if [ -s "$_exp_err_file" ] && [ "${_EXPORTER_LOGGED_THIS_SWEEP:-0}" -eq 0 ]; then
 			cat "$_exp_err_file" >&2
 			_EXPORTER_LOGGED_THIS_SWEEP=1
 		fi
 		rm -f "$_exp_err_file"
 		eval "$_exp_out" || true
-		python3 "$APP_DIR"/review_requests.py write-effective-env "$EFFECTIVE_ENV_FILE" </dev/null 2>&1 || echo "  effective.env write failed (continuing)"
+		python3 -m dubtitlerr.review.review_requests write-effective-env "$EFFECTIVE_ENV_FILE" </dev/null 2>&1 || echo "  effective.env write failed (continuing)"
 	fi
 }
 if [ -f "$APP_DIR/shell/lib.sh" ]; then
@@ -58,7 +61,7 @@ fi
 
 check_window_open() {
 	_win_err_file="${CONFIG_DIR:-/config}/.window.err"
-	is_open=$(python3 "$APP_DIR"/review_requests.py window-open "$SCHEDULE_FILE" 2>"$_win_err_file") && rc=0 || rc=$?
+	is_open=$(python3 -m dubtitlerr.review.review_requests window-open "$SCHEDULE_FILE" 2>"$_win_err_file") && rc=0 || rc=$?
 	if [ -s "$_win_err_file" ] && [ "${_WINDOW_WARN_LOGGED:-0}" -eq 0 ]; then
 		cat "$_win_err_file" >&2
 		_WINDOW_WARN_LOGGED=1
@@ -100,7 +103,7 @@ prep_show() {
 	echo "#### MINE $_ps_show $(date)"
 	# $2: a request's episode filter, so MINE reads only the episodes the run is about (empty in
 	# the library sweep, which mines every new episode).
-	GLOSSARY_DIR="$GLOSS_DIR" GENERATE_ONLY_RE="${2:-}" python3 "$APP_DIR"/mine_glossary.py "$ANIME/$_ps_show" </dev/null 2>&1 || echo "  mine failed (continuing)"
+	GLOSSARY_DIR="$GLOSS_DIR" GENERATE_ONLY_RE="${2:-}" python3 -m dubtitlerr.glossary.mine_glossary "$ANIME/$_ps_show" </dev/null 2>&1 || echo "  mine failed (continuing)"
 	# Acquire names the miner cannot reach: releases with no embedded fansub track leave the
 	# glossary empty for that stretch of the show. Wiki-owned canonicals only. Two separate
 	# gates: ACQUIRE enables the step at all (default on);
@@ -129,7 +132,7 @@ prep_show() {
 		# surfaced for a human).
 		# 600s was also an incremental-era number; a first full acquisition pass over 463
 		# episodes exceeded it and was killed mid-harvest on 2026-08-21.
-		timeout "${ACQUIRE_TIMEOUT:-1800}" python3 "$APP_DIR"/glossary_acquire.py \
+		timeout "${ACQUIRE_TIMEOUT:-1800}" python3 -m dubtitlerr.glossary.glossary_acquire \
 			"$GLOSS_DIR/$_ps_show.json" "$ANIME/$_ps_show" \
 			$ACQ_FLAGS </dev/null 2>&1 || echo "  acquire skipped (continuing)"
 	fi
@@ -145,7 +148,7 @@ prep_show() {
 			return 0
 		fi
 		echo "#### ARC TAGS $_ps_show $(date)"
-		timeout "${ARC_TAGS_TIMEOUT:-600}" python3 "$APP_DIR"/glossary_verify.py "$_ps_gloss" --tag-arcs "$ANIME/$_ps_show" </dev/null 2>&1 ||
+		timeout "${ARC_TAGS_TIMEOUT:-600}" python3 -m dubtitlerr.glossary.glossary_verify "$_ps_gloss" --tag-arcs "$ANIME/$_ps_show" </dev/null 2>&1 ||
 			echo "  arc tagging skipped (continuing)"
 	fi
 	# wiki-verify the (mined/updated) glossary: canonical, dub-preferred spellings. Incremental +
@@ -168,7 +171,7 @@ prep_show() {
 		# rc-classified message below ever runs. Verified on vm102 2026-09-05: every restart
 		# over the prior 14h exited with code 124, journal-confirmed, with VERIFY_TIMEOUT
 		# (1200s) firing on One Pace within ~2s of the restart in every measured instance.
-		timeout "${VERIFY_TIMEOUT:-1200}" python3 "$APP_DIR"/glossary_verify.py "$_ps_gloss" </dev/null 2>&1 && rc=0 || rc=$?
+		timeout "${VERIFY_TIMEOUT:-1200}" python3 -m dubtitlerr.glossary.glossary_verify "$_ps_gloss" </dev/null 2>&1 && rc=0 || rc=$?
 		[ "$rc" -eq 0 ] || { [ "$rc" -eq 124 ] &&
 			echo "  verify TIMED OUT after ${VERIFY_TIMEOUT:-1200}s (continuing; terms stay unverified)" ||
 			echo "  verify failed rc=$rc (continuing)"; }
@@ -179,7 +182,7 @@ prep_show() {
 
 drain_requests() {
 	if [ "${pruned_this_sweep:-0}" -eq 0 ]; then
-		python3 "$APP_DIR"/review_requests.py prune "$REQUESTS_DIR" 7 </dev/null 2>&1 || true
+		python3 -m dubtitlerr.review.review_requests prune "$REQUESTS_DIR" 7 </dev/null 2>&1 || true
 		pruned_this_sweep=1
 	fi
 	last_req_path=""
@@ -188,10 +191,10 @@ drain_requests() {
 		check_window_open
 		[ "$is_open" = "open" ] || break
 
-		req_json=$(python3 "$APP_DIR"/review_requests.py next "$REQUESTS_DIR" 2>/dev/null) && req_rc=0 || req_rc=$?
+		req_json=$(python3 -m dubtitlerr.review.review_requests next "$REQUESTS_DIR" 2>/dev/null) && req_rc=0 || req_rc=$?
 		[ "$req_rc" -eq 0 ] && [ -n "$req_json" ] || break
 
-		req_out=$(python3 "$APP_DIR"/review_requests.py unpack "$req_json" 2>/dev/null) || break
+		req_out=$(python3 -m dubtitlerr.review.review_requests unpack "$req_json" 2>/dev/null) || break
 
 		req_path="" req_show="" req_gen_re="" req_req_eng="" req_force=""
 		while IFS='=' read -r k v; do
@@ -215,7 +218,7 @@ EOF
 
 		if [ ! -d "$ANIME/$req_show" ]; then
 			echo "request show directory not found: $ANIME/$req_show"
-			if ! python3 "$APP_DIR"/review_requests.py finish "$req_path" fail "show directory not found" </dev/null 2>&1; then
+			if ! python3 -m dubtitlerr.review.review_requests finish "$req_path" fail "show directory not found" </dev/null 2>&1; then
 				echo "gen_loop: failed to mark request $req_path as failed — stopping drain"
 				break
 			fi
@@ -223,7 +226,7 @@ EOF
 		fi
 
 		echo "#### RUN REQUEST for $req_show ($req_path) $(date)"
-		if ! python3 "$APP_DIR"/review_requests.py start "$req_path" </dev/null 2>&1; then
+		if ! python3 -m dubtitlerr.review.review_requests start "$req_path" </dev/null 2>&1; then
 			echo "gen_loop: failed to claim request $req_path — stopping drain"
 			break
 		fi
@@ -254,7 +257,7 @@ EOF
 			before=$(find "$ANIME/$req_show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
 			SHOW_NAME="$req_show" GLOSSARY_FILE="$GLOSS" REQUIRE_ENG="$req_eng" COMPUTE_TYPE="${COMPUTE_TYPE:-int8}" \
 				GENERATE_ONLY_RE="$req_gen_re" FORCE_REDO="$req_force" REQUEST_SINCE="$req_since" RUN_REPORT="$req_report" \
-				python3 "$APP_DIR"/generate.py --root "$ANIME/$req_show" </dev/null && rc=0 || rc=$?
+				python3 -m dubtitlerr.pipeline.generate --root "$ANIME/$req_show" </dev/null && rc=0 || rc=$?
 			after=$(find "$ANIME/$req_show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
 			[ "$rc" = "0" ] && break
 			if [ "$after" -le "$before" ]; then
@@ -270,13 +273,13 @@ EOF
 
 		if stop_requested; then
 			echo "gen_loop: soft stop around request $req_path — requeuing"
-			python3 "$APP_DIR"/review_requests.py requeue "$req_path" </dev/null 2>&1 || echo "gen_loop: failed to requeue request $req_path"
+			python3 -m dubtitlerr.review.review_requests requeue "$req_path" </dev/null 2>&1 || echo "gen_loop: failed to requeue request $req_path"
 			break
 		fi
 
 		# done/failed from the scope report (review_requests.verdict), with the report attached
 		# to the request as its evidence. A missing report fails the request.
-		if ! python3 "$APP_DIR"/review_requests.py finish-report "$req_path" "$req_report" "${rc:-1}" </dev/null 2>&1; then
+		if ! python3 -m dubtitlerr.review.review_requests finish-report "$req_path" "$req_report" "${rc:-1}" </dev/null 2>&1; then
 			echo "gen_loop: failed to file request $req_path — stopping drain"
 			rm -f "$req_report"
 			break
@@ -311,7 +314,7 @@ while :; do
 	library_sweep_enabled || sweep=0
 	if [ "$sweep" -eq 1 ] && [ -n "${WATCH_QUEUE_WINDOW_DAYS:-}" ]; then
 		echo "#### WATCH QUEUE $(date)"
-		ANIME_ROOT="$ANIME" python3 "$APP_DIR"/watch_queue.py \
+		ANIME_ROOT="$ANIME" python3 -m dubtitlerr.pipeline.watch_queue \
 			--window-days "$WATCH_QUEUE_WINDOW_DAYS" --out "$ORDER" \
 			${WATCH_QUEUE_PIN:+--pin "$WATCH_QUEUE_PIN"} </dev/null ||
 			echo "  watch_queue declined to write (keeping the existing order file)"
@@ -326,8 +329,8 @@ while :; do
 		echo "gen_loop: LIBRARY_SWEEP is off, running queued requests only"
 		ORDER=/dev/null
 	fi
-	python3 "$APP_DIR"/review_requests.py recover "$REQUESTS_DIR" </dev/null 2>&1 || echo "  recover failed (continuing)"
-	[ -f "$APP_DIR/review_settings_write.py" ] || python3 "$APP_DIR"/review_requests.py write-effective-env "$EFFECTIVE_ENV_FILE" </dev/null 2>&1 || echo "  effective.env write failed (continuing)"
+	python3 -m dubtitlerr.review.review_requests recover "$REQUESTS_DIR" </dev/null 2>&1 || echo "  recover failed (continuing)"
+	[ -f "$APP_DIR/dubtitlerr/review/review_settings_write.py" ] || python3 -m dubtitlerr.review.review_requests write-effective-env "$EFFECTIVE_ENV_FILE" </dev/null 2>&1 || echo "  effective.env write failed (continuing)"
 	drain_requests
 	while IFS= read -r show; do
 		if stop_requested; then
@@ -363,7 +366,7 @@ while :; do
 			# exit from generate.py doesn't trip `set -e` and kill the container before the
 			# crash-resume logic below ever sees it — while still capturing the real exit code.
 			SHOW_NAME="$show" GLOSSARY_FILE="$GLOSS" REQUIRE_ENG="${REQUIRE_ENG:-1}" COMPUTE_TYPE="${COMPUTE_TYPE:-int8}" \
-				python3 "$APP_DIR"/generate.py --root "$ANIME/$show" </dev/null && rc=0 || rc=$?
+				python3 -m dubtitlerr.pipeline.generate --root "$ANIME/$show" </dev/null && rc=0 || rc=$?
 			after=$(find "$ANIME/$show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
 			[ "$rc" = "0" ] && break
 			if [ "$after" -le "$before" ]; then
@@ -391,7 +394,7 @@ while :; do
 			last_check="$elapsed"
 			check_window_open
 			if [ "$is_open" = "open" ]; then
-				req_pending=$(python3 "$APP_DIR"/review_requests.py next "$REQUESTS_DIR" 2>/dev/null) && req_rc=0 || req_rc=$?
+				req_pending=$(python3 -m dubtitlerr.review.review_requests next "$REQUESTS_DIR" 2>/dev/null) && req_rc=0 || req_rc=$?
 				if [ "$req_rc" -eq 0 ] && [ -n "$req_pending" ]; then
 					echo "gen_loop: pending request detected during idle wait"
 					drain_requests

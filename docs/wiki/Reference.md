@@ -21,13 +21,18 @@ release. `latest` never tracks `main`.
 | -------- | ------------------ | ----------------------------------------- | ------------------------------------------------- |
 | Generate | `gen_loop.sh`      | continuous, then `RESCAN_INTERVAL` idle   | GPU: mine, acquire, verify, transcribe            |
 | Merge    | `merge_pass.sh`    | every `MERGE_INTERVAL`                    | CPU + LLM: repair, merge signs, mux, Plex refresh |
-| Review   | `review_server.py` | restarts after `REVIEW_RESTART` s on exit | HTTP review UI                                    |
+| Review   | `dubtitlerr/review/review_server.py` | restarts after `REVIEW_RESTART` s on exit | HTTP review UI                                    |
 
-**Stage order within `gen_loop.sh`:** `watch_queue.py` → `mine_glossary.py` →
-`glossary_acquire.py` → `glossary_verify.py` → `generate.py`
+**Stage order within `gen_loop.sh`:** `dubtitlerr.pipeline.watch_queue` → `dubtitlerr.glossary.mine_glossary` →
+`dubtitlerr.glossary.glossary_acquire` → `dubtitlerr.glossary.glossary_verify` → `dubtitlerr.pipeline.generate`
 
-**Stage order within `merge_pass.sh`:** `repair.py` → `dub_signs_merge.py` → `mux.py` →
-`plex_refresh.py`
+**Stage order within `merge_pass.sh`:** `dubtitlerr.pipeline.repair` → `dubtitlerr.pipeline.dub_signs_merge` →
+`dubtitlerr.pipeline.mux` → `dubtitlerr.pipeline.plex_refresh`
+
+Script stems are shorthand for the pipeline package: `generate.py` is `dubtitlerr/pipeline/generate.py`,
+`common.py` is `dubtitlerr/core/common.py`, `glossary_*` live in `dubtitlerr/glossary/`, `review_*` in
+`dubtitlerr/review/`, `settings_*` in `dubtitlerr/settings/`. The shells drive stages as
+`python3 -m dubtitlerr.<sub>.<module>`.
 
 A failed repair or signs stage skips mux for that episode. The episode is retried on the next
 pass. See [Stage outcomes](#stage-outcomes).
@@ -346,7 +351,7 @@ See [Glossary file](#glossary-file) for the stored keys.
 
 | Var                 | Default                     | Meaning                                                                                                                                                                                                                                                             |
 | ------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GLOSSARY_ARC_TAGS` | `0` (read by `gen_loop.sh`) | `1` runs `glossary_verify.py --tag-arcs` for each show, between acquire and verify                                                                                                                                                                                  |
+| `GLOSSARY_ARC_TAGS` | `0` (read by `gen_loop.sh`) | `1` runs the `--tag-arcs` pass for each show, between acquire and verify                                                                                                                                                                                  |
 | `ARC_TAGS_TIMEOUT`  | `600`                       | Seconds one `--tag-arcs` run may take                                                                                                                                                                                                                               |
 | `ARC_MIN_TITLES`    | `10`                        | An arc with fewer wiki titles counts as missing. The smallest real One Piece arc has 38                                                                                                                                                                             |
 | `VERIFY_ARC_GATE`   | _(off)_                     | `1` flags a would-be write whose title is on no arc page (`not-in-arc-pages`). It does nothing, and says so once, unless every arc of the show has stored titles with finished redirects. On the audit set it blocked 45 of 119 wrong writes and 8 of 42 right ones |
@@ -497,7 +502,7 @@ The first start after the upgrade imports the keys an existing `runtime.env` car
 | `arc_waived`         | list   | Seasons you accept as covered with no wiki titles, such as seasons that are not arcs. You write it                                                                        |
 | `wiki_scope`         | object | Scope for a show with no arc names. See [Wiki scope](#wiki-scope)                                                                                                         |
 
-**Flag reasons.** What a human sees in `glossary_acquire.py --review`:
+**Flag reasons.** What a human sees in `python3 -m dubtitlerr.glossary.glossary_acquire --review`:
 
 | Reason                      | What it asks                                                                                                    | `y` does                            |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
@@ -544,10 +549,10 @@ A whole-wiki scope tags no names and is left out of the arc gate's universe, bec
 every page verify could propose. Do not rely on a wiki's `Category:Characters`: Chainsmoker Cat's
 has one member of 33. The full key list is in the docstring of `wiki_scope.py`.
 
-`glossary_verify.py` can be run by hand:
+`glossary_verify` can be run by hand:
 
 ```sh
-python3 glossary_verify.py "/config/glossaries/<Show>.json" [--wiki URL] [--force]
+python3 -m dubtitlerr.glossary.glossary_verify "/config/glossaries/<Show>.json" [--wiki URL] [--force]
 ```
 
 ---

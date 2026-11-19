@@ -87,8 +87,8 @@ def test_load_cards_rejects_both_inputs(tmp_path):
 def test_conf_cards_feed_the_real_is_target_predicate(tmp_path):
     """End-to-end on the selection logic: a clean high-confidence line is not a target,
     a low-logprob line is -- using repair.is_target itself, not a copy."""
-    import glossary
-    import repair
+    from dubtitlerr.glossary import glossary
+    from dubtitlerr.pipeline import repair
 
     gloss = glossary.load("")
     rows = [_conf_row("A perfectly clear line.", lp=-0.1, nsp=0.01), _conf_row("grbled nnsense here", lp=-1.4, nsp=0.02)]
@@ -230,8 +230,8 @@ def test_format_model_block_survives_fewer_outputs_than_targets():
 # The rest are computed here so the owner hand-judges a shortlist instead of the pool.
 # No live inference is exercised: score_model is pure over (targets, outputs, glossary).
 
-import glossary as _glossary  # noqa: E402
-import repair as _repair  # noqa: E402
+from dubtitlerr.glossary import glossary as _glossary  # noqa: E402
+from dubtitlerr.pipeline import repair as _repair  # noqa: E402
 
 
 def _gloss(names=("Zoro", "Nami"), fixes=None):
@@ -805,8 +805,8 @@ def test_main_rejects_openai_url_without_key_env(tmp_path, monkeypatch):
 # so the bake-off is split: --dump-refs (needs the video, no model calls) writes the refs,
 # --refs (needs only the conf + that file) runs the models with them.
 
-import common as _common  # noqa: E402
-import hallucination as _hallucination  # noqa: E402
+from dubtitlerr.core import common as _common  # noqa: E402
+from dubtitlerr.pipeline import hallucination as _hallucination  # noqa: E402
 
 
 def _row(text, lp, start, end, **kw):
@@ -1213,7 +1213,7 @@ def test_openai_latency_excludes_the_retry_after_sleep(monkeypatch):
 
 # --- anchored mode review fixes: raw conf text, output correction, validation, differential --------
 
-import repair as _prod  # noqa: E402
+from dubtitlerr.pipeline import repair as _prod  # noqa: E402
 
 
 def _gfile(tmp_path, data=None, name="g.json"):

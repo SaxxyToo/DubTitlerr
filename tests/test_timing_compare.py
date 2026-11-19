@@ -618,7 +618,7 @@ def test_bucket_nsp_boundaries():
 
 
 def test_bucket_lp_boundaries():
-    import hallucination as h
+    from dubtitlerr.pipeline import hallucination as h
 
     f, d = h.LP_FLAG, tc.HIST_LP_DROP  # low_conf is live; the DROP cutpoint is historical
     assert tc.bucket_lp(0.0) == f"clean_ge_{f:g}"
@@ -637,7 +637,7 @@ def test_bucket_cutpoints_track_the_live_rule_and_pin_the_historical_ones():
     (ADR 0002 deleted `music` and `maybe_silence` on 2026-08-24): this tool reads sidecars
     written while those rules were in force, so the buckets must keep describing the
     thresholds that actually decided that archive."""
-    import hallucination
+    from dubtitlerr.pipeline import hallucination
 
     assert tc.HIST_NSP_FLAG == 0.5
     assert tc.HIST_NSP_DROP == 0.95
@@ -1078,7 +1078,7 @@ def test_main_no_warning_when_tolerance_in_range(tmp_path, monkeypatch, capsys):
 def _stub_ffprobe(monkeypatch, streams):
     import types
 
-    import common
+    from dubtitlerr.core import common
 
     def run(cmd, **kw):
         return types.SimpleNamespace(stdout=json.dumps({"streams": streams}), returncode=0)
@@ -1094,7 +1094,7 @@ def _ass(index, title=None, lang="eng"):
 
 
 def test_select_reference_track_ignores_our_own_dubtitles_track(monkeypatch):
-    import common
+    from dubtitlerr.core import common
 
     scored = []
     _stub_ffprobe(monkeypatch, [_ass(2, title="English (Fansub)"), _ass(3, title="Dubtitles")])
@@ -1105,7 +1105,7 @@ def test_select_reference_track_ignores_our_own_dubtitles_track(monkeypatch):
 
 def test_select_reference_track_reports_no_reference_when_only_sub_is_our_dubtitle(monkeypatch):
     """No fallback: the episode is compared reference-free rather than against itself."""
-    import common
+    from dubtitlerr.core import common
 
     _stub_ffprobe(monkeypatch, [_ass(3, title="Dubtitles")])
     monkeypatch.setattr(common, "extract_sub", lambda v, idx, out: pytest.fail("extracted our own dubtitle"))

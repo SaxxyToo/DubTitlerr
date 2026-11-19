@@ -7,10 +7,9 @@ import json
 
 import pytest
 
-import glossary
-import punctuation
-import repair
-import unresolved
+from dubtitlerr.core import unresolved
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import punctuation, repair
 
 # ---- the one counter ----------------------------------------------- ----
 
@@ -72,7 +71,7 @@ def test_pending_primary_only_skips_dismissed_but_the_full_view_keeps_them(tmp_p
 
 
 def test_the_review_page_hides_dismissed_entries_in_its_default_view(tmp_path):
-    import review_server
+    from dubtitlerr.review import review_server
 
     stem = str(tmp_path / "ep")
     unresolved.record(
@@ -184,7 +183,7 @@ def test_a_punctuation_rejection_is_dismissed_with_the_same_rule(monkeypatch, tm
 
 def test_a_human_verdict_on_a_dismissed_pair_still_applies(monkeypatch):
     """Verdicts are keyed on (original, proposal): the dismissal marker is not part of the key."""
-    import decisions
+    from dubtitlerr.core import decisions
 
     monkeypatch.setenv("REPAIR_AUTO_DISMISS_WORDS", "2")
     store = decisions.record({}, BIG, HUGE, "force")

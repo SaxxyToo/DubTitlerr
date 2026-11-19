@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 
-import common
+from dubtitlerr.core import common
 
 EP_SUFFIX = ".dubtitles.conf.json"
 

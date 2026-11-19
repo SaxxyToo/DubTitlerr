@@ -13,8 +13,8 @@ import json
 import os
 import types
 
-import common
 import scripts.migrate_write_v1_stamps as mig
+from dubtitlerr.core import common
 
 
 def _stub_ffprobe(monkeypatch, titles):

@@ -5,7 +5,7 @@ import ast
 import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TREE = ast.parse(open(os.path.join(ROOT, "generate.py"), encoding="utf-8").read())
+TREE = ast.parse(open(os.path.join(ROOT, "dubtitlerr", "pipeline", "generate.py"), encoding="utf-8").read())
 
 
 def test_generate_reads_asr_device_from_the_environment_with_a_cuda_default():

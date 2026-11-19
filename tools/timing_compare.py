@@ -43,10 +43,10 @@ import tempfile
 import pysubs2
 
 sys.path.insert(0, ".")
-import common  # noqa: E402
-import hallucination  # noqa: E402  -- pure stdlib (see hallucination.py docstring), no GPU import
 import tools.vad as vad  # noqa: E402
-from common import atomic_write
+from dubtitlerr.core import common  # noqa: E402
+from dubtitlerr.core.common import atomic_write
+from dubtitlerr.pipeline import hallucination  # noqa: E402  -- pure stdlib (see hallucination.py docstring), no GPU import
 
 log = common.log
 

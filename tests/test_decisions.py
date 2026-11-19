@@ -9,7 +9,7 @@ that makes them software.
 import threading
 import time
 
-import decisions
+from dubtitlerr.core import decisions
 
 
 def test_key_normalises_case_and_whitespace_but_keeps_punctuation():

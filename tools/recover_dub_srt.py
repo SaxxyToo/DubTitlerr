@@ -30,8 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pysubs2  # noqa: E402
 
-from common import TRACK_NAME, extract_sub, log, stream_title, ts_srt  # noqa: E402
-from common import subprocess as _sp  # noqa: E402
+from dubtitlerr.core.common import TRACK_NAME, extract_sub, log, stream_title, ts_srt  # noqa: E402
+from dubtitlerr.core.common import subprocess as _sp  # noqa: E402
 
 
 def dub_events(ass_path, srt_origin=False):

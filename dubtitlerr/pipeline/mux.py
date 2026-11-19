@@ -1,0 +1,934 @@
+#!/usr/bin/env python3
+"""MUX stage — embed the merged dubtitle .ass into the mkv as a default
+"Dubtitles" subtitle track, set the English audio + Dubtitles track as the
+defaults, and (the whole point of muxing) carry the embedded fonts so signs
+render in their correct typeface.
+
+Per video that has a sibling dubtitle sidecar (``.eng.dubtitles.ass`` for an mkv with
+signs/songs, else ``.eng.dubtitles.srt`` for an mp4 dialogue-only episode):
+  * SKIP if already muxed — a valid, current-in-both-tiers ``.dubtitles.done``
+    stamp (stat-only). This is the ONLY skip guard: the old "embedded Dubtitles track"
+    ffprobe backstop is gone, because a re-mux now REPLACES the old track rather than
+    duplicating it, so re-running is idempotent and self-healing,
+  * SKIP if the pool lacks room for a full-size temp (free-space pre-check; never ENOSPC),
+  * mkvmerge remux (stream copy, no re-encode) to an **mkv**: drop any OLD "Dubtitles"
+    track and add the sidecar as track-name "Dubtitles" / default in the same pass (so a
+    regeneration replaces in place — no separate pre-strip); set eng audio default,
+    original-language audio not; keep eng/orig/mul/signs-songs subs (drop other-language
+    dialogue subs); keep all fonts,
+  * VERIFY (a/v + the Dubtitles track + duration within tolerance) before touching the original,
+  * finalize the muxed mkv (atomic, with a cross-branch fallback), preserving ownership;
+    for an mp4 source, remove the OLD ``.mp4`` library link (the seeding download hardlink
+    partner is left alone — the orphan-reaper owns it per seed-until-orphan),
+  * write the ``.dubtitles.done`` stamp, then remove the sidecar.
+
+DRY-RUN by default (prints the plan); pass --apply to do it. Run as root.
+Env: MUX_ROOTS (colon list), KEEP_LANGS, MIN_FREE_GB (skip threshold, default 5),
+DUR_TOL (seconds, default 2), MEDIA_UID/GID.
+  OUTPUT_MODE            mux (default) embeds the subtitle; sidecar publishes it beside
+                         the video (<stem><SIDECAR_SUFFIX>.<ass|srt>) and rewrites nothing.
+  SIDECAR_SUFFIX         sidecar-mode filename suffix, default ".eng.dubtitles".
+  MUX_KEEP_ALL_SUBS      "1" keeps every embedded subtitle track instead of applying the
+                         KEEP_LANGS whitelist (our own old Dubtitles track is still replaced).
+  REVIEW_GATE_SHOWS      colon list of show DIRECTORY names (e.g. "Cowboy Bebop (1998)
+                         {tvdb-76885}", not "Cowboy Bebop" -- the same identity the
+                         decision store uses). EMPTY by default. [S-6]: an episode of a listed show
+                         is held back from the mux while it still has pending
+                         `repair_applied` entries -- repairs accept_repair admitted with
+                         nothing checking their meaning. Unlisted shows are unaffected.
+  REVIEW_GATE_STALE_DAYS default 7. A hold older than this is reported LOUDLY and is still
+                         held. It buys a log line, never a release: auto-releasing
+                         unreviewed repairs is the failure the review loop exists to
+                         prevent.
+Requires mkvtoolnix (mkvmerge) + ffprobe.  Built with help of Claude (Anthropic).
+"""
+
+import argparse
+import errno
+import json
+import math
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import time
+
+from dubtitlerr.core import unresolved
+from dubtitlerr.core.common import (
+    MEDIA_GID,
+    MEDIA_UID,
+    STAMP_SUFFIX,
+    TRACK_NAME,
+    is_our_track,
+    log,
+    read_stages,
+    read_stamp,
+    stamp_mode,
+    stamp_valid,
+    write_stage,
+    write_stamp,
+)
+
+# Imported as a NAME so "which show is this path in" has exactly one definition, shared
+# with the decision store. A second answer here would gate one show while storing verdicts
+# under another, and the two would only disagree for the shows an operator actually listed.
+from dubtitlerr.core.decisions import decisions_for, show_for
+
+ROOTS = os.environ.get("MUX_ROOTS", "/data/Media/Anime Library").split(":")
+# [S-6] Shows whose episodes wait for a human before they are released. Colon list, the
+# MUX_ROOTS idiom. EMPTY BY DEFAULT: every install that has not opted in behaves exactly as
+# it did before this existed.
+REVIEW_GATE_SHOWS = [s.strip() for s in os.environ.get("REVIEW_GATE_SHOWS", "").split(":") if s.strip()]
+# How long a hold may sit before it is reported. This buys a LOG LINE and nothing else --
+# see held_for_review for why it must never buy a release.
+REVIEW_GATE_STALE_DAYS = float(os.environ.get("REVIEW_GATE_STALE_DAYS", "7"))
+# Shows already warned about, so a misconfigured season prints one line per sweep rather
+# than one per episode. A warning nobody can read is the same as no warning.
+_warned_unresolved: set = set()
+# Every show name actually resolved during this run, so main() can report a listed name
+# that matched nothing. See the REVIEW_GATE_SHOWS note in the module docstring.
+_shows_seen: set = set()
+# Base audio/subtitle languages to KEEP. The title's ORIGINAL language is detected
+# per-file (the default audio track's language — Japanese for anime, but whatever it
+# actually is for other content) and added to this set. Everything else (fre, spa,
+# ger, …) is dropped. Video + the new Dubtitles track + all font attachments always kept.
+KEEP_LANGS = set(os.environ.get("KEEP_LANGS", "eng,en,dut,nld,nl,und,").split(","))
+_val = os.environ.get("HARDLINK_ROOTS")
+HL_ROOTS = _val.split(":") if _val else ROOTS
+DUR_TOL = float(os.environ.get("DUR_TOL", "2"))
+MIN_FREE_GB = float(os.environ.get("MIN_FREE_GB", "5"))  # skip a remux if the pool is this low
+SIZE_FACTOR = 1.1  # temp ~ source size (+headroom)
+ASS_SUFFIX = ".eng.dubtitles.ass"
+SRT_SUFFIX = ".eng.dubtitles.srt"
+# OUTPUT_MODE decides how a finished episode is DELIVERED.
+#   mux (default): embed the subtitle as the "Dubtitles" track; the video is rewritten.
+#   sidecar: leave the assembled subtitle beside the video and never touch the video.
+# Sidecar is for libraries that deliver subtitles as external files: Jellyfin/Plex pick
+# the file up, a bad subtitle can be replaced without a multi-GB remux, and a track the
+# mux whitelist would drop cannot be lost because nothing is rewritten.
+OUTPUT_MODE = (os.environ.get("OUTPUT_MODE", "mux") or "mux").strip().lower()
+if OUTPUT_MODE not in ("mux", "sidecar"):
+    log(f"WARNING: OUTPUT_MODE={OUTPUT_MODE!r} is not mux|sidecar — using 'mux'")
+    OUTPUT_MODE = "mux"
+# Sidecar mode filename: <stem><SIDECAR_SUFFIX>.<ass|srt>. The default is the pipeline's
+# own artifact name, so finalizing is a no-op; set ".dub.en" for the house convention the
+# players list as a "dub" subtitle.
+SIDECAR_SUFFIX = os.environ.get("SIDECAR_SUFFIX", ".eng.dubtitles") or ".eng.dubtitles"
+# Never let the KEEP_LANGS whitelist delete a subtitle track. Off by default (every
+# install that has not opted in keeps the upstream behaviour); turn it on when a
+# mislabeled English track -- a "sub:enm" Middle-English mistag, say -- must survive.
+KEEP_ALL_SUBS = os.environ.get("MUX_KEEP_ALL_SUBS", "0").strip().lower() in ("1", "true", "yes", "on")
+# subtitle track names that mark a signs/songs track worth keeping regardless of language
+SIGNS_RE = re.compile(r"sign|song|karaoke|lyric|caption|title|credit|insert", re.I)
+
+
+def has_room(free_bytes: float, src_size: int) -> bool:
+    """True if there's room for a full-size temp plus the MIN_FREE_GB safety margin."""
+    return free_bytes >= src_size * SIZE_FACTOR + MIN_FREE_GB * (1 << 30)
+
+
+def keep_sub(track: dict, keep_langs: set) -> bool:
+    """Keep an mkvmerge subtitle track if its language is wanted, it's multi-language ('mul'),
+    or its name reads as signs/songs (so weird JoJo signs tracks survive).
+
+    Our OWN previously-muxed dubtitle (track_name == TRACK_NAME) is always dropped, and
+    that check comes FIRST: the track is language=eng, so every rule below would keep it
+    and the remux would end up carrying two Dubtitles tracks. Dropping it here is what
+    makes a re-mux a REPLACE (build_cmd re-adds the new one in the same pass) instead of
+    a duplicate — and what retired the separate pre-strip pass.
+
+    MUX_KEEP_ALL_SUBS skips the language whitelist entirely (our own old track is still
+    dropped). The whitelist is the only thing in the pipeline that DELETES a track, and a
+    release can label an English track with an unexpected code — "enm" is Middle English to
+    mkvmerge, not "some English" — so an operator who cannot afford the loss can turn the
+    whitelist off without losing the replace-in-place behaviour."""
+    props = track.get("properties") or {}
+    if is_our_track(props.get("track_name")):
+        return False
+    if KEEP_ALL_SUBS:
+        return True
+    lang = (props.get("language") or "").lower()
+    if lang in keep_langs or lang == "mul":
+        return True
+    return bool(SIGNS_RE.search(props.get("track_name") or ""))
+
+
+_IDENTIFY_CACHE: dict = {}
+
+
+def identify(path):
+    """mkvmerge -J, cached per path — build_cmd() and verify() both identify files;
+    caching avoids the duplicate subprocess call."""
+    if path not in _IDENTIFY_CACHE:
+        r = subprocess.run(["mkvmerge", "-J", path], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+        _IDENTIFY_CACHE[path] = json.loads(r.stdout)
+    return _IDENTIFY_CACHE[path]
+
+
+def has_dubtitles_track(info):
+    """True if an mkvmerge -J dict carries a subtitle track named TRACK_NAME. Used only
+    by verify(), to confirm the NEW track landed before the atomic replace (it is no
+    longer a skip guard — see process())."""
+    for t in info.get("tracks", []):
+        if t.get("type") == "subtitles" and is_our_track((t.get("properties") or {}).get("track_name")):
+            return True
+    return False
+
+
+def duration(path):
+    """Container duration. NOTE: in Matroska this is the LONGEST track, so it is NOT a
+    safe truncation signal for a remux that drops tracks -- use video_duration() for that.
+    Kept because it is still the right number for "how long is this file"."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
+        return float(r.stdout.strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _parse_duration(v):
+    """Matroska's DURATION tag ("00:23:54.849708333") -> seconds; None if unparseable."""
+    if not v or not isinstance(v, str):
+        return None
+    parts = v.strip().split(":")
+    if len(parts) != 3:
+        return None
+    try:
+        h, m, sec = parts
+        return int(h) * 3600 + int(m) * 60 + float(sec)
+    except ValueError:
+        return None
+
+
+def _ffprobe_video(path):
+    """First video stream's duration field + tags (split out so tests can stub the I/O)."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=duration:stream_tags=DURATION",
+                "-of",
+                "json",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
+        streams = json.loads(r.stdout).get("streams", [])
+        return streams[0] if streams else {}
+    except Exception:
+        return {}
+
+
+def _ffprobe_video_packets(path, start):
+    """(pts_time, duration_time) of the first video stream's packets from `start` seconds on
+    (split out so tests can stub the I/O). N/A or empty fields become 0.0; [] on any failure."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "packet=pts_time,duration_time",
+                "-of",
+                "csv=p=0",
+                "-read_intervals",
+                f"{start}%",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
+    except Exception:
+        return []
+    rows = []
+    for line in r.stdout.splitlines():
+        parts = line.strip().split(",")
+        if len(parts) < 2:
+            continue
+        try:
+            pts = float(parts[0])
+        except ValueError:
+            continue
+        try:
+            dur = float(parts[1])
+        except ValueError:
+            dur = 0.0
+        rows.append((pts, max(dur, 0.0)))
+    return rows
+
+
+def video_duration(path):
+    """Duration of the VIDEO track -- the only thing a truncated remux would shorten.
+
+    Container duration is unusable here: Matroska reports the longest track, and releases
+    commonly ship a foreign subtitle running past the end of the video (JUJUTSU KAISEN
+    S02E04 has a Polish fansub ending 19s after the picture does). Dropping such a track,
+    which is exactly what this stage is for, shortens the container by ~19s and made the
+    old container-vs-container check reject a perfectly good remux forever.
+
+    Matroska usually leaves stream=duration as N/A and carries a DURATION tag instead, so
+    try the field, then the tag, then fall back to the container figure."""
+    st = _ffprobe_video(path)
+    try:
+        d = float(st.get("duration") or 0)
+        if d > 0:
+            return d
+    except (TypeError, ValueError):
+        pass
+    tagged = _parse_duration((st.get("tags") or {}).get("DURATION"))
+    if tagged is not None:
+        return tagged
+    # Neither field present (measured on real originals): the container figure is the longest
+    # track, so measure where the video packets actually end, over the last minute only.
+    container = duration(path)
+    rows = _ffprobe_video_packets(path, max(container - 60, 0))
+    ends = [pts + dur for pts, dur in rows]
+    return max(ends) if ends else container
+
+
+_partners_cache: dict[tuple[int, int], list[str]] = {}
+
+
+def original_langs(info):
+    """Original-language audio = the default audio track's language (fallback: first
+    audio track). Anime -> jpn, but adapts to whatever the content actually is."""
+    auds = [t for t in info.get("tracks", []) if t["type"] == "audio"]
+    defs = [t for t in auds if (t.get("properties") or {}).get("default_track")]
+    src = defs or auds[:1]
+    return {((t.get("properties") or {}).get("language") or "").lower() for t in src} - {""}
+
+
+def _stages_ran(stem: str, src: str) -> dict:
+    """Which pipeline stages demonstrably ran, read from the sidecars still on disk.
+
+    mux stamps AFTER repair / signs-merge / generate and BEFORE their sidecars are removed,
+    so this is the one moment the pipeline can record what "done" actually meant. Without it
+    an episode where repair never ran is indistinguishable from one where it ran and found
+    nothing -- merge_pass.sh has no `set -e` and checks no exit status, so a stage that died
+    still reached here and still stamped.
+
+    A stage whose evidence is UNKNOWABLE is omitted, never reported False. "Did not run" and
+    "cannot tell" are different claims; tools/vad.py makes the same distinction by returning
+    None rather than a confident wrong answer."""
+    st = {
+        # repair writes its summary unconditionally, even when every card was skipped
+        "repair": os.path.exists(stem + ".dubtitles.repair-summary.json"),
+        # an .ass source means the signs/songs track was merged in; a bare .srt means it was not
+        "signs_merge": src.endswith(ASS_SUFFIX),
+    }
+    try:
+        with open(stem + ".dubtitles.qc.json", encoding="utf-8") as f:
+            counters = json.load(f).get("counters") or {}
+        st["punctuation"] = counters.get("restore_runs_sent", 0) > 0
+    except (OSError, ValueError):
+        pass  # no qc sidecar (pre-QC episode) -> cannot tell, so say nothing
+    return st
+
+
+def build_cmd(info, orig, ass, out):
+    """Returns (mkvmerge cmd, [dropped track descriptions]). Keeps eng/dut + the original
+    language audio, and eng/orig/mul/signs-songs subs; sets eng audio + Dubtitles default;
+    keeps video + all attachments. ``info`` is an ``mkvmerge -J`` dict (passed for testability)."""
+    keep = KEEP_LANGS | original_langs(info)
+    audio_keep, sub_keep, dropped = [], [], []
+    for t in info.get("tracks", []):
+        tid = t["id"]
+        lang = ((t.get("properties") or {}).get("language") or "").lower()
+        if t["type"] == "audio":
+            (audio_keep if lang in keep else dropped).append(str(tid) if lang in keep else f"audio:{lang or 'und'}")
+        elif t["type"] == "subtitles":
+            if keep_sub(t, keep):
+                sub_keep.append(str(tid))
+            elif is_our_track((t.get("properties") or {}).get("track_name")):
+                dropped.append(f"sub:{TRACK_NAME}(old)")  # labelled so the mux log shows the strip
+            else:
+                dropped.append(f"sub:{lang or 'und'}")
+    cmd = ["mkvmerge", "-o", out]
+    if audio_keep:
+        cmd += ["-a", ",".join(audio_keep)]  # else: keep all audio (safety)
+    # -s is a WHITELIST and mkvmerge's default is copy-every-subtitle-track, so an empty
+    # keep list must become an explicit -S ("no source subs") — omitting the flag would
+    # copy back the very tracks `dropped` claims were removed. That is the mp4-origin /
+    # only-sub-is-our-old-dubtitle case: without -S the file ends up with TWO Dubtitles
+    # tracks, and verify() (presence-only) would pass it and stamp it.
+    cmd += ["-s", ",".join(sub_keep)] if sub_keep else ["-S"]
+    for t in info.get("tracks", []):
+        tid = t["id"]
+        lang = ((t.get("properties") or {}).get("language") or "").lower()
+        if t["type"] == "audio" and str(tid) in audio_keep:
+            cmd += ["--default-track-flag", f"{tid}:{'yes' if lang in ('eng', 'en') else 'no'}"]
+        elif t["type"] == "subtitles" and str(tid) in sub_keep:
+            cmd += ["--default-track-flag", f"{tid}:no"]
+    cmd += [
+        orig,
+        "--track-name",
+        f"0:{TRACK_NAME}",
+        "--language",
+        "0:eng",
+        "--default-track-flag",
+        "0:yes",
+        "--sub-charset",
+        "0:UTF-8",
+        ass,
+    ]
+    return cmd, dropped
+
+
+def verify(orig, out):
+    """The half-size heuristic (C16) is gone -- it false-positived on compact muxes where
+    mkvmerge shrinks the CUES or drops a large embedded .ass. The duration-tolerance check
+    below is the real truncation canary: it runs unconditionally on the only path to "ok"."""
+    info = identify(out)
+    types = {t["type"] for t in info.get("tracks", [])}
+    if "video" not in types or "audio" not in types:
+        return "missing-av"
+    if not has_dubtitles_track(info):
+        return "no-dubtitles-track"
+    out_s, orig_s = video_duration(out), video_duration(orig)
+    # An unmeasurable file reads 0.0 (ffprobe missing, timing out or erroring); two zeros are "equal" and used to let a
+    # truncated remux replace a full episode. Both measurements must be finite and positive before they are compared.
+    if not all(math.isfinite(s) and s > 0 for s in (out_s, orig_s)):
+        return "duration-unmeasurable"
+    if abs(out_s - orig_s) > DUR_TOL:
+        return "duration-mismatch"
+    # D2: font-attachment audit -- mkvmerge -J reports attachments as a top-level
+    # "attachments" array (sibling of "tracks"), NOT as track entries; .get(..., [])
+    # treats a fontless file (key absent) as 0, so equal-zero still returns "ok".
+    src_fonts = identify(orig).get("attachments", [])
+    out_fonts = info.get("attachments", [])
+    if len(src_fonts) != len(out_fonts):
+        return "font-count-mismatch"
+    for f in out_fonts:
+        if f.get("content_type") == "application/octet-stream":
+            log(f"  font attachment '{f.get('file_name')}' has generic MIME type — may not be a valid font")
+    return "ok"
+
+
+def held_for_review(stem):
+    """Whether this episode is waiting on a human. False for every unlisted show.
+
+    Only `repair_applied` entries hold. A repair the guard REFUSED left the ASR text in
+    place -- the safe outcome, and not something a viewer sees that nobody sanctioned. The
+    admitted repair is the unchecked one: `accept_repair`'s own docstring states the bar and
+    says nothing below it enforces meaning, and `factory -> needle` passes every gate. That
+    is the class of change worth stopping a release for.
+
+    A hold is NEVER released by this function on the strength of time. An episode past
+    REVIEW_GATE_STALE_DAYS is reported loudly and stays held: auto-releasing unreviewed
+    repairs is the exact failure this spec exists to prevent, and an alert that becomes a
+    release is worse than no alert, because it reads as supervision."""
+    if not REVIEW_GATE_SHOWS:
+        return False
+    show = show_for(stem)
+    if not show:
+        # The operator opted IN and we cannot tell which show this is, so the gate silently
+        # does not apply: "" never matches a listed name, the episode muxes, and they
+        # believe unreviewed repairs are being held while every one of them ships. Silence
+        # is the failure here, not the miss.
+        d = os.path.dirname(stem)
+        if d not in _warned_unresolved:
+            _warned_unresolved.add(d)
+            log(f"  WARNING: review gate is on but cannot resolve a show for {d} — check GLOSSARY_DIR; NOT gated")
+        return False
+    _shows_seen.add(show)
+    if show not in REVIEW_GATE_SHOWS:
+        return False
+    pend = [e for e in unresolved.pending(stem) if e.get("stage") == "repair_applied"]
+    if not pend:
+        return False
+    # A line with a stored VERDICT is settled, whatever its queue flag says. resolve() and
+    # decisions.record() are independent write paths: the verdict is what stops repair.py
+    # re-queueing the line, the flag is only what the --review CLI sets. Trusting the flag
+    # alone would hold an episode forever on a line the pipeline already considers decided
+    # -- a verdict written by hand, by a future sync, or by a server whose resolve() write
+    # failed. Resolved here rather than at the call site so the queue file is only read for
+    # episodes that are actually candidates for a hold.
+    store, _ = decisions_for(stem)
+    pend = unresolved.undecided(pend, store)
+    if not pend:
+        return False
+    # Entries orphaned by a version bump. The queue is NOT in generate.SIDECAR_SUFFIXES, so
+    # park_stale_sidecars leaves it across a re-transcription and its rows can describe text
+    # the episode no longer contains. Nothing will re-queue those lines, so nothing will ever
+    # resolve them, and they would hold the episode forever. Owner's decision 2026-08-27:
+    # keep the history -- it is what a human already judged, and the input to the later
+    # accept_repair tightening -- and ignore the orphans here.
+    #
+    # FAILS CLOSED. An unreadable conf.json means we cannot tell an orphan from a live entry,
+    # and the alternative to holding is releasing unreviewed repairs. Normalised with
+    # decisions.key so a doubled space cannot orphan a live entry.
+    # unresolved.live_only answers the same question for the review page, and it fails OPEN
+    # where this must fail CLOSED -- so the SET is shared and the direction is not. An
+    # unreadable conf.json means an orphan cannot be told from a live entry, and here the
+    # cost of guessing wrong is releasing an unreviewed repair.
+    if os.path.exists(stem + unresolved.CONF_SUFFIX):
+        pend = unresolved.live_only(stem, pend)
+        if not pend:
+            return False
+    # Entries carry no timestamp, so the sidecar's mtime is the only staleness signal
+    # available -- a deliberate approximation, and it moves whenever repair appends, which
+    # makes it "time since the queue last changed" rather than "time since the oldest
+    # entry". Good enough to surface a backlog; not a clock anything branches on.
+    try:
+        age_days = (time.time() - os.path.getmtime(unresolved.path_for(stem))) / 86400.0
+    except OSError:
+        age_days = 0.0
+    if age_days > REVIEW_GATE_STALE_DAYS:
+        log(
+            f"  STALLED: {os.path.basename(stem)} held for review {age_days:.0f}d "
+            f"(> {REVIEW_GATE_STALE_DAYS:g}d), {len(pend)} pending — NOT released; run the review"
+        )
+    return True
+
+
+def sub_source(stem):
+    """The subtitle sidecar to embed: the merged .ass (mkv w/ signs) else the terminal
+    .srt (mp4, dialogue only). None if neither exists yet."""
+    for suff in (ASS_SUFFIX, SRT_SUFFIX):
+        if os.path.exists(stem + suff):
+            return stem + suff
+    return None
+
+
+def already_delivered(stamp, video, mode=None) -> bool:
+    """True if this stamp is current for the file AND records the mode we are running.
+
+    stamp_valid alone is mode-blind. Without the second half, a sidecar stamp would stop a
+    later mux pass from embedding the track (the operator switched OUTPUT_MODE and the file
+    never gets its track), and a mux stamp would stop sidecar mode from writing the external
+    file. Stamps written before OUTPUT_MODE carry no mode and read as "mux" -- which is what
+    they all meant."""
+    return stamp_valid(stamp, video) and stamp_mode(stamp) == (mode or OUTPUT_MODE)
+
+
+def delivered(stem: str) -> bool:
+    """True when this stem is already delivered for the OUTPUT_MODE we are running.
+
+    merge_pass.sh asks this before its assemble block (`mux.py --delivered <stem>`). The
+    default SIDECAR_SUFFIX gives the published file the pipeline artifact's own name, so the
+    finder keeps seeing `stem.eng.dubtitles.srt` and, without the question, every pass re-ran
+    repair -> signs -> mux over an episode it had already delivered -- LLM calls and a rewrite
+    of a published subtitle, every MERGE_INTERVAL. Same predicate process() uses, exposed
+    rather than re-derived. A dropped or invalidated stamp (review verdicts,
+    tools/reapply_glossary.py, tools/reopen_for_signs.py) makes this False again.
+    """
+    for ext in (".mkv", ".mp4", ".m4v"):
+        video = stem + ext
+        if os.path.exists(video):
+            return already_delivered(read_stamp(stem + STAMP_SUFFIX), video)
+    return False
+
+
+def sidecar_target(stem: str, src: str) -> str:
+    """Where sidecar mode leaves the assembled subtitle: <stem><SIDECAR_SUFFIX>.<ext>.
+
+    The extension follows what the pipeline produced -- .ass when signs/songs were merged
+    (their positioning and override tags are the point of that merge), .srt for a
+    dialogue-only episode. Converting .ass to .srt would throw the positioning away."""
+    return stem + SIDECAR_SUFFIX + (".ass" if src.endswith(ASS_SUFFIX) else ".srt")
+
+
+def finalize_sidecar(orig, stem, src, stamp, apply) -> str:
+    """OUTPUT_MODE=sidecar: publish the assembled subtitle beside the video, touch no video.
+
+    Idempotent through the same version-aware stamp mux writes, with "mode": "sidecar"
+    recorded so a later switch to mux mode re-muxes instead of reading this stamp as done.
+    The stamp describes the VIDEO's size+mtime, which is what makes a replaced episode
+    regenerate -- exactly as in mux mode. A failed stamp write renames the artifact back:
+    a sidecar the finder can no longer see would otherwise be stranded work."""
+    dest = sidecar_target(stem, src)
+    if not apply:
+        log(f"  PLAN sidecar {os.path.basename(src)} -> {os.path.basename(dest)}")
+        return "plan"
+    stages = _stages_ran(stem, src)  # before any rename: it keys off the source suffix
+    renamed = os.path.abspath(dest) != os.path.abspath(src)
+    try:
+        st = os.stat(orig)
+        if renamed:
+            # A file already at the destination that THIS pipeline did not write is
+            # somebody else's subtitle (the dubsub pipeline also writes .dub.en.srt).
+            # Keep it as <dest>.bak rather than silently replacing it: one backup slot,
+            # overwritten only by the next foreign file. A previous SIDECAR delivery of
+            # ours is recognised by its stamp (a stale-version stamp is still ours).
+            prev = read_stamp(stamp)
+            ours = bool(
+                prev
+                and stamp_mode(prev) == "sidecar"
+                and prev.get("size") == st.st_size
+                and prev.get("mtime") == st.st_mtime
+            )
+            if os.path.exists(dest) and not ours:
+                try:
+                    os.replace(dest, dest + ".bak")
+                    log(f"  NOTE: preserved an existing {os.path.basename(dest)} as .bak")
+                except OSError as e:
+                    log(f"  WARNING: could not preserve the existing {os.path.basename(dest)} ({e})")
+            try:
+                os.chown(src, st.st_uid or MEDIA_UID, st.st_gid or MEDIA_GID)
+            except OSError as e:
+                log(f"  WARNING: could not set ownership on {os.path.basename(src)} ({e})")
+            os.replace(src, dest)  # same directory, so the swap is atomic
+        write_stamp(stamp, orig, stages=stages, mode="sidecar")
+        write_stage(stem, "mux", "ok")
+        log(f"  sidecar kept: {os.path.basename(dest)} (video untouched)")
+        return "sidecar"
+    except OSError as e:
+        if renamed:
+            try:
+                if os.path.exists(dest) and not os.path.exists(src):
+                    os.replace(dest, src)
+            except OSError:
+                pass
+        log(f"  ERROR: sidecar finalize failed ({e}); video untouched, sidecar retried next pass")
+        try:
+            write_stage(stem, "mux", "unwritable", str(e))
+        except OSError:
+            pass
+        return "sidecar-write-failed"
+
+
+def _free_bytes(path):
+    try:
+        s = os.statvfs(os.path.dirname(path) or ".")
+        return s.f_bavail * s.f_frsize
+    except OSError:
+        return float("inf")
+
+
+class FinalizeCopyError(OSError):
+    """The cross-device copy in _finalize STARTED and failed: it overwrites dst in place,
+    so dst may be partial and tmp may be the only complete copy. Any other _finalize
+    failure happens before dst is touched."""
+
+
+def _finalize(tmp, dst):
+    """Move tmp -> dst atomically; fall back to a cross-branch copy on mergerfs EXDEV."""
+    try:
+        os.replace(tmp, dst)
+    except OSError as e:
+        if getattr(e, "errno", None) == errno.EXDEV:
+            try:
+                shutil.move(tmp, dst)
+            except OSError as ce:
+                raise FinalizeCopyError(str(ce)) from ce
+        else:
+            raise
+
+
+# Written when a failed cross-device copy may have damaged the episode (see process());
+# while it exists mux refuses to touch that episode. A human resolves it.
+RECOVERY_SUFFIX = ".dubtitles.mux-recovery"
+
+
+def temp_path(stem: str) -> str:
+    """Generate a unique per-run temp path in the same directory as stem.
+
+    Includes process id and random token to prevent collision across concurrent writers,
+    ending with .muxtmp.mkv to match existing sweeps and recovery logic.
+    """
+    return f"{stem}.{os.getpid()}.{secrets.token_hex(4)}.muxtmp.mkv"
+
+
+def _source_unchanged(orig: str, st: os.stat_result) -> bool:
+    """True if orig exists with identical size and mtime within 1 second.
+
+    Compares size and mtime only; inode and device are dropped because they are unstable
+    on CIFS/NFS/mergerfs mounts. Network mounts also introduce timestamp jitter, so mtime
+    is compared within a 1-second tolerance. A same-size same-mtime replacement is an
+    accepted blind spot to avoid false refusals on network storage.
+    """
+    try:
+        curr = os.stat(orig)
+    except OSError:
+        return False
+    return (
+        curr.st_size == st.st_size
+        and abs(curr.st_mtime - st.st_mtime) <= 1.0
+    )
+
+
+def cleanup_old_temps(stem: str, now: float | None = None) -> None:
+    """Delete leftover temp files for this stem older than 6 hours without a recovery marker.
+
+    Matches <stem>.<pid>.<hex>.muxtmp.mkv. No PID liveness check is performed as container
+    isolation and NFS make remote/recycled PIDs unreliable.
+    """
+    marker = stem + RECOVERY_SUFFIX
+    if os.path.exists(marker):
+        return
+    dirname = os.path.dirname(stem) or "."
+    base = os.path.basename(stem)
+    pattern = re.compile(r"^" + re.escape(base) + r"\.\d+\.[0-9a-fA-F]+\.muxtmp\.mkv$")
+    current_time = time.time() if now is None else now
+    try:
+        entries = os.listdir(dirname)
+    except OSError:
+        return
+    for name in entries:
+        if pattern.match(name):
+            full_path = os.path.join(dirname, name)
+            try:
+                st = os.stat(full_path)
+                if (current_time - st.st_mtime) > 6 * 3600:
+                    os.remove(full_path)
+            except OSError:
+                pass
+
+
+def process(orig, apply):
+    stem, ext = os.path.splitext(orig)
+    marker = stem + RECOVERY_SUFFIX
+    if os.path.exists(marker):
+        # Checked before everything, even a valid stamp: the marker means the episode file
+        # may be damaged and `.muxtmp.mkv(.recovered)` may be the only complete copy.
+        # Touch nothing; keep the stage crashed so every pass reports INCOMPLETE.
+        log(f"  WARNING: {os.path.basename(orig)}: recovery pending, see {marker} — not touching it")
+        if apply:
+            try:
+                write_stage(stem, "mux", "crashed", "recovery-pending")
+            except OSError:
+                pass
+        return "recovery-pending"
+    if apply:
+        cleanup_old_temps(stem)
+    stamp = stem + STAMP_SUFFIX
+    src = sub_source(stem)
+    if src is None:
+        return "no-sub"
+    if src.endswith(SRT_SUFFIX):
+        # sub_source() falls back from .ass to .srt with no way to tell "no
+        # signs ever existed" from "the signs build just failed" -- a failed
+        # signs stage must never let the demoted dialogue-only .srt get
+        # stamped as done, or a transient signs regression looks identical to
+        # a genuinely signs-free episode forever after.
+        signs_outcome = read_stages(stem).get("signs", {}).get("outcome")
+        # "no-video"/"no-reference" are pass-like for merge_pass.sh's global
+        # failed_stage() (repair legitimately has nothing to do yet), but the
+        # signs stage only ever returns "no-video" when find_video() failed
+        # DURING an attempted signs build -- that IS the regression S-8 guards
+        # against, so only a bare "ok" (or no record at all, meaning signs
+        # never ran) counts as safe to fall back to the dialogue-only .srt.
+        if signs_outcome not in (None, "ok"):
+            write_stage(stem, "mux", "build-error", "signs-regression-refused")
+            return "signs-regression-refused"
+    if OUTPUT_MODE == "sidecar":
+        if already_delivered(read_stamp(stamp), orig, "sidecar"):
+            return "already-sidecar"
+        # Same order as mux mode: an episode that already shipped cannot be held back.
+        if held_for_review(stem):
+            return "held-for-review"
+        return finalize_sidecar(orig, stem, src, stamp, apply)
+    if already_delivered(read_stamp(stamp), orig, "mux"):
+        return "already-muxed"  # stat-only, version-aware stamp is the ONLY guard
+    # AFTER the stamp check, not before it (the plan sketched the reverse). An episode that
+    # already shipped cannot be held back -- reporting a hold for it would inflate the
+    # backlog count with episodes no review can affect, and hide "already-muxed" behind a
+    # status the operator is meant to act on.
+    if held_for_review(stem):
+        return "held-for-review"
+    if not has_room(_free_bytes(orig), os.path.getsize(orig)):
+        log("  skip (low disk):", os.path.basename(orig))
+        return "skip-no-room"
+    out = temp_path(stem)
+    final = stem + ".mkv"  # every episode ends as an mkv
+    cmd, dropped = build_cmd(identify(orig), orig, src, out)
+    if not apply:
+        log(f"  PLAN mux {os.path.basename(orig)} ({ext}->mkv)  drop-tracks={dropped}")
+        return "plan"
+    stamped = False
+    try:
+        st = os.stat(orig)
+        subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL, timeout=1800, check=False)
+        res = verify(orig, out)
+        if res != "ok":
+            if os.path.exists(out):
+                os.remove(out)
+            write_stage(stem, "mux", "build-error", f"verify:{res}")
+            return "verify-" + res
+        if not _source_unchanged(orig, st):
+            if os.path.exists(out):
+                try:
+                    os.remove(out)
+                except OSError:
+                    pass
+            if already_delivered(read_stamp(stamp), orig, "mux"):
+                return "already-muxed"
+            log(f"  ERROR: {os.path.basename(orig)} changed during mux — aborting replace")
+            write_stage(stem, "mux", "refused", "source-changed")
+            return "refused"
+        os.chown(out, st.st_uid or MEDIA_UID, st.st_gid or MEDIA_GID)
+        try:
+            # Stamp BEFORE the rename, from the temp file: write_stamp stats the path it
+            # is given, and os.replace / the EXDEV shutil.move fallback preserve size and
+            # mtime (all _stamp_matches_file compares), so the stamp matches `final` once
+            # `out` lands there. For an .mkv source final == orig, so a stamp failure AFTER
+            # the rename would leave no copy to roll back to; failing before it leaves the
+            # original untouched. If _finalize fails, the handler below removes this stamp
+            # (existence-only readers must not see "done") and keeps `out`.
+            write_stamp(stamp, out, stages=_stages_ran(stem, src), mode="mux")
+            stamped = True
+        except OSError as e:
+            # The stamp is the ONLY record that a file is done (the ffprobe backstop is
+            # gone), so don't install an unstamped mkv: that would re-mux every sweep.
+            # Drop the temp output; orig is untouched and the next sweep retries cleanly.
+            try:
+                os.remove(out)
+            except OSError:
+                pass
+            log(
+                f"  ERROR: muxed OK but stamp write FAILED ({e}) — {os.path.basename(orig)} "
+                f"left untouched and will be re-muxed next sweep until the stamp can be written"
+            )
+            write_stage(stem, "mux", "unwritable", str(e))
+            return "stamp-write-failed"
+        if not _source_unchanged(orig, st):
+            if stamped and not stamp_valid(read_stamp(stamp), orig):
+                try:
+                    os.remove(stamp)
+                except OSError:
+                    pass
+            if os.path.exists(out):
+                try:
+                    os.remove(out)
+                except OSError:
+                    pass
+            if already_delivered(read_stamp(stamp), orig, "mux"):
+                return "already-muxed"
+            log(f"  ERROR: {os.path.basename(orig)} changed during mux — aborting replace")
+            write_stage(stem, "mux", "refused", "source-changed")
+            return "refused"
+        _finalize(out, final)  # write the muxed mkv
+        stamped = False  # renamed: the stamp is now valid, keep it whatever follows
+        # The stamp is written: the episode IS done. Cleanup failures from here on must not
+        # reach the crashed path below — the next sweep returns already-muxed at the stamp
+        # check before any write_stage, so a crashed record would never be cleared.
+        try:
+            if os.path.abspath(orig) != os.path.abspath(final) and os.path.exists(orig):
+                try:
+                    os.remove(orig)  # mp4->mkv: drop the OLD library link (partner survives)
+                except OSError as e:
+                    log(f"  WARNING: muxed and stamped, but removing {os.path.basename(orig)} failed ({e})")
+            # ASS_SUFFIX + ".part": left by a SIGKILL during dub_signs_merge's install
+            for suff in (ASS_SUFFIX, SRT_SUFFIX, ASS_SUFFIX + ".part"):
+                try:
+                    os.remove(stem + suff)
+                except OSError:
+                    pass
+            with open(stem + ".dubtitles.mux.log", "w") as f:
+                f.write(f"muxed {os.path.basename(orig)} -> mkv; eng audio + Dubtitles default\n")
+                f.write("dropped non-keep tracks: " + ", ".join(dropped) + "\n")
+        except OSError as e:
+            log(f"  WARNING: muxed and stamped, but post-stamp cleanup failed ({e})")
+        log(f"  muxed ({ext}->mkv); dropped {len(dropped)} foreign track(s)")
+        write_stage(stem, "mux", "ok")
+        return "muxed"
+    except Exception as e:
+        if stamped:
+            # written by THIS run for a rename that did not complete: not "done"
+            try:
+                os.remove(stamp)
+            except OSError:
+                pass
+        if isinstance(e, FinalizeCopyError) and os.path.exists(out):
+            # a failed cross-device copy overwrites final (== orig for an .mkv) in place,
+            # so `out` may now be the only complete copy: keep it
+            # Marker FIRST (it must exist even if we die before the rename), naming both
+            # places the copy may end up. While it exists process() refuses this episode.
+            kept = out + ".recovered"
+            try:
+                with open(marker, "w") as f:
+                    json.dump({"kept": kept, "fallback": out, "at": time.time(), "why": "finalize failed"}, f)
+            except OSError as me:
+                log(
+                    f"  ERROR: could not write recovery marker {marker} ({me}) — "
+                    "the next sweep will re-mux from a possibly damaged original and overwrite it"
+                )
+            # Move it aside: the next sweep rebuilds `out`, and cleanup_old_temps() deletes
+            # orphan *.muxtmp.mkv. ".recovered" is not an .mkv, so neither mux's walk, Plex
+            # nor that cleanup will touch it.
+            try:
+                os.replace(out, kept)
+            except OSError:
+                kept = out
+            damaged = (
+                f"the partial new {os.path.basename(final)} may be damaged and the original "
+                f"{os.path.basename(orig)} is intact"
+                if os.path.abspath(orig) != os.path.abspath(final)
+                else "the original may be damaged"
+            )
+            log(
+                f"  WARNING: finalize failed; {kept} holds the only complete copy of the "
+                f"muxed episode and {damaged}. To resolve: confirm {kept} "
+                f"plays, move it over {final}, then delete {marker}"
+            )
+        elif os.path.exists(out):
+            os.remove(out)
+        log("  mux error:", e)
+        write_stage(stem, "mux", "crashed", "mux-exception")
+        return "error"
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument(
+        "--delivered",
+        metavar="STEM",
+        help="exit 0 when this stem is already delivered for the running OUTPUT_MODE; "
+             "merge_pass.sh uses it to skip a delivered episode instead of re-assembling it",
+    )
+    ap.add_argument("paths", nargs="*", help="explicit video paths; else walk MUX_ROOTS")
+    a = ap.parse_args(argv)
+    if a.delivered:
+        return 0 if delivered(a.delivered) else 1
+    if a.apply and os.geteuid() != 0:
+        log("WARNING: not root — atomic replace may fail (mergerfs perms).")
+    vids = list(a.paths)
+    if not vids:
+        for root in ROOTS:
+            if not os.path.isdir(root):
+                continue
+            for dp, _, files in os.walk(root):
+                vids += [os.path.join(dp, f) for f in files if f.lower().endswith((".mkv", ".mp4", ".m4v"))]
+    counts = {}
+    for v in vids:
+        res = process(v, a.apply)
+        counts[res] = counts.get(res, 0) + 1
+        if res not in ("no-sub", "already-muxed", "already-sidecar"):
+            log(f"{res}: {os.path.basename(v)}")
+    # A listed name that matched nothing is almost always the display name where the
+    # DIRECTORY BASENAME was wanted ("Cowboy Bebop" vs "Cowboy Bebop (1998) {tvdb-76885}").
+    # show_for returns a non-empty string in that case, so the unresolved-show warning above
+    # never fires: the gate is simply off, and silence is indistinguishable from success.
+    for name in REVIEW_GATE_SHOWS:
+        if name not in _shows_seen:
+            log(
+                f"  WARNING: REVIEW_GATE_SHOWS entry {name!r} never matched a show this sweep — "
+                f"it must be the show's DIRECTORY name. Saw: {sorted(_shows_seen) or 'none'}"
+            )
+    log("SUMMARY", counts)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

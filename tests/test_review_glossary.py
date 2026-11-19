@@ -8,10 +8,9 @@ import os
 
 import pytest
 
-import decisions
-import glossary_lock
-import review_glossary
-import review_server
+from dubtitlerr.core import decisions
+from dubtitlerr.glossary import glossary_lock
+from dubtitlerr.review import review_glossary, review_server
 
 SHOW = "One Pace"
 
@@ -708,7 +707,7 @@ def test_a_failing_prune_after_the_swap_is_still_a_200_with_an_audit_line(gdir, 
 
 @pytest.mark.parametrize("value", ["AC\\DC", "\\g<0>x", "\\1", "a\\\\b"], ids=["backslash-D", "g0", "group-ref", "double"])
 def test_a_hard_fix_value_is_inserted_literally_by_correct(gdir, value):
-    import glossary
+    from dubtitlerr.glossary import glossary
 
     p = _put(gdir)
     assert _post(gdir, p, key="hard_fixes", term="acdc band", value=value)[0] == 200
@@ -721,7 +720,7 @@ def test_a_hard_fix_value_is_inserted_literally_by_correct(gdir, value):
 
 
 def test_correct_takes_a_hand_written_template_looking_value_literally():
-    import glossary
+    from dubtitlerr.glossary import glossary
 
     gloss = glossary.load_dict({"hard_fixes": {"two words": "A\\DC \\g<0>"}})
     assert glossary.correct("say two words now", gloss) == ("say A\\DC \\g<0> now", 1)

@@ -8,11 +8,9 @@ from pathlib import Path
 
 import pytest
 
-import common
-import glossary_acquire as ga
-import mux
-import repair
-import unresolved
+from dubtitlerr.core import common, unresolved
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.pipeline import mux, repair
 
 # ---- 1. REPAIR_OPENAI_URL keeps its query string (providers that need ?api-version=) -----------------------------------------
 

@@ -5,8 +5,8 @@ import threading
 
 import pytest
 
-import glossary_lock
-import review_auth
+from dubtitlerr.glossary import glossary_lock
+from dubtitlerr.review import review_auth
 
 pytestmark = pytest.mark.real_accounts
 

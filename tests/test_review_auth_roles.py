@@ -3,7 +3,7 @@ import types
 
 import pytest
 
-import review_auth
+from dubtitlerr.review import review_auth
 
 pytestmark = pytest.mark.real_accounts
 KEY = "the-api-key"

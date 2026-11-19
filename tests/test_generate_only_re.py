@@ -19,8 +19,10 @@ def _stub_faster_whisper():
 
 
 _stub_faster_whisper()
-import generate  # noqa: E402
-import ordering  # noqa: E402
+from dubtitlerr.pipeline import (  # noqa: E402
+    generate,
+    ordering,
+)
 
 
 def _create_episodes(tmp_path, count=54):

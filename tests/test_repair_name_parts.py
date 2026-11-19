@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-import glossary
-import repair
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import repair
 
 # The production shape (verify writes long forms into PHRASES; no real glossary has a multi-word NAME).
 NAMES = ["Momonosuke", "Kouzuki", "Oden", "Zoro", "Nico", "Robin"]
@@ -210,8 +210,8 @@ def test_a_prompt_without_a_glossary_has_no_name_rule():
 
 
 def test_a_name_part_refusal_is_in_the_review_queue_and_can_be_forced(tmp_path):
-    import review_server
-    import unresolved
+    from dubtitlerr.core import unresolved
+    from dubtitlerr.review import review_server
 
     key = ("repair", "rejected_name_part")
     assert "rejected_name_part" in unresolved.REASONS["repair"] and key in unresolved.PRIMARY

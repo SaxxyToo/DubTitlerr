@@ -8,7 +8,7 @@ Covers:
 
 import pysubs2
 
-import common
+from dubtitlerr.core import common
 
 # --- Comma vs. Period Millisecond Separators in SRT Cues ---------------------
 

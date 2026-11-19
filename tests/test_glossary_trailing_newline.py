@@ -14,15 +14,15 @@ import ast
 import json
 import pathlib
 
-import glossary_acquire
+from dubtitlerr.glossary import glossary_acquire
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # path -> name of the function whose json.dump must be followed by a newline write
 WRITERS = {
-    "glossary_acquire.py": "_write_json",
-    "glossary_verify.py": "verify",
-    "mine_glossary.py": "main",
+    "dubtitlerr/glossary/glossary_acquire.py": "_write_json",
+    "dubtitlerr/glossary/glossary_verify.py": "verify",
+    "dubtitlerr/glossary/mine_glossary.py": "main",
     "tools/glossary_doctor.py": "main",
 }
 

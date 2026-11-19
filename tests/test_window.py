@@ -1,6 +1,6 @@
 """MERGE_WINDOW: the hours in which a merge sweep may run."""
 
-import common
+from dubtitlerr.core import common
 
 
 def test_no_window_configured_always_runs():

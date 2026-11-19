@@ -4,8 +4,8 @@ import threading
 
 import pytest
 
-import review_auth
-import review_server as rs
+from dubtitlerr.review import review_auth
+from dubtitlerr.review import review_server as rs
 
 pytestmark = pytest.mark.real_accounts
 KEY = "csrf-key"

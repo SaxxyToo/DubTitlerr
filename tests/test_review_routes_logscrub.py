@@ -4,7 +4,7 @@ import http.client
 import json
 import threading
 
-import review_server as rs
+from dubtitlerr.review import review_server as rs
 
 SECRET = "s3cret-webhook-token"
 

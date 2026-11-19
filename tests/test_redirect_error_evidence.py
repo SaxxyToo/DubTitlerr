@@ -6,8 +6,8 @@ true} and cached the title set, and the arc gate turned on over it."""
 
 import json
 
-import glossary_verify as gv
-import wiki_scope
+from dubtitlerr.glossary import glossary_verify as gv
+from dubtitlerr.glossary import wiki_scope
 
 CFG = {"rung": "season_page", "wiki": "https://example.fandom.com/api.php"}
 

@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_acquire as ga
 
 FLAGGED = {
     "show": "S",

@@ -11,7 +11,7 @@ than crashing the sweep.
 import json
 import os
 
-import common
+from dubtitlerr.core import common
 from tools import reapply_glossary as rg
 
 GLOSS = {"show": "Test", "names": ["Haki"], "hard_fixes": {"hockey": "Haki"}}
@@ -148,7 +148,7 @@ def test_a_hard_fixes_only_edit_flags_nothing_for_the_gpu(tmp_path, monkeypatch)
     """The count is asserted, not just the flag: mine_glossary appends hard_fixes on every
     sweep, so a file-hash design would re-queue a whole series for work that changed
     nothing about audio -> words."""
-    import glossary as g
+    from dubtitlerr.glossary import glossary as g
 
     gloss = {"show": "One Pace", "hard_fixes": {"hockey": "Haki"}}
     prompt = g.prompt_for(g.load_dict({"show": "One Pace"}))

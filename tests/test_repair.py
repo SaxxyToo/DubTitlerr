@@ -11,12 +11,9 @@ import os
 
 import pytest
 
-import common
-import decisions
-import glossary
-import reflow
-import repair
-import unresolved
+from dubtitlerr.core import common, decisions, unresolved
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import reflow, repair
 
 # --- T1 hoist: dialogue_intervals now lives in common.py --------------------
 

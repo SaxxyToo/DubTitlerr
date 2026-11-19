@@ -42,7 +42,7 @@ them.
 [Why it works this way](Why-It-Works-This-Way.md#anchored-and-unanchored-repair).
 
 There is also a global `REPAIR_UNANCHORED` variable. It has been deployed library-wide
-on the reference install since 2026-09-06 (see `common.py`'s v10 changelog note) --
+on the reference install since 2026-09-06 (see the v10 note in `dubtitlerr/core/common.py`) --
 every show without an explicit `unanchored_repair` field in its glossary is repaired
 unanchored by default there. **Prefer the per-show glossary field for any new
 install**: it is committed to git and reviewable, where the global flag is host
@@ -376,7 +376,7 @@ environment:
 
 ```sh
 cp "/config/glossaries/<Show>.json" /tmp/<Show>.try.json
-python3 glossary_verify.py /tmp/<Show>.try.json --force
+python3 -m dubtitlerr.glossary.glossary_verify /tmp/<Show>.try.json --force
 ```
 
 **3. Read the last lines.** Verify prints one summary line,
@@ -398,7 +398,7 @@ stays on the local model when verify uses the decision model. `ACQUIRE_BACKEND=d
 **Glossary flags.** Run the review on the glossary and the show folder:
 
 ```sh
-python3 glossary_acquire.py "/config/glossaries/<Show>.json" "/media/Anime Library/<Show>" --review
+python3 -m dubtitlerr.glossary.glossary_acquire "/config/glossaries/<Show>.json" "/media/Anime Library/<Show>" --review
 ```
 
 Without `--apply` it only shows what it would do. Add `--apply` to write your answers. Decisions
@@ -460,7 +460,7 @@ file without one gets no scope.
 **4. Tag once by hand and read the result.**
 
 ```sh
-python3 glossary_verify.py "/config/glossaries/<Show>.json" --tag-arcs
+python3 -m dubtitlerr.glossary.glossary_verify "/config/glossaries/<Show>.json" --tag-arcs
 ```
 
 The glossary now has `arc_titles` and `arc_coverage`. A scope that failed, came back partial or
@@ -551,7 +551,7 @@ transcriptions on one small card at once.
 **Run the recovery tool inside the container.** Execute `review_users.py reset-admin` with your administrator username:
 
 ```sh
-docker compose exec dubtitlerr python3 review_users.py reset-admin <username>
+docker compose exec dubtitlerr python3 -m dubtitlerr.review.review_users reset-admin <username>
 ```
 
 The command generates a new 16-character password that stays until changed, prints it to your terminal, and clears existing sessions for that account. Sign in with the new password and update it when you are ready.

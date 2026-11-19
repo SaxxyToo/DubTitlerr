@@ -2,8 +2,8 @@
 
 import pytest
 
-import review_server as rs
-import review_settings
+from dubtitlerr.review import review_server as rs
+from dubtitlerr.review import review_settings
 
 TOKEN = "review-token"
 
@@ -55,7 +55,7 @@ def test_the_settings_routes_are_not_open(env):
 
 
 def test_user_principal_gets_403_on_test_connection(env, tmp_path, monkeypatch):
-    import review_auth
+    from dubtitlerr.review import review_auth
 
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setattr(review_auth, "SCRYPT_N", 2**4)

@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-import review_auth
+from dubtitlerr.review import review_auth
 
 
 def test_hash_has_the_documented_shape_and_never_holds_the_password():

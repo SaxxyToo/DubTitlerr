@@ -334,7 +334,12 @@ def test_publish_updates_the_readme_table_and_commits_it(tmp_path):
     # APP_DIR=tmp_path in _run_publish, so give it the real tool
     (tmp_path / "tools").mkdir()
     shutil.copy(os.path.join(ROOT, "tools", "render_readme_table.py"), tmp_path / "tools")
-    shutil.copy(os.path.join(ROOT, "common.py"), tmp_path)
+    (tmp_path / "dubtitlerr" / "core").mkdir(parents=True)
+    shutil.copy(os.path.join(ROOT, "dubtitlerr", "__init__.py"), tmp_path / "dubtitlerr" / "__init__.py")
+    for name in ("__init__.py", "common.py", "atomic_file.py"):
+        shutil.copy(
+            os.path.join(ROOT, "dubtitlerr", "core", name), tmp_path / "dubtitlerr" / "core" / name
+        )
 
     proc = _run_publish(subs, tmp_path, PUBLISH_APPLY="1")
 

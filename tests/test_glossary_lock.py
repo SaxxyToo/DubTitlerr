@@ -9,9 +9,9 @@ import threading
 
 import pytest
 
-import glossary_acquire as ga
-import glossary_lock
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_lock
+from dubtitlerr.glossary import glossary_verify as gv
 
 
 def write(path, **extra):
@@ -77,7 +77,7 @@ def test_a_second_process_is_refused_and_the_lock_is_free_again_afterwards(tmp_p
     path = write(tmp_path / "S.json")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     code = (
-        f"import sys, time; sys.path.insert(0, {root!r}); import glossary_lock\n"
+        f"import sys, time; sys.path.insert(0, {root!r}); from dubtitlerr.glossary import glossary_lock\n"
         f"with glossary_lock.locked({path!r}, 'other') as ok:\n"
         "    print('held' if ok else 'busy', flush=True); time.sleep(3)\n"
     )
@@ -153,7 +153,7 @@ def test_acquire_apply_skips_when_busy_but_a_dry_run_does_not(tmp_path, monkeypa
 
 
 def test_mine_glossary_skips_when_busy(tmp_path, monkeypatch, capsys):
-    import mine_glossary
+    from dubtitlerr.glossary import mine_glossary
 
     monkeypatch.setattr(mine_glossary, "GLOSS_DIR", str(tmp_path))
     show = tmp_path / "Show"

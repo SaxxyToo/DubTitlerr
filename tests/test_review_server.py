@@ -14,10 +14,8 @@ from typing import Any
 
 import pytest
 
-import common
-import decisions
-import review_server
-import unresolved
+from dubtitlerr.core import common, decisions, unresolved
+from dubtitlerr.review import review_server
 
 # Card texts and queue entries are kept in CORRESPONDENCE on purpose. repair.py only ever
 # queues a line it processed, so every entry's original_text is a real card of this episode.
@@ -2103,7 +2101,7 @@ def _shows_route(tmp_path, monkeypatch, root):
 
 
 def test_api_shows_lists_only_directories_the_run_validator_accepts(tmp_path, monkeypatch):
-    import review_requests
+    from dubtitlerr.review import review_requests
 
     root = tmp_path / "lib"
     for name in ("Frieren", "Bleach", "a..b"):

@@ -1,6 +1,6 @@
 import urllib.parse
 
-import wiki_scope
+from dubtitlerr.glossary import wiki_scope
 
 NARUTO_INDEX_WIKITEXT = """
 {| class="wikitable sortable"

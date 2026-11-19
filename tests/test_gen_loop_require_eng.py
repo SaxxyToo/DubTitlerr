@@ -22,8 +22,14 @@ def _run_gen_loop(tmp_path, require_eng):
     app = tmp_path / "app"
     (app / "shell").mkdir(parents=True)
     shutil.copy(REPO / "shell" / "lib.sh", app / "shell" / "lib.sh")
-    (app / "generate.py").write_text(STUB_GENERATE)
-    (app / "mine_glossary.py").write_text("")
+    # The app dir carries a package skeleton: gen_loop.sh drives every stage as
+    # `python3 -m dubtitlerr.<pkg>.<mod>`. Only the files the loop's CLIs need are copied,
+    # so this minimal app dir stays pysubs2-free (a stray module-scope `common` import fails).
+    for pkg in ("", "glossary", "pipeline"):
+        (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / "dubtitlerr" / pkg / "__init__.py", app / "dubtitlerr" / pkg / "__init__.py")
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(STUB_GENERATE)
+    (app / "dubtitlerr" / "glossary" / "mine_glossary.py").write_text("")
     anime = tmp_path / "anime"
     (anime / "Show").mkdir(parents=True)
     order = tmp_path / "order.txt"
@@ -41,7 +47,9 @@ def _run_gen_loop(tmp_path, require_eng):
     )
     if require_eng is not None:
         env["REQUIRE_ENG"] = require_eng
-    proc = subprocess.run(["sh", str(REPO / "gen_loop.sh")], env=env, capture_output=True, text=True, timeout=60)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=60
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     return record.read_text()
 

@@ -4,9 +4,9 @@ Sol's probe: glossary phrases ["Van der Decken"] (the shape verify writes: a lon
 line "Vanderdecken and Vanderdecken are here with us." and the proposal "Van der Decken and Van der Decken are here with us."
 was refused as invents_name and then hidden by the default auto-dismiss (8 word changes)."""
 
-import glossary
-import repair
-import unresolved
+from dubtitlerr.core import unresolved
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import repair
 
 ORIG = "Vanderdecken and Vanderdecken are here with us."
 NEW = "Van der Decken and Van der Decken are here with us."

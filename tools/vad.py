@@ -49,7 +49,7 @@ except ImportError:  # pragma: no cover -- exercised for real in this dev venv
     webrtcvad = None
 
 sys.path.insert(0, ".")
-import common  # noqa: E402
+from dubtitlerr.core import common  # noqa: E402
 
 log = common.log
 

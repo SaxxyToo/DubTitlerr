@@ -1,0 +1,1722 @@
+#!/usr/bin/env python3
+"""Acquire proper nouns for a show whose releases carry no mineable subtitle track.
+
+mine_glossary.py can only learn names from an embedded fansub track. Where a release
+ships none, the glossary for that stretch of the show stays empty and every name is left
+to Whisper's guessing. This module fills that gap from the opposite direction: the show's
+wiki owns the candidate list AND every canonical spelling, and the show's own transcripts
+only decide which wiki entities are worth asking about. Our errors can raise a question;
+they can never become an answer.
+
+Its LLM calls (tier B's per-term pick, tier C's per-pair merge) use glossary_verify.acquire_backend(): ACQUIRE_BACKEND when set,
+else VERIFY_BACKEND, except that VERIFY_BACKEND=decision means the LOCAL backend (acquire opts in to the decision model with
+ACQUIRE_BACKEND=decision). Settings: the VERIFY_* variables and ACQUIRE_DECISION_TAU. Local by default, or opt-in a hosted text
+model (openai) or a decision model (decision). A
+decision call that fails leaves the pair "unavailable" (never cached) and the term without a tier-B entry; the run reports its
+decision counters. See glossary_decision.
+Built with help of Claude (Anthropic).
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import hashlib
+import json
+import math
+import os
+import re
+
+import jellyfish
+
+from dubtitlerr.core import acquire_cache, adjudication_journal
+from dubtitlerr.core.common import MODE_KEEP, atomic_write, find_video, llm_chat, log, stop_requested
+from dubtitlerr.glossary import glossary, glossary_verify, mine_glossary
+from dubtitlerr.pipeline import ordering
+
+_DISAMBIG_RE = re.compile(r"\s*\([^)]*\)\s*$")
+_REDUCE_RE = re.compile("[\\s" + chr(0x27) + chr(0x2019) + "-]")
+
+
+def normalize_title(title: str) -> str:
+    """A wiki article title reduced to the name itself.
+
+    Fandom titles carry disambiguators and subpages -- 'Misty (anime)',
+    'Ash Ketchum/Sun & Moon'. Both are part of the TITLE, not the name, and emitting one
+    as a hard_fix canonical would rewrite dialogue to include it."""
+    return _DISAMBIG_RE.sub("", str(title).split("/")[0]).strip()
+
+
+def reduce_form(s: str) -> str:
+    """The form both sides are compared on: lowercase, no spaces/apostrophes/hyphens.
+
+    This is what lets the ASR token 'Vanderdecken' match the title 'Van der Decken'.
+    The class is built with chr() rather than written literally: the curly apostrophe
+    U+2019 gets silently normalised to U+0027 by editors in this toolchain, which
+    silently disables curly-apostrophe stripping and passes a literal-looking review."""
+    return _REDUCE_RE.sub("", str(s).lower())
+
+
+def wilson_lower(k: int, n: int, z: float = 1.96) -> float:
+    """Wilson score lower bound on k/n at ~95% confidence.
+
+    Used instead of a bare ratio because a ratio cannot tell 5-vs-1 from 56-vs-2 -- both
+    look lopsided, but only one is evidence. Wilson discounts the small sample for us."""
+    if n <= 0:
+        return 0.0
+    p = k / n
+    denom = 1 + z * z / n
+    centre = p + z * z / (2 * n)
+    margin = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (centre - margin) / denom
+
+
+EXPANSION_RATIO = 1.35
+
+
+def is_expansion(variant: str, canonical: str) -> bool:
+    """True if 'correcting' variant->canonical would GROW a word into a longer name.
+
+    A canonical that merely CONTAINS the variant is not a match: the transcript says
+    'Warlords', the wiki title is 'Seven Warlords of the Sea', and substituting one for the
+    other rewrites the line into nonsense. Length ratio catches the rest ('Ace' ->
+    'Portgas D. Ace'), while a true respelling stays about the same length."""
+    v, c = reduce_form(variant), reduce_form(canonical)
+    if not v or not c:
+        return True
+    if v == c:
+        return False
+    if v in c and len(c) > len(v):
+        return True
+    return len(c) > len(v) * EXPANSION_RATIO
+
+
+MIN_SIM = float(os.environ.get("ACQUIRE_MIN_SIM", "0.72"))
+
+
+def similarity(a: str, b: str) -> float:
+    """Jaro-Winkler on the reduced forms, nudged when a phonetic key agrees.
+
+    RECALL, not safety. Measured on real data the true and false pairs overlap completely
+    (Syrahose/Shirahoshi 0.755 sits BELOW Warlords/Warlord 0.975), so no threshold here can
+    separate them and none is asked to -- R2 and R3 do the rejecting. The phonetic key is a
+    bonus signal only: exact metaphone bucketing was tried and split Shirahoshi/Syrahose
+    into XRHX/SRHS, dropping the case this module exists for."""
+    ra, rb = reduce_form(a), reduce_form(b)
+    if not ra or not rb:
+        return 0.0
+    score = jellyfish.jaro_winkler_similarity(ra, rb)
+    if jellyfish.metaphone(ra) == jellyfish.metaphone(rb) or jellyfish.soundex(ra) == jellyfish.soundex(rb):
+        score = min(1.0, score + 0.02)
+    return score
+
+
+_WORD_RE = re.compile(r"[^\W_]+")
+
+
+def _word_index(index: list) -> dict[str, str]:
+    """word (lowercase) -> the first normalised title in `index` containing it as a whole word.
+
+    Built from _title_index()'s already-computed normalised titles -- a cheap string split
+    over data that pass already produced, not a second scan that re-runs jaro-winkler,
+    metaphone or soundex per title. This is what lets 'Zoro' resolve to 'Roronoa Zoro'
+    rather than to some unrelated, similarly-spelled article: this wiki titles characters by
+    full name, so a bare given name in dialogue is a SHORT FORM of the full-name title, not a
+    fuzzy near-match to be corrected. See _best_title_indexed."""
+    out: dict = {}
+    for norm, *_rest in index:
+        for w in _WORD_RE.findall(norm.lower()):
+            out.setdefault(w, norm)
+    return out
+
+
+def _title_index(titles: list) -> list[tuple[str, str, str, str]]:
+    """(normalised title, reduced form, metaphone, soundex) per title, computed once.
+
+    similarity() used to recompute a title's reduce_form/metaphone/soundex on every token
+    comparison it took part in -- 8202 x 8109 times on One Pace instead of 8109. Titles
+    don't change within a run; only the per-title values are safe to hoist out of the join.
+    A title whose reduced form is empty can never win (similarity() returns 0.0 for it,
+    same as MIN_SIM's floor), so it is dropped here exactly as it was silently ignored
+    before -- fewer entries to scan, identical winners and scores. Duplicate normalised
+    titles (a name appearing as several disambiguated articles) are likewise collapsed to
+    one entry: every occurrence would have produced the same score, so only the first is
+    kept, in title order, matching the original first-wins tie-break."""
+    out, seen = [], set()
+    for t in titles:
+        norm = normalize_title(t)
+        if not norm or norm in seen:
+            continue
+        r = reduce_form(norm)
+        if not r:
+            continue
+        seen.add(norm)
+        out.append((norm, r, jellyfish.metaphone(r), jellyfish.soundex(r)))
+    return out
+
+
+def _best_title_indexed(token: str, index: list, word_index: dict | None = None) -> tuple[str, float]:
+    """(normalised title, score) of the closest entry in a precomputed _title_index().
+
+    Token-side reduce_form/metaphone/soundex computed once here rather than once per
+    title, mirroring similarity()'s formula exactly (same jaro-winkler call, same +0.02
+    phonetic nudge, same score) so results are byte-identical to the unindexed path.
+
+    `word_index`, when given, is checked first: a token that is a whole word (case-
+    insensitive) of some title wins outright over any fuzzy near-match, score 1.0 -- see
+    _word_index. A bare token score-losing to a wrong-but-similar-length title (a short
+    given name scores higher against an unrelated short article than against its own long
+    full-name title) is exactly the failure this pre-check exists to short-circuit."""
+    ra = reduce_form(token)
+    if not ra:
+        return ("", 0.0)
+    if word_index is not None:
+        hit = word_index.get(token.lower())
+        if hit is not None:
+            return (hit, 1.0)
+    ma, sa = jellyfish.metaphone(ra), jellyfish.soundex(ra)
+    best, best_score = "", 0.0
+    for norm, rb, mb, sb in index:
+        s = jellyfish.jaro_winkler_similarity(ra, rb)
+        if ma == mb or sa == sb:
+            s = min(1.0, s + 0.02)
+        if s > best_score:
+            best, best_score = norm, s
+    return (best, best_score) if best_score >= MIN_SIM else ("", 0.0)
+
+
+CONF_SUFFIX = ".dubtitles.conf.json"
+SRT_SUFFIX = ".eng.dubtitles.srt"
+
+
+def _conf_text(path: str) -> str:
+    """All dialogue text from one conf.json, newline-joined, or '' if unreadable."""
+    try:
+        rows = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(rows, list):
+        return ""
+    return "\n".join(str(r.get("text", "")) for r in rows if isinstance(r, dict))
+
+
+def _srt_text(path: str) -> str:
+    """Dialogue lines from an SRT: drop indices and timecodes, keep the rest."""
+    try:
+        raw = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return ""
+    out = []
+    for ln in raw.splitlines():
+        s = ln.strip()
+        if not s or s.isdigit() or "-->" in s:
+            continue
+        out.append(s)
+    return "\n".join(out)
+
+
+def _iter_episode_texts(show_dir: str):
+    """(stem, text) for each episode, conf.json preferred over the SRT fallback.
+
+    One source per episode stem, never both: sorted(fs) puts '.dubtitles.conf.json'
+    before '.eng.dubtitles.srt' for a shared stem because 'd' < 'e'."""
+    stems_done = set()
+    for dp, _dns, fs in os.walk(show_dir):
+        for fn in sorted(fs):
+            if fn.endswith(CONF_SUFFIX):
+                stem, text = os.path.join(dp, fn[: -len(CONF_SUFFIX)]), _conf_text(os.path.join(dp, fn))
+            elif fn.endswith(SRT_SUFFIX):
+                stem, text = os.path.join(dp, fn[: -len(SRT_SUFFIX)]), _srt_text(os.path.join(dp, fn))
+            else:
+                continue
+            if stem in stems_done or not text:
+                continue
+            stems_done.add(stem)
+            yield stem, text
+
+
+SOURCE_TRANSCRIPT = "transcript"
+SOURCE_FANSUB = "fansub"
+
+
+def _candidate(variant: str, source: str) -> dict:
+    """The D3a candidate record, zeroed. Every field the apply rule or a reviewer needs.
+
+    `settled_target` is filled per PROPOSAL, not here: it depends on the wiki canonical
+    the token resolves to, which harvest cannot know."""
+    return {
+        "variant": variant,
+        "source": source,
+        "raw_forms": {},
+        "normalized_forms": [],
+        "settled_target": None,
+        "occurrence_count": 0,
+        "episode_count": 0,
+        "contexts": [],
+        "contributing_stems": set(),
+    }
+
+
+def harvest_candidates(show_dir: str, source: str = SOURCE_TRANSCRIPT) -> tuple[dict, set, list]:
+    """({variant: candidate}, midsentence, scope) across the show's own output.
+
+    D3a: aggregate counts cannot express provenance, so the unit here is a candidate
+    record, not an integer. D3b: `scope` is the list of episode stems the counts were
+    taken over -- without it the recurrence floors are not the floors that were measured.
+
+    `occurrence_count` is the BARE lane only, exactly what harvest() has always counted.
+    Possessive forms appear in `raw_forms` as evidence for a reviewer but never raise a
+    count: D5's rule is that possessive evidence may reinforce a candidate, never
+    originate one, and lowering this module's floors with it would do the latter.
+
+    conf.json is preferred; the SRT is the fallback for episodes whose conf is gone (104 of
+    696 stamped episodes at time of writing). One source per episode stem, never both."""
+    cands: dict = {}
+    mid: set = set()
+    scope: list = []
+    for stem, text in _iter_episode_texts(show_dir):
+        scope.append(stem)
+        bare: dict = {}
+        poss: dict = {}  # D5/task 12: counted separately, never folded into `bare`
+        forms: dict = {}
+        mine_glossary.mine_text(text, bare, poss, mid, forms)
+        for tok in set(bare) | set(poss):
+            c = cands.setdefault(tok, _candidate(tok, source))
+            c["occurrence_count"] += bare.get(tok, 0)
+            c["episode_count"] += 1
+            c["contributing_stems"].add(stem)
+            for surface, n in forms.get(tok, {}).items():
+                c["raw_forms"][surface] = c["raw_forms"].get(surface, 0) + n
+    for c in cands.values():
+        c["normalized_forms"] = sorted({reduce_form(f) for f in c["raw_forms"]})
+    return cands, mid, scope
+
+
+def harvest(show_dir: str) -> tuple[dict, set, int]:
+    """(counts, midsentence, n_files) of capitalised tokens across the show's own output.
+
+    The pre-D3a view of harvest_candidates, kept because the counts ARE the unit the
+    scoring gates work in; numerically identical to what it returned before task 13."""
+    cands, mid, scope = harvest_candidates(show_dir)
+    return {t: c["occurrence_count"] for t, c in cands.items() if c["occurrence_count"]}, mid, len(scope)
+
+
+CONTEXT_LINES = int(os.environ.get("ACQUIRE_CONTEXT_LINES", "4"))
+
+
+def context_lines(show_dir: str, tokens: list, limit: int = CONTEXT_LINES) -> dict:
+    """Up to `limit` real transcript lines containing each token, whole-word matched.
+
+    Whole-word is required: 'Hoshi' must not match inside 'Shirahoshi', or the evidence
+    shown to the model (and to the human) would be about a different name."""
+    pats = {t: re.compile(r"\b" + re.escape(t) + r"\b") for t in tokens}
+    out: dict = {t: [] for t in tokens}
+    for _stem, text in _iter_episode_texts(show_dir):
+        for ln in text.splitlines():
+            for t, pat in pats.items():
+                if len(out[t]) < limit and pat.search(ln):
+                    out[t].append(ln.strip())
+        if all(len(v) >= limit for v in out.values()):
+            return out
+    return out
+
+
+def build_merge_prompt(variant: str, canonical: str, ctx_v: list, ctx_c: list, show: str) -> str:
+    """Ask whether two spellings are one entity mis-transcribed or two legitimate forms.
+
+    The model never supplies a spelling -- it answers yes/no about merging. The canonical
+    string is already fixed by the wiki, which is what keeps R1 intact at this tier."""
+    lines_v = "\n".join(f"  - {ln}" for ln in ctx_v) or "  (none)"
+    lines_c = "\n".join(f"  - {ln}" for ln in ctx_c) or "  (none)"
+    return (
+        f"Two spellings appear in the English dub of {show}. Decide whether they are the SAME "
+        f"name mis-transcribed, or two DIFFERENT legitimate forms (a nickname, a title, or a "
+        f"separate character).\n\n"
+        f'Spelling A: "{variant}"\n{lines_v}\n\n'
+        f'Spelling B: "{canonical}"\n{lines_c}\n\n'
+        f"A nickname the characters actually use is NOT a mis-transcription.\n"
+        f'Answer with JSON only: {{"same_entity": true|false, "confidence": "high"|"low"}}\n'
+    )
+
+
+def adjudicate_merge(variant: str, canonical: str, ctx_v: list, ctx_c: list, show: str) -> dict:
+    """LLM merge decision -> {'same_entity': bool, 'confidence': 'high'|'low'|'none'}.
+
+    A result carrying ``unavailable`` is NOT an adjudication: the backend raised, returned
+    nothing, or returned something no JSON object could be found in. It is shaped like a
+    negative answer so every caller's `same_entity`/`confidence` reads keep working, but
+    `acquire_cache.remember_escalation` refuses to memoise it -- otherwise one transient
+    outage strands the pair forever, since `escalation_for` would return a non-empty dict
+    and `escalate`'s `if not adj` would never ask again. There is no TTL to save it.
+
+    A PARSED answer whose confidence is genuinely "none" is a real adjudication and is
+    cached: the model looked and was unsure, which is worth not paying for twice."""
+    none = {"same_entity": False, "confidence": "none", "unavailable": True}
+    try:
+        problem = glossary_verify.acquire_problem()
+        if problem:
+            raise glossary_verify.BackendConfigError(problem)
+        backend = glossary_verify.acquire_backend()
+        if backend == "decision":
+            from dubtitlerr.glossary import glossary_decision
+
+            # The local fallback's answer is marked: it must never be journaled as if the decision model had given it.
+            return glossary_decision.adjudicate_pair(
+                variant, canonical, ctx_v, ctx_c, show,
+                local=lambda: {
+                    **_merge_via_llm(variant, canonical, ctx_v, ctx_c, show, glossary_verify.local_backend()),
+                    "fallback": True,
+                },
+            )  # fmt: skip
+        return _merge_via_llm(variant, canonical, ctx_v, ctx_c, show, backend)
+    except Exception as e:
+        log("acquire: merge adjudication failed:", variant, e)
+        return none
+
+
+def _merge_via_llm(variant: str, canonical: str, ctx_v: list, ctx_c: list, show: str, backend: str) -> dict:
+    """The text-model merge decision: one llm_chat call, its reply parsed; "unavailable" when it is unusable."""
+    none = {"same_entity": False, "confidence": "none", "unavailable": True}
+    out = llm_chat(build_merge_prompt(variant, canonical, ctx_v, ctx_c, show), **glossary_verify.llm_settings(backend))
+    if not out:
+        return none
+    m = re.search(r"\{.*\}", out, re.S)
+    if not m:
+        return none
+    try:
+        d = json.loads(m.group(0))
+    except ValueError:
+        return none
+    conf = str(d.get("confidence", "none")).lower()
+    return {"same_entity": d.get("same_entity") is True, "confidence": conf if conf in ("high", "low", "none") else "low"}
+
+
+class StopRequested(Exception):
+    """The soft-stop flag appeared between units of a long step. `step` names it, `done` is
+    how many units had completed; everything completed is already in the caller's cache."""
+
+    def __init__(self, step: str, done: int, unit: str):
+        super().__init__(f"stop requested: leaving {step} after {done} {unit}s")
+        self.step, self.done, self.unit = step, done, unit
+
+
+# Stored adjudications live in TWO places and the older one wins; BUST_HELP below says how to clear them.
+BUST_HELP = (
+    "Stored answers: pair adjudications are remembered in <glossary>.acquire-cache.json (the older cache, consulted FIRST, so it "
+    "shadows the journal) and every completed adjudication in <glossary>.acquire.journal.jsonl. To re-ask the model, delete BOTH "
+    "files or set ACQUIRE_NO_CACHE=1 (which neither reads nor writes either)."
+)
+
+
+def open_journal(gloss_path: str):
+    """The acquire stage's adjudication journal for this glossary (beside acquire_cache), or None with ACQUIRE_NO_CACHE=1."""
+    if not glossary_verify.journal_enabled("acquire"):
+        return None
+    base = gloss_path[:-5] if gloss_path.endswith(".json") else gloss_path
+    return adjudication_journal.Journal(base + ".acquire.journal.jsonl", "acquire")
+
+
+def pair_provenance(show: str, variant: str, canonical: str, ctx_v: list, ctx_c: list) -> dict:
+    """What a pair adjudication depended on: the pair, both context lists, the prompt, and who answered (backend, model, tau)."""
+    return {
+        "stage": "pair",
+        "show": show,
+        "variant": variant,
+        "canonical": canonical,
+        "ctx_v": adjudication_journal.digest(ctx_v),
+        "ctx_c": adjudication_journal.digest(ctx_c),
+        "prompt": glossary_verify.prompt_version("pair"),
+        **glossary_verify.backend_identity(glossary_verify.acquire_backend(), "pair"),
+    }
+
+
+def escalate(proposals: list, ctx: dict, show: str, cache: dict | None = None, journal=None) -> list:
+    """Re-decide share-too-close proposals with context. Other verdicts pass through.
+
+    ONLY share-too-close escalates. below-floor, sentence-initial-only, already-canonical,
+    english-word, unseen-needs-evidence and short-form never do: none of those verdicts is
+    evidence-shaped, and short-form (an expansion) is structurally wrong -- no amount of
+    context evidence redeems it. unseen-needs-evidence specifically has no `canonical`
+    context to escalate WITH -- canonical_count is 0 by definition of the branch that
+    produced it, so there is nothing on the canonical side for tier-C to compare against.
+
+    `cache`, if given, memoises the LLM call per (variant, canonical) pair -- see
+    acquire_cache's module docstring for why the PAIR's adjudication is cached and not the
+    proposal's final verdict. Mutated in place; the caller owns saving it.
+
+    Clearing stored answers: delete BOTH <glossary>.acquire-cache.json and <glossary>.acquire.journal.jsonl, or set
+    ACQUIRE_NO_CACHE=1. The cache above is consulted BEFORE the journal, so an old cache shadows a fresher journal.
+
+    `journal` (adjudication_journal), if given, makes each completed pair answer durable the moment it exists and serves a
+    previous run's answer when its provenance (both context lists, model, prompt, threshold) is unchanged; unlike `cache` it
+    survives a kill, because `cache` is only saved after escalation finishes. An unavailable or fallback answer is not journaled.
+
+    Raises StopRequested BEFORE a fresh (uncached) adjudication once the soft-stop flag is up:
+    each completed pair is already in `cache`, and the proposals are only decided if every
+    pair is, so a stopped run returns no verdicts at all rather than a partly-escalated set."""
+    out = []
+    asked = 0
+    for p in proposals:
+        if p.get("reason") != "share-too-close":
+            out.append(p)
+            continue
+        adj = cache is not None and acquire_cache.escalation_for(cache, p["variant"], p["canonical"])
+        prov = key = None
+        if not adj and journal is not None:
+            ctx_v, ctx_c = ctx.get(p["variant"], []), ctx.get(p["canonical"], [])
+            key = adjudication_journal.pair_key(p["variant"], p["canonical"])
+            prov = pair_provenance(show, p["variant"], p["canonical"], ctx_v, ctx_c)
+            adj = journal.lookup(key, prov)
+            if adj and cache is not None:
+                acquire_cache.remember_escalation(cache, p["variant"], p["canonical"], adj)
+        if not adj:
+            if stop_requested():
+                raise StopRequested("escalate", asked, "pair")
+            adj = adjudicate_merge(p["variant"], p["canonical"], ctx.get(p["variant"], []), ctx.get(p["canonical"], []), show)
+            asked += 1
+            if cache is not None:
+                acquire_cache.remember_escalation(cache, p["variant"], p["canonical"], adj)
+            if key is not None:
+                journal.record(key, prov, adj)  # durable before the next pair; refuses unavailable and fallback answers
+        if adj["same_entity"] and adj["confidence"] == "high":
+            out.append({**p, "verdict": "apply", "reason": "context-merged"})
+        elif not adj["same_entity"] and adj["confidence"] == "high":
+            out.append({**p, "verdict": "known", "reason": "context-distinct"})
+        else:
+            out.append(p)
+    return out
+
+
+MIN_COUNT = int(os.environ.get("ACQUIRE_MIN_COUNT", "3"))
+MIN_SHARE = float(os.environ.get("ACQUIRE_MIN_SHARE", "0.80"))
+UNSEEN_SIM = float(os.environ.get("ACQUIRE_UNSEEN_SIM", "0.98"))
+# D4: split recurrence floors. The distribution runs opposite to intuition -- high counts
+# are CORRECT names missing from the glossary (Momonosuke 21x, Brownbeard 16x, Vegapunk
+# 14x), because Whisper hears a clear name consistently; the ERRORS live in the tail
+# (Kinamon 2x, Whitestrom 2x, Hazzard 4x). So a near-miss of a settled term needs less
+# recurrence to be worth looking at than a brand-new term does.
+NEAR_MISS_MIN_COUNT = int(os.environ.get("ACQUIRE_NEAR_MISS_MIN_COUNT", "2"))
+# C7: a candidate-admission throttle on D auto-applies, guarding against large wiki
+# expansions like the rejected Zunesha -> "Zou Elephant (Zunisha)" (+16). It is explicitly
+# NOT a layout-safety proof -- wrapping depends on where word boundaries fall, not on total
+# length, and C7's measured post-glossary validation in generate.py owns that question.
+GROWTH_MAX = int(os.environ.get("ACQUIRE_GROWTH_MAX", "2"))
+
+
+def anchor_terms(gloss: dict) -> set:
+    """Terms a transcript candidate may anchor itself to: `names` plus every hard_fix
+    canonical (which is where `acquired` canonicals live too).
+
+    `known` is deliberately excluded. Those are spellings a human REJECTED via --review;
+    anchoring a new candidate to one would make a rejected misspelling the corroborating
+    evidence for the next correction."""
+    return {str(n) for n in gloss.get("names") or []} | {str(v) for v in (gloss.get("hard_fixes") or {}).values() if v}
+
+
+def settled_target(variant: str, canonical: str, anchors: set | None) -> str | None:
+    """The already-settled term `variant` is a near-miss of, or None.
+
+    Two conditions, both required, and the second is the one that is easy to lose:
+
+    1. `variant` is a near-miss of the term -- reduced-form equality (Kaido/Kaidou) or
+       similarity >= MIN_SIM (Kinamon/Kin'emon).
+    2. the term IS the canonical the wiki proposed, reduced-form equal.
+
+    Without (2) the anchor corroborates nothing about the string being written into
+    hard_fixes: `Zunesha` sits close to a settled `Zunisha`, but the canonical on the
+    proposal is "Zou Elephant", and applying it because some OTHER term is nearby is
+    precisely the failure D3 exists to prevent. An exact match is not a near-miss --
+    the token IS the settled term, and there is nothing to correct."""
+    if not anchors or not canonical:
+        return None
+    rc = reduce_form(canonical)
+    best, best_score = None, 0.0
+    for term in sorted(anchors):
+        if reduce_form(term) != rc or variant == term:
+            continue
+        if reduce_form(variant) == reduce_form(term):
+            return term
+        s = similarity(variant, term)
+        if s >= MIN_SIM and s > best_score:
+            best, best_score = term, s
+    return best
+
+
+def source_gate(proposals: list) -> list:
+    """D3, the source-asymmetry APPLY rule. Runs AFTER the tier logic and AFTER escalate().
+
+    A fansub candidate was written by a human who knew the show; a transcript candidate is
+    Whisper guessing at audio, so a wiki title match means something weaker -- it may
+    confirm the wiki's word while the audio said something else.
+
+        fansub                            -> existing miner policy, untouched
+        transcript + settled_target set   -> may auto-apply (the wiki corroborates an anchor)
+        transcript + settled_target None  -> review, regardless of tier, count, or LLM
+                                             adjudication confidence
+
+    The last line is why this is a separate pass over finished proposals rather than
+    another branch in decide(): escalate() can promote a high-confidence context
+    adjudication straight to an apply, and for a new transcript term that must be
+    impossible. A proposal carrying no `source` is treated as transcript -- missing
+    provenance takes the safe branch, never the permissive one.
+
+    The floor is re-checked here because D4's near-miss floor is on the candidate's OWN
+    recurrence, while decide()'s gate deliberately weighs variant + canonical together."""
+    out = []
+    for p in proposals:
+        if p.get("verdict") != "apply" or p.get("source", SOURCE_TRANSCRIPT) != SOURCE_TRANSCRIPT:
+            out.append(p)
+            continue
+        target, grew = p.get("settled_target"), len(p["canonical"]) - len(p["variant"])
+        if not target:
+            out.append({**p, "verdict": "flag", "reason": "transcript-new-term"})
+        elif p.get("variant_count", 0) < NEAR_MISS_MIN_COUNT:
+            out.append({**p, "verdict": "flag", "reason": "below-floor"})
+        elif grew > GROWTH_MAX:
+            out.append({**p, "verdict": "flag", "reason": "growth-over-cap"})
+        else:
+            out.append(p)
+    return out
+
+
+def decide(
+    variant: str,
+    variant_count: int,
+    canonical: str,
+    canonical_count: int,
+    score: float,
+    midsentence: bool,
+    floor: int | None = None,
+) -> dict:
+    """Run the four gates over one variant->canonical proposal.
+
+    `floor` is D4's split recurrence floor, defaulting to MIN_COUNT (a brand-new term).
+    propose() passes NEAR_MISS_MIN_COUNT for a candidate anchored to a settled term.
+
+    Order matters: the cheap structural rejections come first so the report's reason is the
+    most specific true one. R2 (expansion) and R3 (dominance) are the only gates carrying
+    real safety -- `score` is a recall floor that has already been applied upstream.
+
+    canonical-unseen means there is NO competing evidence: the canonical spelling never
+    appears, so Wilson has nothing to weigh. With no evidence the only safe correction is one
+    that is not really a phonetic judgement -- an apostrophe, spacing, a doubled letter --
+    which is what reduce_form(variant) == reduce_form(canonical) or score >= UNSEEN_SIM
+    tests for. A genuine phonetic leap ('Zoro'->'Zoryu', 0.87) is a CLAIM about what was
+    actually said, and a claim needs evidence: either R3 dominance or tier-C context. Absent
+    that bar every one of 8109 wiki titles finds SOME obscure article within MIN_SIM of any
+    correctly-spelled name, which never appears in dialogue for the excellent reason that it
+    is not in the show -- and canonical_count==0 would read that silence as proof."""
+    floor = MIN_COUNT if floor is None else floor
+    if variant_count + canonical_count < floor:
+        return {"verdict": "flag", "reason": "below-floor", "bound": 0.0}
+    if not midsentence:
+        return {"verdict": "flag", "reason": "sentence-initial-only", "bound": 0.0}
+    if is_expansion(variant, canonical):
+        return {"verdict": "known", "reason": "short-form", "bound": 0.0}
+    if variant == canonical:
+        return {"verdict": "flag", "reason": "already-canonical", "bound": 0.0}
+    if canonical_count == 0:
+        if reduce_form(variant) == reduce_form(canonical) or score >= UNSEEN_SIM:
+            return {"verdict": "apply", "reason": "canonical-unseen", "bound": 0.0}
+        return {"verdict": "flag", "reason": "unseen-needs-evidence", "bound": 0.0}
+    bound = wilson_lower(canonical_count, canonical_count + variant_count)
+    if bound > MIN_SHARE:
+        return {"verdict": "apply", "reason": "dominant", "bound": bound}
+    return {"verdict": "flag", "reason": "share-too-close", "bound": bound}
+
+
+def _resolve_tokens(counts: dict, titles: list) -> dict:
+    """token -> (canonical, score) for every harvested token that resolves to a wiki title.
+
+    This is the module's dominant cost -- 8202 tokens x 8109 titles on One Pace -- so it is
+    computed once per acquire() run and shared: propose() and unmatched() both need it, and
+    used to each run a per-token title search over every token independently, doubling the join for no
+    reason (unmatched's tokens are a subset of counts, already resolved or not by propose's
+    pass). No count/mid-sentence pre-filtering happens here: R6's floor gate compares
+    variant_count + canonical_count, not variant_count alone (see
+    test_propose_emits_one_proposal_per_variant_with_the_canonical_count's
+    Hirohoshi/Shirahoshi cluster), so a token's own low count never proves in advance that
+    its match would be discarded -- the canonical it turns out to match could itself be a
+    high-count token. Measured on One Pace, the tightest count-only bound that IS always
+    safe (skip a token only if even its best possible booster couldn't clear the floor)
+    prunes zero of 8202 tokens, so no such pre-filter is applied."""
+    index = _title_index(titles)
+    word_index = _word_index(index)
+    resolved = {}
+    for tok in counts:
+        name, score = _best_title_indexed(tok, index, word_index)
+        if name:
+            resolved[tok] = (name, score)
+    return resolved
+
+
+def propose(
+    counts: dict,
+    midsentence: set,
+    titles: list,
+    settled: set | None = None,
+    resolved: dict | None = None,
+    candidates: dict | None = None,
+    anchors: set | None = None,
+    admission_fn=None,
+) -> list:
+    """One proposal per harvested token that resolves to a wiki title.
+
+    A token matching no title yields nothing here -- it is the tier-B queue's business
+    (see acquire()), not a silent drop. An ordinary English variant is flagged rather than
+    applied or dropped: dialogue words like 'name' can score deceptively close to a real
+    name (JW('name','nami') = 0.90), but real characters ARE English words too (Brook, Law),
+    so a human reviewer -- not a silent drop -- gets the final call. The canonical itself is
+    exempt: it comes from the wiki and is authoritative.
+
+    `settled` (already `known` or `acquired`) is skipped entirely -- C2: without this, an
+    unattended sweep re-proposes a term a human already rejected via --review, and
+    apply_proposals happily re-applies it, silently overriding the human decision.
+
+    `resolved` lets a caller that already ran _resolve_tokens() (acquire(), sharing it with
+    unmatched()) pass the result straight in instead of paying for the join twice.
+
+    `candidates` (D3a) carries each token's provenance onto its proposal, so the apply rule
+    downstream can see WHERE the token came from; `anchors` (D3) is the settled-term set a
+    transcript candidate may be a near-miss OF, which also picks D4's floor. Both are
+    optional: without them every token is treated as an unanchored transcript token, which
+    is the safe reading."""
+    settled = {str(t).lower() for t in (settled or ())}
+    candidates = candidates or {}
+    if resolved is None:
+        resolved = _resolve_tokens(counts, titles)
+    out = []
+    for tok, (canon, score) in sorted(resolved.items()):
+        if tok.lower() in settled:
+            continue
+        canon_count = counts.get(canon, 0)
+        cand = candidates.get(tok) or _candidate(tok, SOURCE_TRANSCRIPT)
+        target = settled_target(tok, canon, anchors)
+        floor = NEAR_MISS_MIN_COUNT if (target and cand["source"] == SOURCE_TRANSCRIPT) else MIN_COUNT
+        d = decide(tok, counts[tok], canon, canon_count, score, tok in midsentence, floor)
+        if d["reason"] == "already-canonical":
+            continue
+        # R6e: the english-word gate must never touch a 'known'/'short-form' verdict --
+        # that is a structural "leave dialogue alone" call, not a confidence judgement, and
+        # real characters are English words too (Brook, Law). Every other verdict (apply,
+        # or an already-flagged reason) is still eligible to be (re)labelled english-word.
+        if d["verdict"] != "known" and glossary.is_english(tok.lower()):
+            d = {"verdict": "flag", "reason": "english-word", "bound": 0.0}
+        out.append(
+            {
+                "variant": tok,
+                "canonical": canon,
+                "variant_count": counts[tok],
+                "canonical_count": canon_count,
+                "score": round(score, 3),
+                "source": cand["source"],
+                "settled_target": target,
+                "occurrence_count": counts[tok],
+                "episode_count": cand["episode_count"],
+                "raw_forms": cand["raw_forms"],
+                "contributing_stems": cand.get("contributing_stems", set()),
+                "admission_method": admission_fn(tok)[1] if admission_fn else None,
+                **d,
+            }
+        )
+    return out
+
+
+def unmatched(counts: dict, midsentence: set, titles: list, resolved: dict | None = None) -> list:
+    """Frequent, mid-sentence tokens that resolved to no wiki title at all.
+
+    This is the dub-only-name queue: a character the dub renamed outright ('Ash' where the
+    wiki is titled in romaji) matches nothing phonetically, which is a MISS, never a
+    corruption. Tier B asks the wiki's full-text search about these.
+
+    `resolved` lets a caller share one _resolve_tokens() pass with propose() instead of
+    the join running twice (see propose's docstring)."""
+    if resolved is None:
+        resolved = _resolve_tokens(counts, titles)
+    return sorted(t for t, c in counts.items() if c >= MIN_COUNT and t in midsentence and t not in resolved)
+
+
+def _provenance(p: dict, scope: int) -> dict:
+    """D3a/D3b: the source, the anchor, and the episode set the counts were taken over.
+
+    Recorded on BOTH lanes. On `acquired` it is the justification for an unattended write;
+    on `flagged` it is the evidence a reviewer needs -- a review queue whose entries arrive
+    without the reason they escalated defeats the point of escalating."""
+    return {
+        "source": p.get("source", SOURCE_TRANSCRIPT),
+        "settled_target": p.get("settled_target"),
+        "episode_count": p.get("episode_count", 0),
+        "scope": scope,
+        # [S-12]: survives onto the WRITTEN glossary entry, not just the transient
+        # acquire() report -- a reviewer opening the glossary file alone must be able
+        # to tell a fallback-backed proposal from a tight one.
+        "admission_method": p.get("admission_method"),
+    }
+
+
+CONFLICTS_WITH_CURATED = "conflicts-with-curated-fix"
+
+
+def _key(d: dict, term: str):
+    """The key of `d` equal to `term` ignoring case, else None. glossary.load_dict lowercases every
+    hard_fixes key at load, so `zolo` and `Zolo` are ONE fix downstream and must never coexist."""
+    low = term.lower()
+    return next((k for k in d if str(k).lower() == low), None)
+
+
+def _is_curated(g: dict, term: str) -> bool:
+    """True when a person owns the hard_fix for `term` (case-insensitive), so acquire may not pop or overwrite it.
+
+    Curated = no `acquired` record (hand-written), OR run == "review" (a human approved it through
+    record_decision / decisions.promote, the same marker revert() honours), OR its value no longer
+    matches the canonical acquire recorded (hand-edited since, as revert() also leaves alone).
+    Debt: a fix an OLDER acquire wrote without an `acquired` record counts as curated forever; there
+    is no way to tell it from a hand-written one."""
+    fixes = g.get("hard_fixes") or {}
+    fk = _key(fixes, term)
+    if fk is None:
+        return False
+    acquired = g.get("acquired") or {}
+    ak = _key(acquired, term)
+    if ak is None:
+        return True
+    meta = acquired[ak] or {}
+    return meta.get("run") == "review" or fixes[fk] != meta.get("canonical")
+
+
+def _drop(d: dict, term: str) -> None:
+    """Remove every case-variant of `term` from `d`."""
+    k = _key(d, term)
+    while k is not None:
+        d.pop(k)
+        k = _key(d, term)
+
+
+def _flag_entry(p: dict, scope: int) -> dict:
+    return {
+        "reason": p["reason"],
+        "canonical": p["canonical"],
+        "variant_count": p["variant_count"],
+        "canonical_count": p["canonical_count"],
+        "score": p["score"],
+        "bound": round(p.get("bound", 0.0), 3),
+        "context": p.get("context", []),
+        **_provenance(p, scope),
+    }
+
+
+SETTLE_REASONS = frozenset({"human-rejected-conflict", "human-confirmed-curated"})
+
+
+def _norm(g: dict) -> dict:
+    """Coerce explicit nulls ({"known": None}) to empty containers, in place, so every reader below can index freely."""
+    for k in ("hard_fixes", "acquired", "flagged"):
+        if not isinstance(g.get(k), dict):
+            g[k] = {}
+    for k in ("names", "phrases"):
+        if k in g and g[k] is None:
+            g[k] = []
+    g["known"] = list(g.get("known") or [])
+    return g
+
+
+def _ldrop(items, term: str) -> list:
+    """`items` without any case-variant of `term`."""
+    return [k for k in items if str(k).lower() != term.lower()]
+
+
+def _settle_curated(g: dict, term: str, reason: str = "human-rejected-conflict") -> None:
+    """Remember that a person looked at a flag on a CURATED fix and left the fix as it is: a protected
+    (run == "review") `acquired` record holding the curated value, so `_settled` skips the term and the next
+    sweep does not re-flag the same conflict. It only counts while the fix exists (see _settled)."""
+    acq = g.setdefault("acquired", {})
+    ak = _key(acq, term)
+    if ak is None or (acq[ak] or {}).get("run") != "review":
+        _drop(acq, term)
+        fix = g["hard_fixes"][_key(g["hard_fixes"], term)]
+        acq[term] = {**_human_record(fix, {}), "reason": reason}
+
+
+def _settled(gloss: dict) -> set:
+    """Terms a sweep must not propose again: known + acquired, lowercased (compare with .lower()).
+
+    A settle record (SETTLE_REASONS) is a person's "leave this curated fix alone"; it stops counting when the fix
+    it protects is deleted by hand. Human-approved additive entries have no fix and always count."""
+    fixes = {str(k).lower() for k in (gloss.get("hard_fixes") or {})}
+    out = {str(t).lower() for t in (gloss.get("known") or [])}
+    for t, meta in (gloss.get("acquired") or {}).items():
+        if (meta or {}).get("reason") in SETTLE_REASONS and str(t).lower() not in fixes:
+            continue
+        out.add(str(t).lower())
+    return out
+
+
+def apply_proposals(gloss: dict, proposals: list, run_id: str, scope: int = 0, episode_keys_by_stem: dict | None = None) -> dict:
+    """Write applied proposals into hard_fixes + acquired; record the rest in flagged.
+
+    Pure: deep-copies its input the way glossary_verify.apply_results does, so curated
+    hard_fixes, names and initial_prompt survive untouched. A hard_fix is CURATED (see _is_curated:
+    no `acquired` record, a human-approved run == "review" record, or hand-edited since) when a person
+    owns it: it is never popped, never overwritten with a different canonical (the disagreement is
+    recorded in `flagged` as CONFLICTS_WITH_CURATED instead) and never also marked `known`. Keys match
+    case-insensitively. Only fixes this module wrote are re-evaluated, replaced or removed.
+
+    Acquired canonicals deliberately do NOT join `names`, and therefore never reach the
+    regenerated initial_prompt. That is the cut that keeps a wrong entry from biasing the
+    next transcription into producing more of the same spelling -- which would raise its
+    count and reinforce the dominance test that let it in.
+
+    C2/I3: every verdict clears whatever a PRIOR run -- automated or human -- left behind
+    for the same term, mirroring record_decision. Without this a term can end up both
+    `known` (a human said no) and freshly hard-fixed (a later sweep said yes), which is
+    exactly the both-states bug this module exists to avoid reintroducing."""
+    g = _norm(json.loads(json.dumps(gloss)))
+    fixes = g["hard_fixes"]
+    acquired = g["acquired"]
+    flagged = g["flagged"]
+    known = list(g["known"])
+    for p in proposals:
+        term = p["variant"]
+        _drop(flagged, term)  # I3: never stays queued once decided (any case)
+        curated = _is_curated(g, term)
+        if curated:
+            # A person owns this fix: keep it AND its record, never mark it known too (both-states), and
+            # if the proposal disagrees say so in the review queue instead of acting on it.
+            mine = fixes[_key(fixes, term)]
+            if p["verdict"] == "apply" and p["canonical"] == mine:
+                continue
+            if p["verdict"] == "known":
+                continue
+            ak = _key(acquired, term)
+            if ak is not None and (acquired[ak] or {}).get("run") != "review":
+                acquired.pop(ak)  # hand-edited since acquire wrote it: drop only our provenance, as revert() does
+            reason = CONFLICTS_WITH_CURATED if p["canonical"] != mine else p["reason"]
+            flagged[term] = {**_flag_entry(p, scope), "reason": reason}
+            continue
+        if p["verdict"] == "known":
+            if not any(str(k).lower() == term.lower() for k in known):
+                known.append(term)
+            continue
+        if p["verdict"] != "apply":
+            _drop(fixes, term)
+            _drop(acquired, term)
+            flagged[term] = _flag_entry(p, scope)
+            continue
+        known = _ldrop(known, term)  # C2: an apply verdict wins over a stale known
+        _drop(fixes, term)  # replacing our own fix: never leave a second spelling that differs only by case
+        _drop(acquired, term)
+        fixes[term] = p["canonical"]
+        acquired[term] = {
+            "canonical": p["canonical"],
+            "count": p["variant_count"],
+            "canonical_count": p["canonical_count"],
+            "score": p["score"],
+            "bound": round(p.get("bound", 0.0), 3),
+            "reason": p["reason"],
+            "run": run_id,
+            **_provenance(p, scope),
+        }
+        # [S-9]: keyed on the CANONICAL, not the variant -- repair._glossary_terms
+        # iterates token_fixes/phrase_fixes VALUES (the split form of hard_fixes,
+        # which is keyed on variant with canonical as the value), so tagging the
+        # variant would write a key _glossary_terms never looks up.
+        if episode_keys_by_stem:
+            stems = p.get("contributing_stems", ())
+            keys = {episode_keys_by_stem[s] for s in stems if s in episode_keys_by_stem}
+            glossary.add_episode_tag(g, p["canonical"], keys)
+    if not flagged:
+        g.pop("flagged", None)
+    if known:
+        g["known"] = sorted(known)
+    else:
+        g.pop("known", None)
+    return g
+
+
+def revert(gloss: dict, run_id: str | None = None) -> dict:
+    """Remove hard_fixes this module wrote, restoring the pre-acquisition glossary.
+
+    A fix whose current value no longer matches what we recorded has been edited by hand
+    since; leave it alone and drop only our provenance for it.
+
+    R4: an entry with run == "review" is a human's decision (record_decision), not this
+    module's automated guess. A blanket --revert must never delete one, regardless of
+    `run_id` -- reverting an automated sweep must not also undo what a person approved."""
+    g = json.loads(json.dumps(gloss))
+    fixes, acquired = g.get("hard_fixes") or {}, g.get("acquired") or {}
+    for variant, meta in list(acquired.items()):
+        if meta.get("run") == "review":
+            continue
+        if run_id is not None and meta.get("run") != run_id:
+            continue
+        if fixes.get(variant) == meta.get("canonical"):
+            fixes.pop(variant, None)
+        acquired.pop(variant, None)
+    return g
+
+
+def review_items(gloss: dict) -> list:
+    """The pending review queue, normalised.
+
+    glossary_verify writes bare strings; this module writes objects. Both load, so the
+    queue that has been accumulating unread since the verifier shipped is reviewable too.
+
+    Normalisation FILLS the fixed key set; it does not restrict the entry to it. Producers
+    attach the evidence they escalated on -- mine_glossary's possessive_floor_crossing
+    carries `bare`/`possessive`, this module's entries carry `source`/`settled_target`/
+    `scope` -- and a queue whose entries arrive stripped of the reason they escalated
+    cannot be reviewed, which is the whole point of escalating."""
+    out = []
+    for term, meta in sorted((gloss.get("flagged") or {}).items()):
+        if isinstance(meta, str):
+            meta = {"reason": meta}
+        item = {
+            "term": term,
+            "reason": meta.get("reason", ""),
+            "canonical": meta.get("canonical", ""),
+            "variant_count": meta.get("variant_count", 0),
+            "canonical_count": meta.get("canonical_count", 0),
+            "bound": meta.get("bound", 0.0),
+            "context": meta.get("context", []),
+        }
+        for k, v in meta.items():
+            if k not in item:
+                item[k] = v
+        out.append(item)
+    return out
+
+
+# The order a reviewer should meet flagged entries in: the ones that carry a decision first, most actionable first. Reasons not
+# listed (acquire's own: share-too-close, no-wiki-match, ...) come after these, still before the collapsed no-matches.
+REVIEW_PRIORITY = (
+    "respelling-needs-review",
+    "common-word",
+    "not-in-arc-pages",
+    "expansion-guarded",
+    "low-confidence",
+    "possessive_floor_crossing",
+)
+
+
+def review_groups(gloss: dict) -> tuple[list, list]:
+    """(decisions, no_matches): review_items split for a human. `no-match` entries have no candidate to accept or reject, so
+    they are returned apart (and the CLI collapses them); everything else is ordered by REVIEW_PRIORITY, then reason, then
+    term."""
+    items = review_items(gloss)
+    no_match = [i for i in items if i["reason"] == "no-match" and not i["canonical"]]
+    rank = {r: n for n, r in enumerate(REVIEW_PRIORITY)}
+    decisions = sorted(
+        (i for i in items if not (i["reason"] == "no-match" and not i["canonical"])),
+        key=lambda i: (rank.get(i["reason"], len(REVIEW_PRIORITY)), i["reason"], i["term"]),
+    )
+    return decisions, no_match
+
+
+# Flags that glossary_verify raises on an EXPANSION it would otherwise have written: accepting one in review writes it.
+WRITE_BLOCKED_REASONS = frozenset({"common-word", "not-in-arc-pages", "respelling-needs-review", "expansion-guarded"})
+
+
+def accept_effect(term: str, meta) -> str:
+    """What a human 'y' on this flag does: 'hard_fix' (every ``term`` in the show is rewritten to the canonical), 'additive' (the
+    canonical is added as a name or phrase; the term stays), 'refused' (an unsafe canonical, kept flagged) or 'none' (no
+    canonical).
+    ONE place, so record_decision and the review prompt cannot disagree about it.
+
+    A respelling-needs-review flag whose canonical has the same number of tokens (Usop -> Usopp) is a spelling fix, but only for a
+    term that is NOT an ordinary English word by the same check the common-word guard uses: 'Burn' -> 'Coburn' also lands here (a
+    substring match flagged before the common-word guard looks) and a hard fix would rewrite every "burn" in the show. Real short
+    names (Kid, Law, Gin) are not in the word list as lowercase entries, so a letter-count rule is not used."""
+    meta = {"reason": meta} if isinstance(meta, str) else (meta or {})
+    canon = meta.get("canonical", "")
+    if not canon:
+        return "none"
+    normal = normalize_title(canon) == canon
+    expansion = is_expansion(term, canon)
+    respelling = meta.get("reason") == "respelling-needs-review" and len(canon.split()) == len(term.split())
+    if normal and (not expansion or (respelling and not glossary.is_ordinary_word(term))):
+        return "hard_fix"
+    if meta.get("reason") in WRITE_BLOCKED_REASONS and expansion:
+        return "additive"
+    return "refused"
+
+
+def _human_record(canon: str, meta: dict) -> dict:
+    return {
+        "canonical": canon,
+        "count": meta.get("variant_count", 0),
+        "canonical_count": meta.get("canonical_count", 0),
+        "score": meta.get("score", 0.0),
+        "bound": meta.get("bound", 0.0),
+        "reason": "human-approved",
+        "run": "review",
+    }
+
+
+def record_decision(gloss: dict, term: str, accept: bool) -> dict:
+    """Apply one human decision and drop the term from the queue for good, in exactly one state.
+
+    accept and reject are mutually exclusive: each clears whatever the other branch -- or a
+    stale prior decision from an earlier run -- may have left behind, so a term is never both
+    known and hard-fixed at once. A CURATED fix (see _is_curated) survives a reject untouched and the
+    term is NOT marked known (the rejection is remembered as a protected `acquired` record instead);
+    a yes on a flag for a curated term replaces the curated value, as a human decision (run == "review").
+    Keys of `flagged` match case-insensitively.
+
+    C1 defence in depth: this cannot see `titles` (the normalised title set), so it
+    cannot repeat R1's membership check. It CAN repeat the other two structural checks --
+    not an expansion, and the canonical is already in normalised form -- and does, before
+    ever writing to hard_fixes. A canonical failing either is free-form model/human-typo
+    text, not a wiki spelling, and must not become a hard_fix even on a human 'y'."""
+    g = _norm(json.loads(json.dumps(gloss)))
+    fk = _key(g["flagged"], term)
+    if fk is None:
+        return g  # nothing is awaiting a decision: a stale answer must not touch hard_fixes or known
+    term = _key(g["hard_fixes"], term) or fk  # one spelling in the file: the stored key's, not the typed one
+    meta = g["flagged"][fk]
+    if isinstance(meta, str):
+        meta = {"reason": meta}
+    meta = meta or {}
+    canon = meta.get("canonical", "")
+    effect = accept_effect(term, meta) if accept else "none"
+    # A respelling is not only what is_expansion refuses: the whole-word guard flags 'Usop' -> 'Usopp' (a substring match, so an
+    # "expansion" to is_expansion) as respelling-needs-review. Same number of tokens, different letters: a human's yes on it is a
+    # spelling fix and must reach hard_fixes, or the runtime leaves 'Usop' exactly as spoken. A longer canonical stays additive,
+    # and so does an ordinary English word (see accept_effect).
+    if effect == "additive" and meta.get("reason") == "respelling-needs-review" and len(canon.split()) == len(term.split()):
+        log(f"kept {term!r} -> {canon!r} additive: {term!r} is an ordinary English word (a hard fix would rewrite all of them)")
+    curated = _is_curated(g, term)
+    if effect == "hard_fix" and curated and g["hard_fixes"][_key(g["hard_fixes"], term)] != canon:
+        # A person has seen term and canonical and pressed y: their yes overrides the curated value.
+        _drop(g["hard_fixes"], term)
+        _drop(g["acquired"], term)
+        g["hard_fixes"][term] = canon
+        g["acquired"][term] = _human_record(canon, meta)
+        g["known"] = sorted(_ldrop(g["known"], term))
+        _drop(g.get("flagged", {}), term)
+    elif effect == "hard_fix" and curated:  # same canonical: already what the person wants; remember they said so
+        _settle_curated(g, term, "human-confirmed-curated")
+        _drop(g["flagged"], term)
+    elif effect == "hard_fix":
+        _drop(g["hard_fixes"], term)
+        _drop(g["acquired"], term)
+        g["hard_fixes"][term] = canon
+        g["acquired"][term] = _human_record(canon, meta)
+        g["known"] = sorted(_ldrop(g["known"], term))
+        _drop(g.get("flagged", {}), term)
+    elif effect == "additive":
+        # verify's apply_results would have WRITTEN this expansion; a guard flagged it instead (the common-word guard, the
+        # arc gate, the whole-word guard). A human 'y' puts it where apply_results puts a write -- additive, the term stays.
+        dest = glossary_verify._shape_list(g.setdefault("names", []), g.setdefault("phrases", []), canon)
+        if canon not in dest:
+            dest.append(canon)
+        g["acquired"][term] = {
+            "canonical": canon,
+            "count": meta.get("variant_count", 0),
+            "canonical_count": meta.get("canonical_count", 0),
+            "score": meta.get("score", 0.0),
+            "bound": meta.get("bound", 0.0),
+            "reason": "human-approved",
+            "run": "review",
+        }
+        g["known"] = sorted(_ldrop(g["known"], term))
+        _drop(g.get("flagged", {}), term)
+    elif accept and canon:
+        _drop(g["flagged"], term)
+        g["flagged"][term] = {**meta, "reason": "unsafe-canonical-rejected"}
+    elif curated:
+        # A person owns the fix: keep it and do not also call the term known. Record the rejection as a
+        # protected (run == "review") acquired entry holding the CURATED value, so `_settled` skips the term
+        # and the next sweep does not re-flag the same conflict; revert() and acquire leave it alone.
+        _drop(g["flagged"], term)
+        _settle_curated(g, term)
+    else:
+        g["known"] = sorted(g["known"] if any(str(k).lower() == term.lower() for k in g["known"]) else [*g["known"], term])
+        _drop(g.get("hard_fixes", {}), term)
+        _drop(g.get("acquired", {}), term)
+        _drop(g.get("flagged", {}), term)
+    for k in ("flagged", "known", "hard_fixes", "acquired"):
+        if not g.get(k):
+            g.pop(k, None)
+    return g
+
+
+def _write_json(path: str, obj) -> None:
+    """Atomic, UTF-8-safe glossary write: tmp file + os.replace, handle always closed.
+
+    C3: `open(path, 'w')` truncates the file immediately and, with ensure_ascii=False over
+    Japanese names, can raise mid-write under a locale-derived encoding -- either way the
+    curated glossary is gone. The tmp+replace dance means a failed write leaves the
+    original untouched; explicit encoding='utf-8' removes the locale dependency."""
+    def render(f):
+        json.dump(obj, f, indent=2, ensure_ascii=False)
+        f.write("\n")  # POSIX line: prettier flags a glossary without it
+
+    # MODE_KEEP: a replace must not silently change who can read/write the glossary.
+    atomic_write(path, render, mode=MODE_KEEP)
+
+
+def _format_episode_page(pattern: str, **kw) -> str | None:
+    """pattern.format(**kw), or None on a malformed hand-edited pattern -- must never
+    crash a sweep."""
+    try:
+        return pattern.format(**kw)
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
+def episode_admission_titles(
+    video: str, gloss: dict, wiki_api: str, show: str, source_episodes_fn=None
+) -> tuple[set[str] | None, str, dict]:
+    """The per-episode wiki title set [S-7], or None ("unscoped") when neither
+    episode_page_pattern field is declared -- today's behaviour, unchanged. Tries
+    episode_page_pattern_absolute (via source_episodes() + episode_page_titles) first,
+    then episode_page_pattern_relative (via the episode's own SxxExx) when absolute
+    yields nothing; falls back to the franchise-wide allpages set -- logged via
+    `method`, never silent -- when neither resolves, when the episode has no SxxExx at
+    all, or when neither pattern field is declared. `detail` carries nfo_present/
+    nfo_parsed/partial_pages for the caller's report."""
+    source_episodes_fn = source_episodes_fn or glossary.source_episodes
+    detail = {"nfo_present": False, "nfo_parsed": False, "partial_pages": []}
+    pat_abs = gloss.get("episode_page_pattern_absolute")
+    pat_rel = gloss.get("episode_page_pattern_relative")
+    if not pat_abs and not pat_rel:
+        return None, "unscoped", detail
+    ek = ordering.episode_key(video)
+    if pat_abs:
+        nfo_path = os.path.splitext(video)[0] + ".nfo"
+        detail["nfo_present"] = os.path.exists(nfo_path)
+        numbers = source_episodes_fn(nfo_path) if detail["nfo_present"] else []
+        detail["nfo_parsed"] = bool(numbers)
+        if numbers:
+            pages = [p for p in (_format_episode_page(pat_abs, n=n) for n in numbers) if p]
+            union, _resolved, failed = glossary_verify.episode_page_titles(wiki_api, show, pages)
+            if union:
+                detail["partial_pages"] = failed
+                return union, "absolute", detail
+    if pat_rel and ek:
+        s, e = ordering.season_ep(video)
+        page = _format_episode_page(pat_rel, s=s, e=e)
+        if page:
+            union, _resolved, _failed = glossary_verify.episode_page_titles(wiki_api, show, [page])
+            if union:
+                return union, "relative", detail
+    if not ek:
+        return set(glossary_verify.fetch_titles(wiki_api, show)), "no-episode-tag", detail
+    return set(glossary_verify.fetch_titles(wiki_api, show)), "fallback-allpages", detail
+
+
+def acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str | None = None) -> dict:
+    """Harvest -> score -> gate -> (optionally) write. Returns a report; never raises.
+
+    Resilient by the same contract as glossary_verify.verify(): any wiki, LLM or IO failure
+    leaves the glossary untouched and is reported, not raised. On a hosted backend the run opens by saying which fields go
+    to which host (the transcript lines among them); on the decision backend it ends with one summary line and the report
+    gains `decision` (calls / ok / failures / fallbacks / pending)."""
+    from dubtitlerr.glossary import glossary_lock
+
+    if not apply:  # a dry run writes no glossary (only the acquire cache): nothing to lose, nothing to lock
+        return _acquire_run(gloss_path, show_dir, apply, override)
+    with glossary_lock.locked(gloss_path, "acquire") as ok:
+        if not ok:
+            return {"note": "glossary busy: acquire skipped"}
+        return _acquire_run(gloss_path, show_dir, apply, override)
+
+
+def _acquire_run(gloss_path: str, show_dir: str, apply: bool, override: str | None) -> dict:
+    backend = glossary_verify.acquire_backend()
+    usable = not glossary_verify.acquire_problem()
+    if usable:
+        glossary_verify.begin_run("acquire", backend)
+        if glossary_verify.VERIFY_BACKEND in ("openai", "decision") or os.environ.get("ACQUIRE_BACKEND"):
+            log(f"glossary acquire: backend {backend}")  # names the split from verify; a plain local run stays silent
+    rep = _acquire(gloss_path, show_dir, apply, override)
+    if not usable:
+        return rep
+    return {**glossary_verify.end_run(rep, backend), "backend": backend}
+
+
+def _acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str | None = None) -> dict:
+    try:
+        gloss = json.load(open(gloss_path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {"note": f"load-failed: {e}"}
+    show = gloss.get("show") or os.path.basename(gloss_path)[:-5]
+    problem = glossary_verify.acquire_problem()
+    if problem:
+        log(f"glossary acquire refused: {problem}")
+        return {"show": show, "note": f"refused: {problem}"}
+    # Completed adjudications (tier C pairs, tier B picks) are journaled as they finish, so a kill loses only the call in flight;
+    # ACQUIRE_NO_CACHE=1 turns this off with the rest of the memo.
+    journal = open_journal(gloss_path)
+    # Harvest-first: nothing to score means no reason to spend a wiki round-trip.
+    cands, mid, scope = harvest_candidates(show_dir)
+    counts = {t: c["occurrence_count"] for t, c in cands.items() if c["occurrence_count"]}
+    files = len(scope)
+    if not counts:
+        return {"show": show, "note": "nothing harvested", "files": files}
+    api = glossary_verify.resolve_wiki(show, override or gloss.get("wiki"))
+    if not api:
+        return {"show": show, "note": "wiki unresolved", "files": files}
+    try:
+        titles = glossary_verify.fetch_titles(api, show)
+    except Exception as e:
+        return {"show": show, "wiki": api, "note": f"titles-failed: {e}", "files": files}
+    if not titles:
+        return {"show": show, "wiki": api, "note": "no titles fetched", "files": files}
+    norm_titles = {normalize_title(t) for t in titles if normalize_title(t)}
+    # C2: skip anything a human or an earlier sweep already settled, so an unattended
+    # rerun can never re-propose (and re-apply) a term someone already rejected.
+    settled = _settled(gloss)
+    # I6/perf: the token x title join is the module's dominant cost -- resolve every
+    # harvested token against the wiki exactly once and hand the same result to propose()
+    # and unmatched(), instead of each independently re-running it (was ~1.5x the work).
+    resolved = _resolve_tokens(counts, titles)
+    # [S-8] Per-episode admission scoping. Inactive (admission_fn=None, resolved_admitted
+    # == resolved) unless the show declares a pattern field -- byte-for-byte today's
+    # behaviour otherwise. When active, admission is scoped PER TOKEN -- the union of
+    # only THAT token's own contributing episodes' title sets, not one union across the
+    # whole run's `scope` -- because harvest_candidates walks the entire show_dir every
+    # sweep, and a flat run-wide union would let one unmapped episode's fallback widen
+    # admission for every other episode's tokens too (found during design, before any
+    # code existed).
+    nfo_present = nfo_parsed = nfo_missing = nfo_parse_failed = 0
+    fallback_episodes: list = []
+    admission_active = bool(gloss.get("episode_page_pattern_absolute") or gloss.get("episode_page_pattern_relative"))
+    stem_admission: dict = {}
+    admission_fn = None
+    resolved_admitted = resolved
+    if admission_active:
+        for done_eps, s in enumerate(scope):
+            # Soft stop between episodes: nothing here is persisted (wiki titles are cached by
+            # fetch_titles), so leave without writing anything.
+            if stop_requested():
+                log(f"stop requested: leaving admission after {done_eps} episodes")
+                return {"show": show, "wiki": api, "note": "stopped", "files": files}
+            video = find_video(s)
+            if not video:
+                continue
+            stem_admission[s] = episode_admission_titles(video, gloss, api, show)
+            _titles_s, method, detail = stem_admission[s]
+            if detail["nfo_present"]:
+                nfo_present += 1
+                if detail["nfo_parsed"]:
+                    nfo_parsed += 1
+                else:
+                    nfo_parse_failed += 1
+            else:
+                nfo_missing += 1
+            if method in ("fallback-allpages", "no-episode-tag"):
+                fallback_episodes.append(s)
+        if nfo_present and not nfo_parsed:
+            log(f"  WARNING {show}: {nfo_present} .nfo file(s) found, 0 parsed -- check the per-episode .nfo naming convention")
+
+        def admission_fn(tok):  # noqa: F811 -- intentional shadow, only reachable when admission_active
+            stems = cands.get(tok, {}).get("contributing_stems", ())
+            methods = {stem_admission[s][1] for s in stems if s in stem_admission}
+            if not stems or not methods:
+                return None, "unscoped"
+            union: set = set()
+            for s in stems:
+                titles_for_s = stem_admission.get(s, (None, "unscoped", {}))[0]
+                if titles_for_s:
+                    union |= titles_for_s
+            tight = methods <= {"absolute", "relative"}
+            fell = methods <= {"fallback-allpages", "no-episode-tag"}
+            return union, ("tight" if tight else ("fallback" if fell else "mixed"))
+
+        resolved_admitted = {}
+        for tok, (canon, score) in resolved.items():
+            union, _m = admission_fn(tok)
+            if union is None or normalize_title(canon) in {normalize_title(t) for t in union}:
+                resolved_admitted[tok] = (canon, score)
+    anchors = anchor_terms(gloss)
+    proposals = propose(
+        counts, mid, titles, settled, resolved=resolved_admitted, candidates=cands, anchors=anchors, admission_fn=admission_fn
+    )
+    close = [p for p in proposals if p.get("reason") == "share-too-close"]
+    if close:
+        # Per-pair escalation cache. escalate()'s LLM call is 71% of this stage's runtime
+        # (measured: 371 calls at ~1.3s each on One Pace), so it is the one thing worth
+        # memoising -- see acquire_cache's module docstring for why the pipeline's FINAL
+        # verdict must not be (a cached verdict used to fold into `settled` and skip the
+        # token everywhere downstream, which suppressed review-queue entries a dry run was
+        # supposed to report). Every proposal still reaches propose()/source_gate() in full.
+        #
+        # ACQUIRE_NO_CACHE=1 forces a full run without editing the file, for the case where
+        # an operator wants to re-derive every adjudication after changing a threshold.
+        cache = {} if os.environ.get("ACQUIRE_NO_CACHE") else acquire_cache.load(gloss_path)
+        toks = sorted({p["variant"] for p in close} | {p["canonical"] for p in close})
+        try:
+            proposals = escalate(proposals, context_lines(show_dir, toks), show, cache=cache, journal=journal)
+        except StopRequested as e:
+            # Keep what was adjudicated (a pair costs ~1.3 s of LLM time), apply nothing.
+            acquire_cache.save(gloss_path, cache)
+            log(str(e))
+            return {"show": show, "wiki": api, "note": "stopped", "files": files}
+        # Never fatal: a cache that cannot be written is a slow next run, not a failed this
+        # one. Not gated on `apply` -- the cache is a memo of LLM answers, not a glossary
+        # mutation, so the dry-run safety convention does not apply to it.
+        acquire_cache.save(gloss_path, cache)
+    # D3: the source-aware apply rule runs LAST, over finished proposals -- after the tier
+    # logic and after escalate(), which can otherwise promote a confident context
+    # adjudication for a brand-new transcript term straight into the glossary.
+    proposals = source_gate(proposals)
+    # I4: attach real transcript evidence to every flagged proposal so the review queue
+    # (and --review's CLI) has something to show a human, instead of an empty context: [].
+    flag_terms = sorted({p["variant"] for p in proposals if p["verdict"] == "flag"})
+    if flag_terms:
+        fctx = context_lines(show_dir, flag_terms)
+        for p in proposals:
+            if p["verdict"] == "flag":
+                p["context"] = fctx.get(p["variant"], [])
+    tier_b = {}
+    for done_terms, term in enumerate(unmatched(counts, mid, titles, resolved=resolved_admitted)):
+        # Soft stop between terms. Tier B is one LLM call per term and nothing it finds is
+        # persisted until the single glossary write below, so leave without writing.
+        if stop_requested():
+            log(f"stop requested: leaving tier-b after {done_terms} terms")
+            return {"show": show, "wiki": api, "note": "stopped", "files": files}
+        try:
+            cands_b = glossary_verify.candidates(term, titles)
+            # acquire may run on a different backend than verify (ACQUIRE_BACKEND, or local under decision verify)
+            adj = glossary_verify.adjudicate_journaled(
+                term, cands_b, show, journal, backend=glossary_verify.acquire_backend()
+            )
+        except Exception as e:
+            log("acquire: adjudicate failed:", term, e)
+            continue
+        if adj is None or adj.get("confidence") != "high" or not adj.get("canonical"):
+            continue  # None: the decision backend could not answer; the term simply gets no tier-B entry this run
+        # C1: tier B's canonical is free-form LLM text -- re-run R1 (wiki membership) and
+        # R2 (expansion) on it exactly like tier A, or it becomes the module's only path
+        # for un-vetted model text to reach hard_fixes. A failing canonical is recorded
+        # empty: still reviewable, but nothing left for a human to accept-and-auto-apply.
+        canon = normalize_title(adj["canonical"])
+        tier_b[term] = canon if (canon in norm_titles and not is_expansion(term, canon)) else ""
+    applied = [p for p in proposals if p["verdict"] == "apply"]
+    known = [p for p in proposals if p["verdict"] == "known"]
+    flag_props = [p for p in proposals if p["verdict"] == "flag"]  # I5: was shadowed below
+    digest = hashlib.sha1(
+        "|".join(f"{p['variant']}>{p['canonical']}" for p in sorted(proposals, key=lambda p: p["variant"])).encode()
+    ).hexdigest()[:8]
+    run_id = f"{show}:{len(titles)}:{files}:{digest}"
+    if apply and (proposals or tier_b):
+        # [S-9]: one stem -> SxxExx map, built once, reused by apply_proposals' episode
+        # tagging -- same pattern as `stem_admission` above (resolve once, thread through).
+        episode_keys_by_stem = {}
+        for s in scope:
+            v = find_video(s)
+            if v:
+                k = ordering.episode_key(v)
+                if k:
+                    episode_keys_by_stem[s] = k
+        try:
+            out = apply_proposals(gloss, proposals, run_id, files, episode_keys_by_stem)
+            if tier_b:
+                tctx = context_lines(show_dir, list(tier_b))
+                flagged = out.setdefault("flagged", {})
+                for term, canon in tier_b.items():
+                    flagged[term] = {
+                        "reason": "no-wiki-match",
+                        "canonical": canon,
+                        "variant_count": counts.get(term, 0),
+                        "canonical_count": 0,
+                        "bound": 0.0,
+                        "context": tctx.get(term, []),
+                        **_provenance(cands.get(term, {}), files),
+                    }
+            _write_json(gloss_path, out)
+        except Exception as e:
+            try:
+                os.remove(gloss_path + ".tmp")
+            except OSError:
+                pass
+            return {"show": show, "wiki": api, "note": f"write-failed: {e}", "files": files}
+    if journal is not None and apply:
+        journal.compact()  # a clean apply: latest line per key, nothing older than the journal's age limit
+    return {
+        "show": show,
+        "wiki": api,
+        "files": files,
+        "titles": len(titles),
+        "proposed": len(proposals),
+        "applied": len(applied),
+        "known": len(known),
+        "flagged": len(flag_props),
+        "dry_run": not apply,
+        "scope": len(scope),
+        "scope_episodes": [os.path.basename(s) for s in scope],
+        "proposals": proposals,
+        "tier_b": tier_b,
+        "nfo_present": nfo_present,
+        "nfo_parsed": nfo_parsed,
+        "nfo_missing": nfo_missing,
+        "nfo_parse_failed": nfo_parse_failed,
+        "fallback_episodes": [os.path.basename(s) for s in fallback_episodes],
+    }
+
+
+def prune_no_match(gloss: dict) -> tuple[dict, int]:
+    """(gloss without its candidate-less 'no-match' flags, how many were removed). Only flags whose term is already in `verified`
+    (so verify will not re-adjudicate it), whose reason is no-match and which name no canonical; a no-match that carries a
+    candidate is a decision and stays. Pure."""
+    g = json.loads(json.dumps(gloss))
+    verified = set(g.get("verified", []))
+    flagged = g.get("flagged") or {}
+    drop = []
+    for term, meta in flagged.items():
+        reason = meta if isinstance(meta, str) else (meta or {}).get("reason", "")
+        canon = "" if isinstance(meta, str) else (meta or {}).get("canonical", "")
+        if reason == "no-match" and not canon and term in verified:
+            drop.append(term)
+    for term in drop:
+        del flagged[term]
+    if not flagged:
+        g.pop("flagged", None)
+    return g, len(drop)
+
+
+def _pending_path(gloss_path: str) -> str:
+    return gloss_path + ".review-pending"
+
+
+def _valid_answer(row) -> bool:
+    """One saved answer: [term, accept, canonical, reason] with strings and a real JSON boolean (an older file may hold [term,
+    accept] or [term, accept, canonical]). Nothing is coerced: "false" is not a boolean and bool("false") is True."""
+    return (
+        isinstance(row, list)
+        and 2 <= len(row) <= 4
+        and isinstance(row[0], str)
+        and isinstance(row[1], bool)
+        and all(isinstance(x, str) for x in row[2:])
+    )
+
+
+def _read_pending(gloss_path: str, quarantine: bool = True) -> list:
+    """The answers a busy glossary kept from an earlier --review: [[term, accept, canonical, reason], ...] (an older file may
+    hold [term, accept] only). A file that cannot be read, or has a row that is not exactly that shape, is set aside as '.bad'
+    (never trusted, never deleted, never coerced) and counts as empty. ``quarantine=False`` (a read-only run) reports it the same
+    way but leaves the file where it is."""
+    path = _pending_path(gloss_path)
+    if not os.path.exists(path):
+        return []
+    try:
+        doc = json.load(open(path, encoding="utf-8"))
+        rows = doc["answers"]
+        if not isinstance(rows, list) or not all(_valid_answer(r) for r in rows):
+            raise ValueError("malformed answer row")
+        return [list(r) for r in rows]
+    except (OSError, ValueError, KeyError, TypeError):
+        if quarantine:
+            aside = path + ".bad"
+            n = 0
+            while os.path.exists(aside):  # never overwrite an earlier set-aside file: .bad, .bad.1, .bad.2, ...
+                n += 1
+                aside = f"{path}.bad.{n}"
+            log(f"the saved review answers in {path} are unreadable or malformed; set aside as {aside}")
+            with contextlib.suppress(OSError):
+                os.replace(path, aside)
+        else:
+            log(f"the saved review answers in {path} are unreadable or malformed; left in place (read-only run)")
+        return []
+
+
+@contextlib.contextmanager
+def _pending_lock(gloss_path: str):
+    """A small blocking flock on '<glossary>.json.review-pending.lock' around every read-modify-write of the pending file, so a
+    concurrent reviewer's appended answer is never dropped by another's apply-then-remove. Held briefly and never while waiting
+    for the glossary lock; the order is always glossary lock, then this one. Where it cannot be made, the caller proceeds."""
+    try:
+        import fcntl
+
+        fd = os.open(_pending_path(gloss_path) + ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+    except (ImportError, OSError):
+        yield
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # closing the descriptor releases the lock
+
+
+def _append_pending(gloss_path: str, answers: list) -> None:
+    """Add ``answers`` to '<glossary>.json.review-pending' (atomic, one JSON document), keeping what is already there."""
+    with _pending_lock(gloss_path):
+        _write_json(_pending_path(gloss_path), {"answers": _read_pending(gloss_path) + [list(a) for a in answers]})
+
+
+def _commit_answers(gloss_path: str, answers: list, stage: str = "review") -> bool:
+    """Apply a human's answers (after any saved by an earlier busy run) to the FRESH glossary, under the lock, waiting up to
+    GLOSSARY_LOCK_WAIT_INTERACTIVE for it. True when written.
+
+    The answers go to '<glossary>.json.review-pending' BEFORE the wait and leave it only after the glossary is written, so a kill
+    while waiting (or between the write and the delete) loses nothing: the next --review replays them. A replay is safe because
+    an answer is applied only to a term that is still flagged in the fresh glossary WITH THE SAME CANONICAL the human saw; one
+    decided meanwhile, re-proposed differently, or saved in the older two-element format is skipped and logged, so a stale answer
+    can never undo a decision or approve a proposal the human never saw."""
+    from dubtitlerr.glossary import glossary_lock
+
+    if answers:
+        _append_pending(gloss_path, answers)
+    with glossary_lock.locked(gloss_path, stage, wait=glossary_lock.interactive_wait_seconds(), announce=True) as ok:
+        if not ok:
+            if answers:
+                log(
+                    f"glossary busy: your answers were saved to {_pending_path(gloss_path)} and the next --review will apply them"
+                )
+            return False
+        with _pending_lock(gloss_path):
+            todo = _read_pending(gloss_path)
+            if not todo:
+                return True
+            g = json.load(open(gloss_path, encoding="utf-8"))
+            for term, accept, *seen in todo:
+                flag = (g.get("flagged") or {}).get(term)
+                if flag is None:
+                    log(f"skipped the saved answer for {term!r}: it is no longer flagged (decided meanwhile)")
+                    continue
+                if not seen:
+                    log(f"skipped the saved answer for {term!r}: it is in an older format and cannot be checked against the flag")
+                    continue
+                now = "" if isinstance(flag, str) else (flag or {}).get("canonical", "")
+                if now != seen[0]:
+                    log(
+                        f"skipped the saved answer for {term!r}: the proposal changed since you answered ({seen[0]!r} -> {now!r})"
+                    )
+                    continue
+                g = record_decision(g, term, accept=accept)
+            _write_json(gloss_path, g)
+            with contextlib.suppress(OSError):
+                os.remove(_pending_path(gloss_path))
+        return True
+
+
+def _prune_cli(a) -> None:
+    from dubtitlerr.glossary import glossary_lock
+
+    g = json.load(open(a.glossary, encoding="utf-8"))
+    pruned, n = prune_no_match(g)
+    if not a.apply:
+        log(json.dumps({"pruned": n, "written": False, "note": "dry run: add --apply to write"}))
+        return
+    with glossary_lock.locked(a.glossary, "prune", wait=glossary_lock.interactive_wait_seconds(), announce=True) as ok:
+        if not ok:
+            log(json.dumps({"pruned": 0, "written": False}))
+            return
+        pruned, n = prune_no_match(json.load(open(a.glossary, encoding="utf-8")))  # fresh, under the lock
+        _write_json(a.glossary, pruned)
+    log(json.dumps({"pruned": n, "written": True}))
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Acquire proper nouns from a show's own output + its wiki.",
+        epilog=BUST_HELP,
+    )
+    ap.add_argument("glossary", help="path to <show>.json")
+    ap.add_argument("show_dir", help="the show's media directory")
+    ap.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
+    ap.add_argument("--wiki", default=None, help="override the wiki API base")
+    ap.add_argument("--revert", action="store_true", help="undo previously acquired fixes and exit")
+    ap.add_argument("--review", action="store_true", help="walk the pending queue interactively")
+    ap.add_argument(
+        "--all", action="store_true", help="with --review: also walk the 'no-match' entries (collapsed into one line otherwise)"
+    )
+    ap.add_argument(
+        "--prune-no-match",
+        action="store_true",
+        help="with --review: remove the stored 'no-match' flags that carry no candidate (their terms are already verified); "
+        "prints the count, writes with --apply",
+    )
+    a = ap.parse_args()
+    if a.review and a.prune_no_match:
+        _prune_cli(a)
+        return
+    if a.review:
+        n_saved = len(_read_pending(a.glossary, quarantine=a.apply))
+        if n_saved and a.apply:
+            log(f"{n_saved} answers from an earlier --review were saved while the glossary was busy: applying them first")
+            _commit_answers(a.glossary, [])
+        elif n_saved:
+            # Read-only: replaying them would write the glossary and delete the file while reporting written:false.
+            plural = "s" if n_saved != 1 else ""
+            log(f"{n_saved} saved answer{plural} from an earlier --review kept, not applied: add --apply to apply them")
+        g = json.load(open(a.glossary, encoding="utf-8"))
+        answers = []  # (term, accept) in order; applied to the FRESH file at the end, not to this stale copy
+        decisions, no_match = review_groups(g)
+        if no_match and not a.all:
+            log(
+                f"{len(no_match)} no-match terms have no candidate to accept or reject and are not listed here; "
+                "list them with --review --all"
+            )
+        for item in decisions + (no_match if a.all else []):
+            log(f"\n{item['term']}  ->  {item['canonical'] or '(no canonical)'}   [{item['reason']}]")
+            log(f"  seen {item['variant_count']}x vs canonical {item['canonical_count']}x, bound {item['bound']:.3f}")
+            for ln in item["context"]:
+                log(f"    | {ln}")
+            if item["canonical"]:
+                effect = accept_effect(item["term"], item)
+                if effect == "hard_fix":
+                    log(f"  y rewrites every \"{item['term']}\" in this show")
+                elif effect == "additive":
+                    log("  y adds it as a name only")
+                ans = input("  accept this fix? [y/N/q] ").strip().lower()
+                if ans == "q":
+                    break
+                g = record_decision(g, item["term"], accept=(ans == "y"))
+                answers.append((item["term"], ans == "y", item["canonical"], item["reason"]))
+            else:
+                ans = input("  no fix proposed - mark this spelling correct as-is? [y/N/q] ").strip().lower()
+                if ans == "q":
+                    break
+                if ans == "y":
+                    g = record_decision(g, item["term"], accept=False)
+                    answers.append((item["term"], False, "", item["reason"]))
+                # 'n' (or anything else): leave it pending in flagged, untouched
+        summary = {"reviewed": True, "written": False}
+        if a.apply:
+            # The walk can take minutes: another stage may have rewritten the glossary meanwhile. The decisions are applied to the
+            # file as it is NOW, under the lock; a busy glossary is waited for, and the answers are kept if it stays busy.
+            summary["written"] = _commit_answers(a.glossary, answers)
+            with contextlib.suppress(OSError, ValueError):
+                g = json.load(open(a.glossary, encoding="utf-8"))  # report what is ON DISK
+            if saved := _read_pending(a.glossary):
+                summary["saved"] = len(saved)
+        elif n_saved:
+            summary["saved"] = n_saved  # a dry run applied none of them and deleted none
+        summary["pending"] = len(g.get("flagged", {}))
+        log(json.dumps(summary))
+        return
+    if a.revert:
+        try:
+            g = json.load(open(a.glossary, encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            log(json.dumps({"note": f"load-failed: {e}"}))
+            return
+        out = revert(g)
+        written = False
+        if a.apply:
+            from dubtitlerr.glossary import glossary_lock
+
+            with glossary_lock.locked(a.glossary, "revert", wait=glossary_lock.interactive_wait_seconds(), announce=True) as ok:
+                if ok:
+                    g = json.load(open(a.glossary, encoding="utf-8"))  # fresh, under the lock
+                    out = revert(g)
+                    _write_json(a.glossary, out)
+                    written = True
+        log(json.dumps({"reverted": len(g.get("acquired", {})), "written": written}))
+        return
+    rep = acquire(a.glossary, a.show_dir, apply=a.apply, override=a.wiki)
+    for p in rep.get("proposals", []):
+        log(
+            f"{p['verdict']:5} {p['variant']:18} -> {p['canonical']:22} "
+            f"seen {p['variant_count']:4}/{p['canonical_count']:<4} sim {p['score']:.3f} "
+            f"bound {p.get('bound', 0.0):.3f}  {p['reason']}"
+        )
+    log(json.dumps({k: v for k, v in rep.items() if k != "proposals"}, ensure_ascii=False))
+    glossary_verify.refusal_exit(rep)
+
+
+if __name__ == "__main__":
+    main()

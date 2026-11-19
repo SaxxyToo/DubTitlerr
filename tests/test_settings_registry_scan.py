@@ -8,7 +8,7 @@ import ast
 import os
 import re
 
-import settings_registry as reg
+from dubtitlerr.settings import settings_registry as reg
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NAME = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")

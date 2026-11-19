@@ -1,0 +1,1013 @@
+#!/usr/bin/env python3
+"""Shared stdlib-only helpers for the DubTitlerr pipeline stages (generate.py, mux.py,
+repair.py, dub_signs_merge.py, mine_glossary.py, recreate_srt.py).
+
+Single source of truth for the helpers that used to be duplicated per-module.
+Stdlib + pysubs2, plus atomic_file (the
+dependency-free atomic-write leaf, re-exported below): no imports back from the rest of
+the pipeline, so any stage can import this without dragging the pipeline in and without
+risking a circular import.
+"""
+
+import http.client
+import json
+import os
+import re
+import subprocess
+import tempfile
+import time
+import urllib.parse
+import uuid
+
+import pysubs2
+
+# The atomic-write primitive and the file-mode constants live in atomic_file.py, which has no
+# third-party imports. The shell loops drive a few CLIs (review_requests.py, watch_queue.py,
+# the settings store) from a minimal app directory that has no pysubs2, so what they need at
+# import time cannot come from this module. Re-exported here because common is the shared
+# helper surface the rest of the pipeline imports.
+from dubtitlerr.core.atomic_file import MODE_KEEP, SIDECAR_MODE, atomic_write, atomic_write_bytes  # noqa: F401
+
+MEDIA_UID = int(os.environ.get("MEDIA_UID", "1000"))
+MEDIA_GID = int(os.environ.get("MEDIA_GID", "100"))
+
+# Sidecars must be GROUP-WRITABLE. 2026-08-21: every sidecar shipped 0644, so only the
+# creating uid could ever overwrite one. That is invisible while the container runs as root
+# (root bypasses the check) and breaks the moment any other member of the media group writes
+# -- the 3200g node reaches the library over CIFS as r520smb (uid 1001, gid 100 users), hit
+# "Permission denied" re-writing an existing .dubtitles.done, and re-muxed the same episode
+# on every sweep because the stamp could never land. 8,701 sidecars library-wide were 0644.
+#
+# umask 002 covers the plain open(path, "w") sites (write_stamp, the .fail marker,
+# crash/lastrun json, repair's srt + summary, mux.log). It is set at import because every
+# pipeline module imports common, so there is exactly one place to get this right. Sites that
+# chmod EXPLICITLY must use SIDECAR_MODE instead (see atomic_file.py, which owns that constant
+# and the atomic write primitive; qc.py is deliberately standalone and hardcodes the same
+# value, with test_qc_mode_matches_common pinning the two together).
+os.umask(0o002)
+
+HEARTBEAT_PATH = os.environ.get("HEARTBEAT_PATH", "/config/heartbeat.json")
+
+
+def heartbeat(**fields):
+    """Write a heartbeat JSON document atomically to HEARTBEAT_PATH, merging with existing fields."""
+    try:
+        with open(HEARTBEAT_PATH) as existing:
+            data = json.load(existing)
+    except (OSError, ValueError):
+        data = {}
+    # Merge, so a later writer's fields do not drop an earlier writer's
+    data.update(fields)
+    atomic_write(HEARTBEAT_PATH, lambda f: json.dump(data, f), mode=0o600)
+
+
+def read_heartbeat():
+    """Read the heartbeat JSON document, returning a dict or None if missing/invalid."""
+    try:
+        with open(HEARTBEAT_PATH) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+# OUTPUT_ROOT: write sidecars/output files to this branch path instead of next to the
+# source media, so writes land on a disk with space (mergerfs unifies branches, so the
+# file still shows next to the source in the pool view). READS still use MEDIA_ROOT.
+# Empty OUTPUT_ROOT = write in place.
+MEDIA_ROOT = os.environ.get("MEDIA_ROOT", "/media")
+OUTPUT_ROOT = os.environ.get("OUTPUT_ROOT", "")
+
+VIDEO_EXTS = (".mkv", ".mp4", ".m4v")
+
+# SUB_LANGS: accepted embedded-sub languages for dialogue_intervals()'s default (all-stream)
+# path -- same env var/default repair.py has always read (T1 hoist: single source of truth).
+SUB_LANGS = set(os.environ.get("SUB_LANGS", "eng,en,und,").split(","))
+
+# Dialogue-vs-sign/karaoke predicate (hoisted verbatim from repair.py's pre-refactor
+# dialogue_intervals -- do not tweak without checking dub_signs_merge.py's classifier too,
+# which uses a related but NOT identical KEEP_STYLE/DROP_STYLE pair for its own purpose).
+KARAOKE = re.compile(r"\\[kK][fo]?\d")
+POSITIONED = re.compile(r"\\(?:pos|move)\(|\\an[13456789]")
+DROP_STYLE = re.compile(r"warning", re.I)  # junk, never a dialogue reference
+DIALOGUE_EXCLUDE_STYLE = re.compile(r"karaoke|translat|sign|song|caption|title|credit|note|lyric|romaji|kashi|insert", re.I)
+# An opening or ending, recognised by an OP/ED TOKEN in the style name -- the one definition the
+# signs merge (song spans, dedup) and is_dialogue_event share. Releases name these every way:
+# "OP", "ED", "OP1", "OP-E", "ED_ENG", "OP_ROM3", "EDTL", "Op TL", "op trans", "OP - English",
+# "Death Note OP", "Opening-Romaji-L1", "ED1-Japanese". The old prefix pattern ("Opening-",
+# "ED<N>-") recognised one release of 27 measured (2026-11-18). A token is OP/ED/Opening/Ending,
+# optionally numbered and optionally fused with a language/role suffix (EDTL, OP_ENG1); not "Open",
+# "Editor", "Overlap", and not an "Ending Card" (the end-card illustration, which a next-episode
+# preview is often spoken over).
+SONG_FAMILY_STYLE = re.compile(
+    r"(?:^|[^a-z0-9])(opening|ending|op|ed)(?:\d+|tlt|tl|trans|romaji|rom|eng|jp|kanji|kan)?\d*(?=$|[^a-z0-9])(?![^a-z0-9]+cards?\b)",
+    re.I,
+)
+
+
+def load_extras(path="data/extras.txt"):
+    """Load the EXTRA_DIRS set (Plex "local extras" subfolders + creditless/scene clips --
+    never real episodes, often mismatched junk from the scraper -- pruned from library
+    walks) from the single-source-of-truth data file. Falls back to the pre-consolidation hardcoded set if the
+    file is missing/unreadable, so the pipeline still runs correctly without it (e.g. a
+    dev checkout, or an image built before the data file existed)."""
+    try:
+        with open(path) as f:
+            return {ln.strip().lower() for ln in f if ln.strip() and not ln.startswith("#")}
+    except OSError:
+        return {
+            "behind the scenes",
+            "deleted scenes",
+            "featurettes",
+            "interviews",
+            "scenes",
+            "shorts",
+            "trailers",
+            "other",
+            "extras",
+        }
+
+
+# Plex "local extras" subfolders + creditless/scene clips — never real episodes, often
+# mismatched junk from the scraper. Pruned from library walks.
+EXTRA_DIRS = load_extras()
+
+STAMP_SUFFIX = ".dubtitles.done"
+
+# TRACK_NAME: the mkv subtitle-track name mux.py stamps on our own generated dubtitle.
+# It is self-authored and used nowhere else, so it doubles as the marker that keeps the
+# pipeline from reading its OWN previous output as if it were the human fansub -- every
+# context reader (eng_sub_streams below, mine_glossary.py's selector) excludes it, and
+# mux.keep_sub() drops it so a re-mux replaces rather than duplicates it.
+TRACK_NAME = "Dubtitles"
+
+# The output versions recorded in each .dubtitles.done stamp. A file whose stamp is
+# behind in either tier reads as STALE and is regenerated in place. Bumping either is a
+# deliberate operator action -- the only thing that triggers a global regeneration.
+# History below is the bump manual: every entry says what changed in the OUTPUT and why
+# only a regeneration puts it into the files. Entries v2-v4 predate the tier split and
+# were single-version bumps; read them as transcribe-tier bumps.
+# v2 (2026-07-27): every v1 dubtitle has broken signs. The merge deduplicated events on
+# their PLAINTEXT, which collapsed each stacked typeset composition to its black backing
+# layer and threw away the white top layer, so credits/captions/titles rendered solid
+# black; and it lifted signs from every English track at once, rendering them two or
+# three times over. Both are fixed, and only a regeneration puts the corrected signs into
+# the files.
+# v3 (2026-08-20): three changes that alter the OUTPUT, so only a regeneration puts them
+# into the files. (a) Cards below MIN_DUR are fixed -- 1,542 of them in one 22-episode
+# season -- by merging a runt back into the sentence it was split from, or stealing time
+# forward; 9 overlapping card pairs are repaired at the same time. (b) repair.py rewrites
+# the srt from conf.json, which stores text FLATTENED, and never re-wrapped it: ZERO
+# multi-line cues existed anywhere in the library and 25-32% of cues ran past 42
+# characters. (c) Sentence punctuation is restored before cards are split -- Whisper
+# decodes each segment cold (condition_on_previous_text=False, forced by both segment
+# collapse and VRAM), so 27% of cards arrived with no terminal punctuation and
+# _split_sentences had nothing to split on.
+# v4 (2026-08-21): two output-changing fixes that must be applied universally, plus the
+# observability work that makes a stale rule visible. (a) reflow._text() joined whisper's
+# word tokens with spaces, so every hyphenated word shipped with a space in it -- "Gas -Gas"
+# for Caesar's Devil Fruit, "Gum -gum" for Luffy's attack. Not merely cosmetic: glossary
+# phrase fixes match on \b<escaped>\b, so the mangled form silently failed to correct, and
+# the two bugs compounded into one wrong line. (b) The One Pace glossary gained 9 hard_fixes
+# (Gum-Gum and its mishearings, Gas-Gas, Tashigi, guinea pigs) chosen from a 22-episode scan.
+# The 183 episodes stamped v3 were produced BEFORE both and carry the artefacts, so v3 is not
+# a state worth keeping -- hence a bump rather than a targeted stamp deletion.
+# v5 (2026-08-24): the single version becomes TWO, because one number made a glossary
+# fix cost the same as a decoder change -- a full re-transcribe of the library. See
+# docs/wiki/Design-decisions.md for the decision record.
+# v6 (2026-08-26): repair.py gained the phonetic name guard -- it rejects an LLM repair
+# that substitutes a proper noun found in neither the glossary nor the original
+# (Syrahose -> Shyarros, Hirohoshi -> Hihohi). Text produced before it can carry names
+# the guard would now refuse, so the whole text tier is stale.
+#
+# TRANSCRIBE_VERSION covers audio -> words. Bump it for ANY decoder-affecting change:
+#   the whisper model, WHISPER_BEAM_SIZE, the compute type, whisper's own thresholds,
+#   vad settings, or the initial_prompt (which the glossary feeds -- generate.py:112).
+#   NOTHING DETECTS THESE MECHANICALLY. A change to any of them that does not carry a
+#   bump leaves the library silently stale, and this comment is the only guard.
+# TEXT_VERSION covers everything downstream of the word list: punctuation, reflow,
+#   glossary correction, repair, the merge, the mux.
+#
+# v7 (2026-08-26): the phonetic name guard widens from substitutions to any GAINED name.
+# A fabrication conjured from nothing was invisible to it -- measured on the hotwords spike,
+# where `jester` became `Dester` and neither direction fired.
+#
+# v8 (2026-08-29): two reflow character-welding fixes. `_text` joined every token starting
+# ",N"/".N" onto the previous one with a space that was never in the audio, breaking every
+# thousands separator it saw (4 for 4, measured on SAO E02-E04, fixed in c2be862); and that
+# fix then welded a decimal onto an ordinary WORD -- "It weighs .5 kilos" -> "It weighs.5
+# kilos" -- because it checked the joining token and not the one joined onto (R5,
+# REVIEW-2026-08-29). Text tier only: re-derives from words.json, no GPU.
+#
+# v9 (2026-09-02): the hallucination gate drops a card carrying Japanese script. The dub
+# track is English by construction, so kana/kanji is whisper falling back to the Japanese it
+# heard under a song it could not transcribe -- not a low-confidence English line. Measured
+# across the production library: 1,240 of 395,671 cards (0.31%) in 24 shows, every sampled
+# one an OP/ED lyric, many with GOOD avg_logprob (-0.02 to -0.11) so no confidence threshold
+# would have found them. This is the ONLY tier that reaches releases which caption no song
+# lyrics at all -- the signs-track song-span drop cannot help those, having nothing to
+# derive a span from. Text tier only: re-derives from words.json, no GPU.
+#
+# v10 (2026-09-06): unanchored repair enabled library-wide (REPAIR_UNANCHORED=1 in this
+# host's compose), so repair now rewrites cards carrying no fansub anchor -- every one of
+# which was previously refused and shipped as raw ASR. The gate is CONFIGURATION, not code,
+# and nothing downstream detects a configuration change, so this bump is the only thing that
+# makes the 860 already-stamped episodes re-derive against it. NOT text-tier-only in
+# practice, unlike v8 and v9: only 366 of those stamps carry a words.json to replay from, so
+# the other 494 fall through generate.py's tier split to the transcribe queue and cost GPU
+# (~4 nightly windows). That cost was measured and stated before the bump, and accepted.
+#
+# v11 (2026-09-06): the merged .ass now DECLARES its coordinate space. A signs track with no
+# PlayRes produced a script with none, so renderers fell back to 384x288 while the dialogue
+# style had been sized for an invented 720 -- a PlayResY/288 = 3.75x blow-up. Measured on
+# I Parry Everything S01E01 (two-line card over a third of the frame, fontsize 42 rendering
+# at ~157px); One Pace was never affected because its signs track declares 1440x1080, which
+# is why this survived to here. Shows that already declare a canvas render byte-identically
+# (pinned by test_dubtitle_renders_the_same_size_whatever_canvas_is_declared). Text tier
+# only: re-derives from words.json where one exists, no GPU.
+#
+# Adoption is 4/11, NOT 11/11. The 576 stamps live at v4 were produced by the current
+# decoder, so they are transcribe-fresh and only text-stale: they migrate at
+# watch-gated pace instead of burning ~2 GPU-days to record a bookkeeping change.
+TRANSCRIBE_VERSION = 4
+TEXT_VERSION = 11
+# GRANDFATHER_VERSION: fixed constant, never changes. The version assumed for a stamp
+# written before versioning existed (no "version" key). At introduction it equalled
+# the pipeline version, so that rollout regenerated nothing.
+GRANDFATHER_VERSION = 1
+
+
+def log(*a):
+    print(*a, flush=True)
+
+
+def out_for(p):
+    """Redirect a write path onto OUTPUT_ROOT (if configured) so writes land on a disk
+    with space; creates intermediate directories (safe superset of the non-creating
+    variant — callers that write to an already-existing dir are unaffected)."""
+    if OUTPUT_ROOT and p.startswith(MEDIA_ROOT):
+        q = OUTPUT_ROOT + p[len(MEDIA_ROOT) :]
+        os.makedirs(os.path.dirname(q), exist_ok=True)
+        return q
+    return p
+
+
+def ts_srt(t):
+    """Format a float number-of-seconds as an SRT timestamp (HH:MM:SS,mmm)."""
+    if t < 0:
+        t = 0
+    h = int(t // 3600)
+    m = int((t % 3600) // 60)
+    s = t % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
+
+
+WORDS_SUFFIX = ".dubtitles.words.json"
+WORDS_SCHEMA_VERSION = 2  # schema 2: add decoder identity (model, initial_prompt, compute_type, beam_size)
+
+
+def read_words(stem, rec=None, expect: dict | None = None):
+    """The persisted word list, or None when it cannot be used -- never an exception.
+
+    Every unusable state is COUNTED rather than swallowed, because the failure mode this
+    guards is silent: a sidecar that is never found looks exactly like an episode that
+    simply needs transcribing, and would re-transcribe forever while reporting healthy.
+    Read through out_for() to match write_words -- following one convention on write and
+    the other on read is precisely that silent miss.
+
+    "expect"", when given, is generate.decoder_identity() -- what today's process would
+    use to transcribe. A stored field that IS RECORDED and DIFFERS invalidates the whole
+    doc (words_config_mismatch): replaying it would serve a transcript decoded under
+    different settings. A field the sidecar does not carry at all -- every schema-1
+    file, or "model" written from an unset WHISPER_MODEL env as "" -- is UNKNOWN, not a
+    mismatch (words_config_unknown), and the doc is still returned: the 366 live
+    sidecars predate this check and must keep being served."""
+    path = out_for(stem + WORDS_SUFFIX)
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        if rec:
+            rec.count("words_missing")
+        return None
+    try:
+        version = int(doc.get("transcribe_version"))
+    except (TypeError, ValueError):
+        version = None
+    if version is None or version != TRANSCRIBE_VERSION:
+        # A crash between transcription and stamping leaves a sidecar from the previous
+        # transcribe tier. Serving it would replay an older decoder's transcript.
+        if rec:
+            rec.count("words_version_mismatch")
+        return None
+    if not doc.get("words"):
+        if rec:
+            rec.count("words_missing")
+        return None
+    if expect:
+        mismatched = False
+        unknown = False
+        for field, want in expect.items():
+            got = doc.get(field)
+            if got is None or got == "":
+                unknown = True
+            elif got != want:
+                mismatched = True
+        if unknown and rec:
+            rec.count("words_config_unknown")
+        if mismatched:
+            if rec:
+                rec.count("words_config_mismatch")
+            return None
+    if rec:
+        rec.count("words_reused")
+    return doc
+
+
+_PROCESS_BOOT_ID = uuid.uuid4().hex
+
+
+def boot_id():
+    """Changes on every container start. container_run.sh exports DT_CONTAINER_BOOT_ID once at start, so a review server that
+    crashed and was restarted by the supervisor keeps the id; a server started by hand falls back to an id of its own process."""
+    return os.environ.get("DT_CONTAINER_BOOT_ID") or _PROCESS_BOOT_ID
+
+
+def stop_requested():
+    """True once the soft-stop flag file exists (container_run.sh touches $STOP_FLAG on
+    SIGTERM). Callers check it BEFORE starting a unit of work, never inside one. With
+    STOP_FLAG unset (manual runs, tests) nothing ever stops."""
+    flag = os.environ.get("STOP_FLAG")
+    return bool(flag) and os.path.exists(flag)
+
+
+def write_stamp(path: str, video: str, stages: dict | None = None, mode: str | None = None) -> None:
+    """Write the .dubtitles.done idempotency stamp recording the delivered file's size+mtime
+    and the tier versions that produced it (stamp_valid rejects a stamp behind either
+    tier, so a version bump marks every prior-version file stale).
+
+    ``mode`` records HOW the subtitle was delivered: "mux" (embedded track) or "sidecar"
+    (external file beside the video, video untouched). Omitted entirely when the caller
+    does not name one, and a missing key reads as "mux" -- every stamp written before
+    OUTPUT_MODE existed meant an embedded track, so old stamps keep their meaning.
+    Mux mode ignores a sidecar stamp (and sidecar mode a mux stamp), which is what lets an
+    operator switch OUTPUT_MODE without either delivery reading as done forever.
+
+    ``stages`` optionally records WHICH stages actually ran, e.g.
+    ``{"repair": False, "signs_merge": True, "punctuation": True}``. The stamp used to say
+    an episode was done without saying what "done" meant: merge_pass.sh has no ``set -e``
+    and checks no exit status, so a stage that died still reached mux and still stamped, and
+    "repair never ran" was indistinguishable from "repair ran and found nothing".
+
+    ADDITIVE AND OPTIONAL, and stamp_valid ignores it. That is the whole constraint: if an
+    older stamp stopped validating, every episode in the library would read as unprocessed
+    and be fully re-transcribed -- roughly 12 GPU-hours to add a bookkeeping field. Omitted
+    entirely when the caller does not know, rather than guessed."""
+    st = os.stat(video)
+    doc = {
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "muxed": True,
+        # "version" is written for backward compatibility ONLY: an older build of this
+        # pipeline, and scripts/migrate_write_v1_stamps.py, read it. A stamp without it
+        # reads to them as pre-versioning (GRANDFATHER_VERSION) and therefore stale,
+        # which would re-transcribe the library. TEXT_VERSION is the right value: it is
+        # the version of the OUTPUT, which is what those readers are asking about.
+        "version": TEXT_VERSION,
+        "transcribe_version": TRANSCRIBE_VERSION,
+        "text_version": TEXT_VERSION,
+    }
+    if mode:
+        doc["mode"] = mode
+    if stages:
+        doc["stages"] = stages
+    atomic_write(path, lambda f: json.dump(doc, f))
+
+
+def read_stamp(path: str) -> dict | None:
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _tier_version(stamp: dict, key: str) -> int | None:
+    """One tier's version out of a stamp, falling back to the legacy single "version"
+    key for the 813 stamps written before tiers existed. ``None`` for a value that
+    cannot be read as an integer -- callers treat that as stale, never as an exception,
+    because this runs outside mux's try/except and one bad sidecar must not abort a
+    whole sweep."""
+    raw = stamp.get(key, stamp.get("version", GRANDFATHER_VERSION))
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def stale_tiers(stamp: dict | None, video: str) -> set[str]:
+    """Which of {"transcribe", "text"} this stamp is behind on, empty when it is current.
+
+    A missing stamp, an unmuxed one, or one describing a DIFFERENT file (size+mtime)
+    is stale in both tiers: there is nothing to reuse. Otherwise each tier is compared
+    independently, so a TEXT_VERSION bump costs CPU minutes instead of GPU hours.
+
+    Assumes size+mtime is a reliable proxy for content: a same-size, same-mtime
+    replacement of the source video is treated as the unchanged file it appears to be.
+    This is an accepted default, not upgraded to a content hash (owner decision,
+    confirmed at sprint 010 open)."""
+    if not stamp or not stamp.get("muxed") or not _stamp_matches_file(stamp, video):
+        return {"transcribe", "text"}
+    stale = set()
+    tv = _tier_version(stamp, "transcribe_version")
+    if tv is None or tv < TRANSCRIBE_VERSION:
+        stale.add("transcribe")
+        stale.add("text")  # new words invalidate everything derived from them
+    xv = _tier_version(stamp, "text_version")
+    if xv is None or xv < TEXT_VERSION:
+        stale.add("text")
+    return stale
+
+
+def _stamp_matches_file(stamp: dict, video: str) -> bool:
+    """True if the stamp describes THIS exact file (size + mtime), ignoring version."""
+    try:
+        st = os.stat(video)
+    except OSError:
+        return False
+    return stamp.get("size") == st.st_size and abs(stamp.get("mtime", 0) - st.st_mtime) < 1.0
+
+
+def stamp_valid(stamp: dict | None, video: str) -> bool:
+    """True if the stamp matches the current file (size+mtime) AND is current in BOTH
+    tiers — i.e. still delivered, not replaced, and not stale output. Unchanged in meaning
+    and signature, so no caller had to move when the single version became two."""
+    return not stale_tiers(stamp, video)
+
+
+def stamp_mode(stamp: dict | None) -> str:
+    """How a stamped episode was delivered: "mux" (embedded track) or "sidecar".
+
+    A missing/blank key reads as "mux": every stamp written before OUTPUT_MODE existed
+    meant an embedded track. Never raises on a malformed stamp -- the value is compared,
+    not trusted."""
+    return ((stamp or {}).get("mode") or "mux").strip().lower()
+
+
+# Stage-status sidecar protocol --------------------------------------------------
+#
+# Every pipeline stage writes its outcome to a single JSON sidecar per episode:
+#   <stem>.dubtitles.stages.json
+#   {"repair": {"outcome": "ok", "detail": "..."}, "signs": {...}, "mux": {...}}
+# Outcomes are restricted to STAGE_OUTCOMES so downstream consumers can branch
+# deterministically. A stage writes its record immediately on return (success or
+# failure) — no batching, no end-of-run flush. A run that dies mid-stage leaves a
+# "crashed" record via merge_pass.sh, so the next sweep sees exactly where it stopped.
+#
+# The "passed" set for failed_stage() is intentionally narrow: only "ok" and the two
+# skip codes ("no-reference" — repair had no fansub anchor; "no-video" — no media file)
+# are non-failures. Everything else (llm-empty, backend-unreachable, extract-error,
+# build-error, timeout, crashed, unwritable, refused) is a genuine failure that blocks mux.
+# "refused" is repair declining to overwrite already-shipped repairs: the srt on disk is raw
+# ASR, so it must never be muxed. "stopped" is repair honouring a soft stop mid-episode: the srt
+# was left unrewritten, so the episode is held back (no assemble, no mux) and retried next pass.
+# Records are never reset on their own; merge_pass.sh calls clear_stage() before it re-runs a stage
+# so a stale record cannot stand in for a new one.
+STAGES_SUFFIX = ".dubtitles.stages.json"
+STAGE_ORDER = ("repair", "signs", "mux")
+
+STAGE_OUTCOMES = (
+    "ok",
+    "no-reference",
+    "llm-empty",
+    "backend-unreachable",
+    "extract-error",
+    "build-error",
+    "no-video",
+    "timeout",
+    "crashed",
+    "unwritable",
+    "refused",
+    "stopped",
+)
+
+# "no-reference" is LEGACY: nothing writes it any more (repair's refusal is "refused"), but
+# records from older runs still sit on disk and must keep reading as passed.
+_PASSED_OUTCOMES = {"ok", "no-reference", "no-video"}
+
+
+def _stages_path(stem: str) -> str:
+    """Path to the stage-status sidecar for a given stem."""
+    return out_for(stem + STAGES_SUFFIX)
+
+
+def write_stage(stem: str, stage: str, outcome: str, detail: str = "") -> None:
+    """Write/replace one stage's record in the sidecar.
+
+    Uses atomic write (temp + os.replace) so a reader never sees a partial file.
+    The sidecar is created if it doesn't exist; existing stages are preserved so
+    the full history of the episode is always available."""
+    if outcome not in STAGE_OUTCOMES:
+        raise ValueError(f"unknown outcome {outcome!r} for stage {stage!r}")
+    path = _stages_path(stem)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    data[stage] = {"outcome": outcome, "at": time.time()}
+    if detail:
+        data[stage]["detail"] = detail
+    atomic_write(path, lambda f: json.dump(data, f))
+
+
+def read_stages(stem: str) -> dict:
+    """Read the stage-status sidecar, returning {} if missing or unreadable."""
+    try:
+        with open(_stages_path(stem)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def clear_stage(stem: str, *stages: str) -> None:
+    """Remove these stages' records from the sidecar (atomic: temp + os.replace).
+
+    A no-op when the sidecar or a key is missing; never creates a sidecar."""
+    path = _stages_path(stem)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not any(st in data for st in stages):
+        return
+    for st in stages:
+        data.pop(st, None)
+    atomic_write(path, lambda f: json.dump(data, f))
+
+
+def failed_stage(stem: str, only=None) -> str | None:
+    """First stage whose outcome is not in _PASSED_OUTCOMES, or None if all pass.
+
+    Stages are read in pipeline order (STAGE_ORDER: repair -> signs -> mux), then any
+    other keys, so the first failure wins deterministically whatever order the sidecar was
+    written in. `only` (an iterable of stage names) limits the check to those stages."""
+    recs = read_stages(stem)
+    names = [st for st in STAGE_ORDER if st in recs] + [st for st in recs if st not in STAGE_ORDER]
+    if only is not None:
+        only = set(only)
+        names = [st for st in names if st in only]
+    for stage in names:
+        if recs[stage].get("outcome") not in _PASSED_OUTCOMES:
+            return stage
+    return None
+
+
+def stale_version_stamp(stamp: dict | None, video: str) -> bool:
+    """True if the stamp is OUR stamp for exactly this file (muxed, size+mtime match) but
+    records an older version in either tier.
+
+    That state means the video IS our own output from a superseded pipeline — and
+    therefore that any ``.eng.dubtitles.*`` sidecar sitting next to it is that same old
+    run's leftover (mux removes sidecars on success, so one surviving here means the mux
+    was interrupted after stamping). Those sidecars must NOT be treated as new work: the
+    sidecar-existence skips in generate.py would otherwise block the re-transcribe while
+    mux happily re-embedded the OLD subtitle and stamped it current — a version bump that
+    silently no-ops on exactly the files it was meant to fix."""
+    if not stamp or not stamp.get("muxed") or not _stamp_matches_file(stamp, video):
+        return False
+    return bool(stale_tiers(stamp, video))
+
+
+def find_video(stem):
+    for e in VIDEO_EXTS:
+        if os.path.exists(stem + e):
+            return stem + e
+    return None
+
+
+def stream_title(st: dict) -> str:
+    """An ffprobe stream's title tag, normalized (missing/null tags -> "")."""
+    return ((st.get("tags") or {}).get("title", "") or "").strip()
+
+
+def is_our_track(name: str | None) -> bool:
+    """True if a track name marks it as OUR generated dubtitle. One predicate for both
+    shapes the pipeline sees — ffprobe's ``tags.title`` (via stream_title) and mkvmerge's
+    ``properties.track_name`` — so the "is this ours?" test can't drift between the stage
+    that EXCLUDES the track from context and the stage that DROPS it at mux. A drift there
+    is silent: exclude-but-keep yields a duplicate track, keep-but-drop loses the fansub."""
+    return (name or "").strip() == TRACK_NAME
+
+
+def eng_sub_streams(video, sub_langs):
+    """Indices of ASS/SSA subtitle streams in an accepted language, EXCLUDING our own
+    previously-muxed dubtitle (title == TRACK_NAME). ``sub_langs`` is a set of lowercased
+    language codes (each consumer keeps its own SUB_LANGS env-derived set — not unified
+    here, since the two current callers already read the same env var to the same default
+    and there's no behavior change from passing it explicitly).
+
+    The exclusion lives here because this is the single chokepoint for every stage that
+    reads an embedded sub as CONTEXT (repair.py's semantic reference, timing_compare's
+    timing reference, dub_signs_merge's signs/songs source) — our old dubtitle is
+    codec=ass/language=eng and would otherwise be picked up as if it were the fansub,
+    so a regeneration would repair/align/mine against last version's own mistakes.
+    There is deliberately NO fallback: an episode whose only English sub is our old
+    dubtitle yields [] and the pipeline runs reference-free."""
+    return [idx for idx, _title in eng_sub_tracks(video, sub_langs)]
+
+
+def eng_sub_tracks(video, sub_langs):
+    """``(index, title)`` for each usable English ASS/SSA stream — the shared probe behind
+    eng_sub_streams() and signs_sub_streams(). Only the latter needs the title, but both
+    must apply the same is_our_track() exclusion, so the filtering lives in one place."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "s",
+                "-show_entries",
+                "stream=index,codec_name:stream_tags=language,title",
+                "-of",
+                "json",
+                video,
+            ],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=90,
+        )
+        streams = json.loads(r.stdout).get("streams", [])
+    except Exception as e:
+        log("ffprobe failed:", video, e)
+        return []
+    out = []
+    for st in streams:
+        if st.get("codec_name") not in ("ass", "ssa"):
+            continue
+        if is_our_track(stream_title(st)):  # our own old output — never context
+            continue
+        if ((st.get("tags") or {}).get("language", "") or "").lower() in sub_langs:
+            out.append((st["index"], stream_title(st)))
+    return out
+
+
+# A track whose title says it carries the signs/songs. Covers the spellings actually
+# present in the library: "Signs & Songs", "S&S", "Signs/Songs", "English[Signs]",
+# "Songs + Signs", "Signs and Songs(Hydes)". "Forced" counts too — a forced track is
+# signs plus foreign-dialogue captions, and releases that ship ['Forced', ''] mean it
+# as the signs track. Deliberately NOT "karaoke": "Karaoke / English / ASS / FLE" is a
+# single mixed dialogue+karaoke track, not a signs-only one.
+SIGNS_TITLE = re.compile(r"\bs\s*&\s*s\b|sign|\bforced\b|songs?\b", re.I)
+
+# The same problem one level down: a dialogue TRACK still carries signs, previews, in-game
+# UI and song lyrics, each under its own ASS style. Measured on Sword Art Online E01's
+# Coalgirls script -- 655 events, only 322 of them dialogue:
+#
+#     SAO1 321 · Prev2 129 · Prev1 31 · msg 81 · Signs 68 · SAO-rom 13 · SAO-eng 11 · SAO2 1
+#
+# Mined whole, that admitted 607 glossary "names": `Incident` out of a headline ("Online
+# Game Incident Claims Numerous Victims"), `Remaining` out of a song lyric. Title-cased
+# furniture read as a cast list.
+#
+# Style names are a fansub CONVENTION, not a standard, so this is a heuristic and is written
+# as one. Conservative by design -- an unrecognised style counts as dialogue, because a miss
+# costs a real name while a false positive costs only noise the count floor may catch anyway.
+# `eng` is deliberately absent: it names the English half of a rom/eng lyric pair here, and
+# just as often names the dialogue track itself.
+NON_DIALOGUE_STYLE = re.compile(
+    r"sign|song|karaoke|lyric|caption|title|credit|insert|typeset|"
+    r"prev|next|msg|message|note|news|menu|screen|staff|opening|ending|romaji|\brom\b",
+    re.I,
+)
+
+
+def signs_sub_streams(video, sub_langs):
+    """Stream indices to lift signs/songs from.
+
+    Releases routinely ship the SAME signs typeset into several English tracks — a full
+    dialogue track, a signs/songs track, sometimes a CC track (39 of this library's 79
+    releases have more than one). Merging all of them renders every sign two or three
+    times, a few pixels apart. So when any track names itself as the signs track, that
+    one is the release's own curated signs list and the only one we read; if several do
+    (rival groups' typesetting of the same signs), the first wins.
+
+    Releases that name nothing usefully fall back to the historic behaviour — every
+    track, classified per event by keep_event() — which is how a single mixed
+    dialogue+signs track has always been handled."""
+    tracks = eng_sub_tracks(video, sub_langs)
+    signs = [idx for idx, title in tracks if SIGNS_TITLE.search(title or "")]
+    return [signs[0]] if signs else [idx for idx, _ in tracks]
+
+
+def signs_track_dedicated(video, sub_langs) -> bool:
+    """True when signs_sub_streams() would return a track that NAMES itself as the signs
+    track, False when it falls back to scanning every track per event.
+
+    The two cases want different handling one level down: a curated signs track holds
+    signs and songs only, while the fallback reads the release's dialogue track too, where
+    a bare ``\\an8`` is far more often a line of dialogue moved clear of a sign than a sign
+    (see dub_signs_merge.keep_event). A failed probe reads as False -- the stricter side."""
+    return any(SIGNS_TITLE.search(title or "") for _idx, title in eng_sub_tracks(video, sub_langs))
+
+
+def extract_sub(video, idx, out):
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", video, "-map", f"0:{idx}", "-c:s", "copy", out],
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        timeout=180,
+    )
+    if not (os.path.exists(out) and os.path.getsize(out) > 0):
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", video, "-map", f"0:{idx}", out],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=180,
+        )
+    return os.path.exists(out) and os.path.getsize(out) > 0
+
+
+def is_dialogue_event(ev: "pysubs2.SSAEvent", txt: str | None = None) -> bool:
+    """True if a pysubs2 event is a *plain dialogue* line -- not a comment, not a
+    positioned/animated sign, not karaoke, and not on an excluded (sign/song/karaoke/etc.)
+    style -- and has non-empty rendered text. This is the exact predicate T1 hoisted out of
+    repair.py's pre-refactor dialogue_intervals(); reused by dialogue_intervals(),
+    and the pure dialogue_density_score() scorer below.
+
+    ``txt``, if given, is the caller's already-computed ``ev.plaintext.strip()`` -- lets a
+    caller that also needs the stripped text (dialogue_intervals) avoid recomputing it here.
+    Default (None) computes it internally, so every other call site is unaffected."""
+    if ev.is_comment:
+        return False
+    t = ev.text
+    if KARAOKE.search(t) or POSITIONED.search(t):  # sign/song, not dialogue
+        return False
+    style = ev.style or ""
+    if DIALOGUE_EXCLUDE_STYLE.search(style) or DROP_STYLE.search(style) or SONG_FAMILY_STYLE.search(style):
+        return False
+    return bool(txt if txt is not None else ev.plaintext.strip())
+
+
+def _load_stream_events(video, idx):
+    """Extract subtitle stream ``idx`` to a scratch .ass and return its pysubs2 events, or
+    ``[]`` on any extraction/parse failure (never raises) -- matches the original
+    repair.dialogue_intervals try/except-and-skip behavior exactly."""
+    with tempfile.TemporaryDirectory() as td:
+        ex = os.path.join(td, "s.ass")
+        if not extract_sub(video, idx, ex):
+            return []
+        try:
+            return pysubs2.load(ex).events
+        except Exception:
+            return []
+
+
+def dialogue_intervals(video, stream_indices=None):
+    """Embedded DIALOGUE lines (the translation track) as (start_s, end_s, text), sorted.
+
+    ``stream_indices=None`` (default) reproduces the exact pre-hoist repair.py behavior:
+    every English subtitle stream (``eng_sub_streams(video, SUB_LANGS)``) is scanned and
+    the results merged/sorted together. Pass an explicit iterable of stream indices to
+    score/scan just those streams (e.g. one candidate track at a time, for per-track
+    density scoring) -- the byte-identical default path is what repair.py's live callers
+    (``process``/``overlap_ref``) depend on."""
+    indices = eng_sub_streams(video, SUB_LANGS) if stream_indices is None else stream_indices
+    ivals = []
+    for idx in indices:
+        for ev in _load_stream_events(video, idx):
+            txt = ev.plaintext.strip()
+            if is_dialogue_event(ev, txt):
+                ivals.append((ev.start / 1000.0, ev.end / 1000.0, txt))
+    ivals.sort()
+    return ivals
+
+
+def dialogue_density_score(events: list) -> tuple:
+    """Pure scorer over a pre-loaded list of pysubs2.SSAEvent (no I/O): returns
+    ``(dialogue_cue_count, plain_event_share)`` where ``dialogue_cue_count`` is the number
+    of plain-dialogue events (is_dialogue_event) and ``plain_event_share`` is that count
+    divided by the number of non-comment events on the track -- i.e. how much of the track
+    is dialogue versus signs/karaoke/songs. ``(0, 0.0)`` for an empty or all-comment track."""
+    non_comment = [ev for ev in events if not ev.is_comment]
+    if not non_comment:
+        return (0, 0.0)
+    dialogue_count = sum(1 for ev in non_comment if is_dialogue_event(ev))
+    return (dialogue_count, dialogue_count / len(non_comment))
+
+
+# --- shared LLM client --------------------------------------------------------
+#
+# The ollama/llamacpp dispatch used to live only in repair.py, so glossary_verify.py had
+# no way to reach anything but Ollama and the pipeline could not be consolidated onto a
+# single model. Both stages now call llm_chat().
+
+LLM_TIMEOUT_CONNECT = float(os.environ.get("LLM_TIMEOUT_CONNECT", "10"))
+LLM_TIMEOUT_READ = float(os.environ.get("LLM_TIMEOUT_READ", "120"))
+
+
+def _post_json(url, body, timeout=None):
+    """POST ``body`` as JSON with SEPARATE connect and read timeouts.
+
+    urlopen() exposes one timeout covering connect plus every read, so a server that
+    accepts the connection and then streams nothing is indistinguishable from an
+    unreachable host. Going one layer lower via http.client lets the connect timeout stay
+    short while a slow model still gets its full read budget."""
+    parsed = urllib.parse.urlsplit(url)
+    cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    conn = cls(parsed.hostname, parsed.port, timeout=LLM_TIMEOUT_CONNECT)
+    try:
+        conn.connect()
+        conn.sock.settimeout(timeout or LLM_TIMEOUT_READ)
+        path = (parsed.path or "/") + (("?" + parsed.query) if parsed.query else "")
+        conn.request("POST", path, body=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        data = resp.read()
+        if resp.status >= 400:
+            raise RuntimeError(f"HTTP {resp.status}: {data[:200]!r}")
+        return json.loads(data)
+    finally:
+        conn.close()
+
+
+LEGACY_BACKENDS = ("llamacpp", "ollama")  # the local servers a stage may inherit from REPAIR_BACKEND
+
+
+def inherit_repair_backend(repair_value, stage, fix, default="ollama"):
+    """(backend, problem): what a stage that has no backend variable of its own inherits from REPAIR_BACKEND.
+
+    Only the two legacy values are inherited (unset: ``default``). REPAIR_BACKEND=openai describes repair's chat-completions
+    client; handing it to a stage that speaks Ollama's or llama.cpp's request shape sent the wrong request, so anything else
+    is refused with ``stage`` and ``fix`` in the message. One rule for every stage that follows REPAIR_BACKEND."""
+    value = (repair_value or "").strip()
+    if not value or value in LEGACY_BACKENDS:
+        return value or default, ""
+    return "", f"REPAIR_BACKEND={value!r} cannot be inherited by {stage} (it is not llamacpp or ollama): {fix}"
+
+
+OPENAI_RETRIES = 2  # extra tries after HTTP 429 / 5xx on the glossary stages' openai backend (not configurable: YAGNI)
+
+
+def openai_endpoint_problem(url):
+    """Why ``url`` may not carry an API key, or "" when it may: an http(s) URL without userinfo, and https unless it is
+    loopback (a key must never travel in clear text to another machine)."""
+    parts = urllib.parse.urlsplit(url or "")
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return "the URL must be http(s) with a host"
+    if "@" in parts.netloc:
+        return "the URL must not carry credentials"
+    if parts.scheme != "https" and parts.hostname not in ("127.0.0.1", "localhost", "::1"):
+        return "a key may only be sent over https (plain http is for loopback only)"
+    return ""
+
+
+def _llm_chat_openai(prompt, *, url, key_env, extra_body, model, max_tokens, first_line):
+    """The glossary stages' hosted-text-model branch of llm_chat: any OpenAI-compatible chat API.
+
+    Same contract as the other branches: the reply text, or "" for no answer / any failure (never raises). Only
+    choices[0].message.content is read (a reasoning monologue in ``reasoning_content`` is ignored). The key is looked up by
+    NAME at call time; only the name, an HTTP status or an exception class is ever logged -- a provider may echo the key in
+    an error body and http.client quotes a bad header value. Transport is repair's hardened helper (connect/read timeouts and
+    a wall-clock request deadline); 429 and 5xx get OPENAI_RETRIES retries, Retry-After honoured and capped."""
+    from dubtitlerr.pipeline import repair  # at call time: repair imports this module
+
+    key_name = key_env or "VERIFY_OPENAI_KEY_ENV"
+    raw_key = os.environ.get(key_env, "") if key_env else ""
+    if not url or not model or not raw_key.strip():
+        log("  llm fail: the openai backend is not configured for this stage (URL, model or key missing)")
+        return ""
+    problem = openai_endpoint_problem(url)
+    if problem:
+        log(f"  llm fail: the openai endpoint is refused: {problem}")
+        return ""
+    key = repair.clean_api_key(raw_key)
+    if key is None:
+        log(f"  llm fail: the key in env var {key_name} contains spaces or control characters (CRLF .env?)")
+        return ""
+    try:
+        extra = repair._parse_extra_body(extra_body or "")
+    except ValueError:
+        log("  llm fail: VERIFY_OPENAI_EXTRA_BODY is not a valid JSON object")  # the name only, never the content
+        return ""
+    body = {
+        "temperature": 0,
+        "max_tokens": max_tokens,
+        **extra,
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    headers = {"Authorization": f"Bearer {key}", "User-Agent": "DubTitlerr/glossary"}
+    for attempt in range(OPENAI_RETRIES + 1):
+        try:
+            choice = repair._post_json(url, body, headers=headers)["choices"][0]
+            out = (choice["message"].get("content") or "").strip()
+        except repair._HttpError as e:
+            if (e.status == 429 or e.status >= 500) and attempt < OPENAI_RETRIES and not stop_requested():
+                log(f"  llm retry {attempt + 1}/{OPENAI_RETRIES} after HTTP {e.status}")
+                time.sleep(repair._retry_wait(e.retry_after, attempt))
+                continue
+            log(f"  llm fail: HTTP {e.status}")
+            return ""
+        except Exception as e:  # noqa: BLE001 -- the class only: the text may quote a header
+            log(f"  llm fail: {type(e).__name__}")
+            return ""
+        if not out:
+            return ""
+        return out.splitlines()[0].strip().strip('"').strip() if first_line else out
+    return ""
+
+
+def llm_chat(
+    prompt,
+    *,
+    backend="ollama",
+    ollama_url=None,
+    llamacpp_url=None,
+    model=None,
+    max_tokens=80,
+    first_line=True,
+    openai_url=None,
+    openai_key_env=None,
+    openai_extra_body=None,
+):
+    """One prompt in, the model's text out. ``""`` means "no answer" — never raises, since
+    a transport error must not abort a whole show mid-sweep.
+
+    llamacpp posts to ``/v1/chat/completions``, NOT ``/completion``: the latter applies no
+    chat template, and a templated instruct model answers it with nothing but newlines.
+    ``chat_template_kwargs.enable_thinking=false`` is required by this fork — with the
+    template applied but thinking still on, the model spends its entire budget on
+    ``reasoning_content`` and returns an empty message. No model selector is sent; a
+    llama.cpp server has exactly one model loaded.
+
+    ``first_line`` suits a subtitle (one line, often quoted by the model). Adjudication
+    returns a multi-line JSON object and must pass ``first_line=False`` or it is truncated
+    to its opening brace — and ``max_tokens`` high enough that the JSON isn't cut short.
+
+    ``openai`` (glossary stages only, opt-in) posts to ``openai_url`` with the key held in the env var NAMED ``openai_key_env``
+    and ``openai_extra_body`` (a JSON object string) merged into the request; see _llm_chat_openai."""
+    if backend == "openai":
+        return _llm_chat_openai(
+            prompt, url=openai_url, key_env=openai_key_env, extra_body=openai_extra_body, model=model,
+            max_tokens=max_tokens, first_line=first_line,
+        )  # fmt: skip
+    if backend == "llamacpp":
+        url = llamacpp_url
+        body = {
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+    else:
+        url = ollama_url
+        body = {"model": model, "prompt": prompt, "stream": False, "think": False, "options": {"temperature": 0}}
+    try:
+        data = _post_json(url, body)
+        out = (data["choices"][0]["message"].get("content") if backend == "llamacpp" else data.get("response", "")) or ""
+        out = out.strip()
+    except Exception as e:
+        log("  llm fail:", e)
+        return ""
+    if not out:
+        return ""
+    return out.splitlines()[0].strip().strip('"').strip() if first_line else out
+
+
+def within_window(spec: str, hour: int, minute: int) -> bool:
+    """Whether ``hour:minute`` falls inside ``spec``, a "HH:MM-HH:MM" window.
+
+    Empty spec means no window: always true, so an install that has not opted in behaves
+    exactly as it did before this existed.
+
+    THE WINDOW MAY CROSS MIDNIGHT, and that is the case it exists for. The repair endpoint
+    runs 23:00-07:30 because the card it lives on is shared during the day; a naive
+    ``start <= now <= end`` is false for every minute of that window and would stop the
+    merge loop forever while looking like it was configured correctly.
+
+    The end is EXCLUSIVE. 07:30 is the minute the endpoint is stopped, so a sweep admitted
+    at exactly 07:30 would start against a backend being taken away underneath it.
+
+    A malformed spec runs rather than blocks. A typo that silently stopped every sweep
+    would present as "the pipeline did nothing all week" with no error to find; the loud
+    failure -- work continuing against a possibly-absent backend -- is now caught by the
+    dead-backend guard in repair.process, which refuses the episode instead of shipping
+    raw ASR."""
+    spec = (spec or "").strip()
+    if not spec:
+        return True
+    try:
+        start_s, end_s = spec.split("-", 1)
+        sh, sm = (int(x) for x in start_s.strip().split(":"))
+        eh, em = (int(x) for x in end_s.strip().split(":"))
+    except (ValueError, TypeError):
+        return True
+    now, start, end = hour * 60 + minute, sh * 60 + sm, eh * 60 + em
+    if start == end:
+        return True
+    if start < end:
+        return start <= now < end
+    return now >= start or now < end

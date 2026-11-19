@@ -70,7 +70,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import hallucination  # noqa: E402
+from dubtitlerr.pipeline import hallucination  # noqa: E402
 
 # generate is imported LAZILY inside the functions that transcribe: it pulls in
 # faster_whisper at module scope, and the report-shaping half of this tool must stay
@@ -397,7 +397,7 @@ def endpoint_run_shape(segments: list[dict], words: list[dict]) -> tuple[list[di
     ``_map_endpoint_doc`` folds it into word probs. Importing the constant rather than
     restating it keeps the clamp from drifting. Word ``text`` is kept VERBATIM -- the
     leading space a merged whisper.cpp token carries is what production stores too."""
-    from reflow import PROB_FLOOR  # lazy + single source of truth for the clamp
+    from dubtitlerr.pipeline.reflow import PROB_FLOOR  # lazy + single source of truth for the clamp
 
     by_seg: dict[int, list[dict]] = {}
     for w in words:
@@ -477,7 +477,7 @@ def _extract_dub_wav(video: str, td: str) -> str | None:
     """The pipeline's own audio path: pick the eng dub track, extract 16k mono wav.
 
     Returns the wav path, or None with the reason recorded by the caller's ep dict."""
-    import generate  # lazy: pulls faster_whisper at module scope
+    from dubtitlerr.pipeline import generate  # lazy: pulls faster_whisper at module scope
 
     idx = generate.eng_audio_index(video)
     if idx is None:
@@ -490,7 +490,7 @@ def run_whisper(name: str, videos: list[str], compute_type: str, model_dir: str)
     """Transcribe every episode with one faster-whisper model, then unload it completely."""
     from faster_whisper import WhisperModel  # lazy: GPU stack
 
-    import generate  # lazy: for INITIAL_PROMPT (and the audio path above)
+    from dubtitlerr.pipeline import generate  # lazy: for INITIAL_PROMPT (and the audio path above)
 
     run = WhisperRun(name)
     t_load = time.monotonic()
@@ -833,7 +833,7 @@ def run_endpoint(url: str, label: str, videos: list[str]) -> WhisperRun:
     No VRAM is recorded: the model lives on the host that serves the endpoint, and
     ``vram_used_mib`` measures this process's card only. Reporting a number here would
     invent a measurement."""
-    import generate  # lazy: pulls faster_whisper at module scope
+    from dubtitlerr.pipeline import generate  # lazy: pulls faster_whisper at module scope
 
     run = WhisperRun(label)
     run.family = "whisper.cpp-endpoint"
@@ -1085,7 +1085,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.videos:
         ap.error("give at least one episode (or --report-only)")
 
-    import generate  # lazy: pulls faster_whisper at module scope
+    from dubtitlerr.pipeline import generate  # lazy: pulls faster_whisper at module scope
 
     generate.load_glossary()
     names = [n.strip() for n in args.models.split(",") if n.strip()]

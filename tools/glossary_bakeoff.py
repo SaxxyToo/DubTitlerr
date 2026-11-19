@@ -77,16 +77,20 @@ import urllib.parse
 from dataclasses import dataclass, field, replace
 
 sys.path.insert(0, ".")
-import acquire_cache  # noqa: E402
-import common  # noqa: E402
-import decision_client  # noqa: E402
-import glossary_acquire  # noqa: E402
-import glossary_decision  # noqa: E402
-import glossary_verify  # noqa: E402
-import repair  # noqa: E402
 import tools.bakeoff as bakeoff  # noqa: E402
 import tools.glossary_judge as glossary_judge  # noqa: E402
 import tools.glossary_score as glossary_score  # noqa: E402
+from dubtitlerr.core import (
+    acquire_cache,  # noqa: E402
+    common,  # noqa: E402
+    decision_client,  # noqa: E402
+)
+from dubtitlerr.glossary import (
+    glossary_acquire,  # noqa: E402
+    glossary_decision,  # noqa: E402
+    glossary_verify,  # noqa: E402
+)
+from dubtitlerr.pipeline import repair  # noqa: E402
 
 LASTRUN = ".lastrun.json"
 GLOSSARY_GLOB_EXCLUDE = (LASTRUN, acquire_cache.SUFFIX)

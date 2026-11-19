@@ -2,8 +2,8 @@
 proposal in the review queue. Sol's self-rebuttal downgraded this: clearing every flag after a model answer could delete another
 stage's evidence, so the behaviour is kept and pinned here. Changing it is a policy decision."""
 
-import glossary_acquire as ga
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_verify as gv
 
 OLD = {"reason": "respelling-needs-review", "canonical": "Ratel"}
 

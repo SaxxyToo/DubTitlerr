@@ -9,8 +9,8 @@ import threading
 
 import pytest
 
-import glossary_acquire as ga
-import glossary_lock
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_lock
 
 RS = "respelling-needs-review"
 LUFY_Y = ("Lufy", True, "Luffy", RS)
@@ -102,7 +102,7 @@ def test_review_waits_for_the_holder_and_writes_when_it_lets_go(tmp_path, monkey
 def hold_in_another_process(path):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     code = (
-        f"import sys, time; sys.path.insert(0, {root!r}); import glossary_lock\n"
+        f"import sys, time; sys.path.insert(0, {root!r}); from dubtitlerr.glossary import glossary_lock\n"
         f"with glossary_lock.locked({str(path)!r}, 'nightly-verify') as ok:\n"
         "    print('held' if ok else 'busy', flush=True); time.sleep(30)\n"
     )
@@ -347,7 +347,7 @@ def test_a_review_killed_while_waiting_leaves_its_answers_on_disk_and_the_next_r
     path = make(tmp_path)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     code = (
-        f"import sys; sys.path.insert(0, {root!r}); import glossary_acquire as ga\n"
+        f"import sys; sys.path.insert(0, {root!r}); from dubtitlerr.glossary import glossary_acquire as ga\n"
         "rs = 'respelling-needs-review'\n"
         f"ga._commit_answers({str(path)!r}, [['Lufy', True, 'Luffy', rs], ['Zorro', False, 'Zoro', rs]])\n"
     )

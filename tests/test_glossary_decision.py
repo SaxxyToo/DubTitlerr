@@ -7,10 +7,10 @@ import json
 import pytest
 from fake_servers import FakeServer
 
-import acquire_cache
-import glossary_acquire as ga
-import glossary_decision as gd
-import glossary_verify as gv
+from dubtitlerr.core import acquire_cache
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_decision as gd
+from dubtitlerr.glossary import glossary_verify as gv
 
 KEY = "sk-or-SECRET-key-0123456789"  # gitleaks:allow -- test fixture, not a real credential
 MODEL = "inception/mercury-decide:free"
@@ -609,7 +609,7 @@ def test_the_breaker_counters_hold_under_concurrent_failures(decision, monkeypat
 
 
 def test_retries_default_to_zero_for_the_stage_and_are_configurable(decision, monkeypatch):
-    import decision_client
+    from dubtitlerr.core import decision_client
 
     srv = decision(None, status=500)
     monkeypatch.setattr(decision_client.time, "sleep", lambda s: None)
@@ -625,7 +625,7 @@ def test_the_harness_keeps_the_decision_clients_own_retries():
     """GUARD: the bake-off calls decide() without `retries`, so it keeps the client's default of 2."""
     import inspect
 
-    import decision_client
+    from dubtitlerr.core import decision_client
 
     assert inspect.signature(decision_client.decide).parameters["retries"].default == decision_client.MAX_RETRIES == 2
 

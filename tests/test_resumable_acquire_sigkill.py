@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from test_resumable_acquire import PAIRS, build_show, last_json
 
-import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_acquire as ga
 
 ROOT = Path(__file__).resolve().parents[1]
 TIER_B = ["Kasumi", "Tsunari"]
@@ -25,7 +25,7 @@ TOTAL = len(PAIRS) + len(TIER_B)  # five tier-C pairs, then two tier-B picks
 RUNNER = r"""
 import json, os, sys, time
 sys.path.insert(0, sys.argv[1])
-import glossary_acquire as ga, glossary_verify as gv
+from dubtitlerr.glossary import glossary_acquire as ga, glossary_verify as gv
 gloss, show_dir, apply, delay = sys.argv[2], sys.argv[3], sys.argv[4] == "apply", float(sys.argv[5])
 TITLES = __TITLES__
 gv.VERIFY_BACKEND = "llamacpp"; gv.BACKEND_PROBLEM = ""

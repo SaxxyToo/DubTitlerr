@@ -7,9 +7,9 @@ import sys
 
 import pytest
 
-import settings_api as api
-import settings_migrate as mig
-import settings_store as store
+from dubtitlerr.settings import settings_api as api
+from dubtitlerr.settings import settings_migrate as mig
+from dubtitlerr.settings import settings_store as store
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROFILES = {
@@ -87,8 +87,9 @@ def test_the_cli_runs_the_migration_and_exits_zero(tmp_path):
     (tmp_path / "runtime.env").write_text("REQUIRE_ENG=0\n")
     full = {**os.environ, "CONFIG_DIR": str(tmp_path)}
     res = subprocess.run(
-        [sys.executable, os.path.join(REPO, "review_settings_write.py"), "migrate"],
+        [sys.executable, "-m", "dubtitlerr.review.review_settings_write", "migrate"],
         env=full,
+        cwd=REPO,
         capture_output=True,
         text=True,
         timeout=30,
@@ -130,8 +131,9 @@ def test_each_note_reaches_the_log_exactly_once_through_the_command_line(tmp_pat
     full = {k: v for k, v in os.environ.items() if not k.startswith("RUNTIME_")}
     full["CONFIG_DIR"] = str(tmp_path)
     res = subprocess.run(
-        [sys.executable, os.path.join(REPO, "review_settings_write.py"), "migrate"],
+        [sys.executable, "-m", "dubtitlerr.review.review_settings_write", "migrate"],
         env=full,
+        cwd=REPO,
         capture_output=True,
         text=True,
         timeout=30,

@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-import review_auth
-import settings_api as api
-import settings_registry as reg
-import settings_store as store
+from dubtitlerr.review import review_auth
+from dubtitlerr.settings import settings_api as api
+from dubtitlerr.settings import settings_registry as reg
+from dubtitlerr.settings import settings_store as store
 
 SECRET = "plex-secret-7c1e9a52b8d4"  # gitleaks:allow -- test fixture, not a real credential
 
@@ -123,7 +123,7 @@ def test_every_settings_route_is_in_the_role_table_entries():
 
 
 def test_review_server_registers_the_entries_and_serves_the_routes(monkeypatch, tmp_path):
-    import review_server as rs
+    from dubtitlerr.review import review_server as rs
 
     monkeypatch.setenv("REVIEW_AUTH", "off")
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))

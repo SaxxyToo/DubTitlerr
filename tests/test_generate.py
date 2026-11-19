@@ -22,10 +22,9 @@ import types
 
 import pytest
 
-import common
-import glossary
-import qc
-import reflow
+from dubtitlerr.core import common
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import qc, reflow
 
 
 def _stub_faster_whisper():
@@ -47,7 +46,7 @@ def _stub_faster_whisper():
 
 
 _stub_faster_whisper()
-import generate  # noqa: E402  (must follow the faster_whisper stub above)
+from dubtitlerr.pipeline import generate  # noqa: E402  (must follow the faster_whisper stub above)
 
 
 def _real_needs_work():
@@ -1478,7 +1477,9 @@ def test_punctuation_is_restored_before_reflow_splits_the_words():
     """The load-bearing ordering of the punctuation pass (spec 2026-08-20). Restoring
     after reflow() -- repair.py's natural home for it -- would leave every boundary
     exactly as wrong as before, so the call site, not just the code, is the feature."""
-    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "generate.py")).read()
+    src = open(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dubtitlerr", "pipeline", "generate.py")
+    ).read()
     assert "punctuation.restore(words, segments" in src
     assert src.index("punctuation.restore(") < src.index("reflow.reflow(")
 
@@ -1510,7 +1511,7 @@ def _clamped_fixture():
 def test_the_fixture_actually_exercises_clamping_and_nsp():
     """Guard the guard: if the fixture stopped triggering either transform, the
     round-trip test below would pass while proving nothing."""
-    import reflow
+    from dubtitlerr.pipeline import reflow
 
     words, segments = _clamped_fixture()
     clamped = reflow._clamp_to_segments(reflow._normalize(words), segments)
@@ -1523,7 +1524,7 @@ def test_a_replay_from_the_sidecar_reproduces_the_original_cards(tmp_path):
     """The criterion the adversarial review flagged as most able to pass while broken:
     the replay must be compared against the ORIGINAL run, not against a second
     replay-shaped run that also omits segment data."""
-    import reflow
+    from dubtitlerr.pipeline import reflow
 
     words, segments = _clamped_fixture()
     audio_duration = 7.0
@@ -1543,7 +1544,7 @@ def test_a_replay_without_segments_would_lose_the_confidences(tmp_path):
     """Pins WHY segments are persisted. Without them every card reports nsp 0.0, and the
     music drop rule and maybe_silence flag go inert on the cheap path -- the exact
     dead-rule failure the 2026-08-21 review was written about."""
-    import reflow
+    from dubtitlerr.pipeline import reflow
 
     words, segments = _clamped_fixture()
     with_segments = reflow.reflow(words, segments, audio_duration=7.0)
@@ -1565,7 +1566,7 @@ def test_the_sidecar_is_group_writable_and_atomic(tmp_path):
 def test_a_sidecar_from_an_older_transcribe_version_is_treated_as_absent(tmp_path):
     """A crash between transcription and stamping leaves exactly this. Serving those
     words to the text tier would replay an older pipeline's transcript."""
-    import qc
+    from dubtitlerr.pipeline import qc
 
     words, segments = _clamped_fixture()
     stem = str(tmp_path / "ep")
@@ -1582,7 +1583,7 @@ def test_a_sidecar_from_an_older_transcribe_version_is_treated_as_absent(tmp_pat
 
 def test_a_truncated_sidecar_is_counted_not_raised(tmp_path):
     """Half a sidecar must not poison a re-run."""
-    import qc
+    from dubtitlerr.pipeline import qc
 
     stem = str(tmp_path / "ep")
     with open(stem + generate.WORDS_SUFFIX, "w") as f:
@@ -1594,7 +1595,7 @@ def test_a_truncated_sidecar_is_counted_not_raised(tmp_path):
 
 
 def test_an_absent_sidecar_is_counted_not_raised(tmp_path):
-    import qc
+    from dubtitlerr.pipeline import qc
 
     rec = qc.Recorder()
     assert common.read_words(str(tmp_path / "nope"), rec=rec) is None
@@ -1602,7 +1603,7 @@ def test_an_absent_sidecar_is_counted_not_raised(tmp_path):
 
 
 def test_a_readable_sidecar_counts_as_reused(tmp_path):
-    import qc
+    from dubtitlerr.pipeline import qc
 
     words, segments = _clamped_fixture()
     stem = str(tmp_path / "ep")
@@ -2015,7 +2016,7 @@ def _write_words_matching_identity(tmp_path, monkeypatch, initial_prompt="Custom
 
 
 def test_read_words_rejects_a_model_mismatch(tmp_path, monkeypatch):
-    import qc
+    from dubtitlerr.pipeline import qc
 
     stem, expect = _write_words_matching_identity(tmp_path, monkeypatch)
     expect = dict(expect, model="a-different-model")
@@ -2025,7 +2026,7 @@ def test_read_words_rejects_a_model_mismatch(tmp_path, monkeypatch):
 
 
 def test_read_words_rejects_an_initial_prompt_mismatch(tmp_path, monkeypatch):
-    import qc
+    from dubtitlerr.pipeline import qc
 
     stem, expect = _write_words_matching_identity(tmp_path, monkeypatch)
     expect = dict(expect, initial_prompt="a different prompt")
@@ -2035,7 +2036,7 @@ def test_read_words_rejects_an_initial_prompt_mismatch(tmp_path, monkeypatch):
 
 
 def test_read_words_rejects_a_compute_type_mismatch(tmp_path, monkeypatch):
-    import qc
+    from dubtitlerr.pipeline import qc
 
     stem, expect = _write_words_matching_identity(tmp_path, monkeypatch)
     expect = dict(expect, compute_type="float16")
@@ -2045,7 +2046,7 @@ def test_read_words_rejects_a_compute_type_mismatch(tmp_path, monkeypatch):
 
 
 def test_read_words_rejects_a_beam_size_mismatch(tmp_path, monkeypatch):
-    import qc
+    from dubtitlerr.pipeline import qc
 
     stem, expect = _write_words_matching_identity(tmp_path, monkeypatch)
     expect = dict(expect, beam_size=expect["beam_size"] + 1)
@@ -2055,7 +2056,7 @@ def test_read_words_rejects_a_beam_size_mismatch(tmp_path, monkeypatch):
 
 
 def test_read_words_treats_a_missing_field_as_unknown_not_a_mismatch(tmp_path, monkeypatch):
-    import qc
+    from dubtitlerr.pipeline import qc
 
     stem, expect = _write_words_matching_identity(tmp_path, monkeypatch)
     path = stem + generate.WORDS_SUFFIX
@@ -2073,7 +2074,7 @@ def test_read_words_treats_a_missing_field_as_unknown_not_a_mismatch(tmp_path, m
 
 
 def test_read_words_counts_a_transcribe_version_ahead_of_current_as_a_mismatch(tmp_path):
-    import qc
+    from dubtitlerr.pipeline import qc
 
     words, segments = _clamped_fixture()
     stem = str(tmp_path / "ep")
@@ -2089,7 +2090,9 @@ def test_read_words_counts_a_transcribe_version_ahead_of_current_as_a_mismatch(t
 
 
 def test_partition_todo_and_process_text_request_the_decoder_identity():
-    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "generate.py")).read()
+    src = open(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dubtitlerr", "pipeline", "generate.py")
+    ).read()
     assert "read_words(stem, expect=decoder_identity())" in src
     assert "read_words(stem, rec=rec, expect=decoder_identity())" in src
 
@@ -2278,7 +2281,7 @@ def test_a_run_without_show_name_still_finds_its_glossary(tmp_path, monkeypatch)
     name the show -- transcribing with no glossary silently ships wrong names."""
     import json
 
-    import generate
+    from dubtitlerr.pipeline import generate
 
     gloss = tmp_path / "Chainsaw Man (2022) [tvdbid-397934].json"
     gloss.write_text(json.dumps({"show": "", "names": {"Denji": "Denji"}}), encoding="utf-8")

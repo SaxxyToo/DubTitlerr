@@ -11,8 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import decisions
-import unresolved
+from dubtitlerr.core import decisions, unresolved
 
 EP_SUFFIX = ".dubtitles.conf.json"
 VIDEO_EXTS = (".mkv", ".mp4", ".m4v")

@@ -7,7 +7,7 @@ import threading
 
 import pytest
 
-import review_server as rs
+from dubtitlerr.review import review_server as rs
 
 TOKEN = "review-token"
 ADMIN = "admin-token"

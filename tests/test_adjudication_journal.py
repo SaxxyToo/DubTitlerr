@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-import adjudication_journal as aj
+from dubtitlerr.core import adjudication_journal as aj
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULT = {"canonical": "Roronoa Zoro", "confidence": "high", "dub_note": ""}
@@ -114,7 +114,7 @@ def test_a_corrupt_or_unwritable_journal_never_raises(tmp_path, capsys):
 def test_two_processes_appending_at_once_lose_nothing(tmp_path):
     path = str(tmp_path / "j.jsonl")
     code = (
-        "import sys; sys.path.insert(0, sys.argv[1]); import adjudication_journal as aj\n"
+        "import sys; sys.path.insert(0, sys.argv[1]); from dubtitlerr.core import adjudication_journal as aj\n"
         "j = aj.Journal(sys.argv[2], 'verify')\n"
         "for i in range(60):\n"
         "    assert j.record(f'{sys.argv[3]}-{i}', {'p': sys.argv[3]}, {'canonical': 'x' * 400, 'confidence': 'high'})\n"

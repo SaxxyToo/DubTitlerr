@@ -17,6 +17,9 @@
 set -u
 : "${APP_DIR:=/app}"
 export APP_DIR
+# python3 -m needs the app dir (which holds the dubtitlerr/ package) on the import path.
+PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
 : "${STOP_FLAG:=/tmp/dubtitlerr.stop}"
 export STOP_FLAG
 rm -f "$STOP_FLAG" # a stale flag from an earlier `docker stop` + `docker start` must not stop a fresh run
@@ -27,10 +30,10 @@ rm -f "$STOP_FLAG" # a stale flag from an earlier `docker stop` + `docker start`
 # exports DT_BOOT_<KEY>, the value the container held, so the page can still say what a stored value overrides. --boot never
 # prints a secret; the review server's own secrets are exported in run_review_server below. A missing or failing exporter
 # changes nothing: the container environment stands.
-if [ -f "$APP_DIR/review_settings_write.py" ]; then
-	python3 "$APP_DIR/review_settings_write.py" migrate || echo "settings migration failed (continuing)"
-	eval "$(python3 "$APP_DIR/review_settings_write.py" export --boot --scope container)" || true
-	eval "$(python3 "$APP_DIR/review_settings_write.py" export --boot --scope server)" || true
+if [ -f "$APP_DIR/dubtitlerr/review/review_settings_write.py" ]; then
+	python3 -m dubtitlerr.review.review_settings_write migrate || echo "settings migration failed (continuing)"
+	eval "$(python3 -m dubtitlerr.review.review_settings_write export --boot --scope container)" || true
+	eval "$(python3 -m dubtitlerr.review.review_settings_write export --boot --scope server)" || true
 fi
 # <<< stored settings
 # One id per container start. /api/status reports it, so a page that asked for a restart can tell the new server from the old one
@@ -62,7 +65,7 @@ fi
 (
 	while :; do
 		if stop_requested; then break; fi
-		if [ -n "$MERGE_WINDOW" ] && ! python3 -c "import sys,time,common; t=time.localtime(); sys.exit(0 if common.within_window(sys.argv[1], t.tm_hour, t.tm_min) else 1)" "$MERGE_WINDOW" 2>/dev/null; then
+		if [ -n "$MERGE_WINDOW" ] && ! python3 -c "import sys,time; from dubtitlerr.core import common; t=time.localtime(); sys.exit(0 if common.within_window(sys.argv[1], t.tm_hour, t.tm_min) else 1)" "$MERGE_WINDOW" 2>/dev/null; then
 			echo "merge_pass: outside MERGE_WINDOW=$MERGE_WINDOW ($(date +%H:%M)) — skipping this sweep"
 		else
 			sh "$APP_DIR/merge_pass.sh" || echo "merge_pass error (continuing)"
@@ -86,10 +89,10 @@ merge_pid=$!
 # --secrets-only prints only a 1/empty flag saying whether the container held a value of its own. Read again on every restart of
 # the server, so a restart picks up a changed secret. A missing or failing exporter leaves the container environment.
 run_review_server() {
-	if [ -f "$APP_DIR/review_settings_write.py" ]; then
-		eval "$(python3 "$APP_DIR/review_settings_write.py" export --scope server --secrets-only 2>/dev/null)" || true
+	if [ -f "$APP_DIR/dubtitlerr/review/review_settings_write.py" ]; then
+		eval "$(python3 -m dubtitlerr.review.review_settings_write export --scope server --secrets-only 2>/dev/null)" || true
 	fi
-	exec python3 "$APP_DIR/review_server.py"
+	exec python3 -m dubtitlerr.review.review_server
 }
 # <<< stored server secrets
 (

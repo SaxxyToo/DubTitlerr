@@ -30,9 +30,9 @@ def _stub_faster_whisper():
 
 
 _stub_faster_whisper()
-import common  # noqa: E402
-import generate  # noqa: E402
-import review_requests as rr  # noqa: E402
+from dubtitlerr.core import common  # noqa: E402
+from dubtitlerr.pipeline import generate  # noqa: E402
+from dubtitlerr.review import review_requests as rr  # noqa: E402
 
 
 def _show(tmp_path, n=3, delivered=True):

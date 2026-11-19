@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-import review_requests
-from review_requests import (
+from dubtitlerr.review import review_requests
+from dubtitlerr.review.review_requests import (
     Refused,
     create,
     derive_generate_only_re,
@@ -566,7 +566,7 @@ def test_is_window_open_and_cli(tmp_path, capsys):
 
     # CLI check with closed window
     with patch.object(sys, "argv", ["review_requests.py", "window-open", str(schedule_file)]):
-        with patch("review_requests.is_window_open", return_value=False):
+        with patch("dubtitlerr.review.review_requests.is_window_open", return_value=False):
             review_requests.main()
     assert capsys.readouterr().out.strip() == "closed"
 
@@ -906,7 +906,7 @@ def test_cli_unpack(capsys):
 
 
 def test_h1_safe_grammar_refuses_catastrophic_and_arbitrary_regex():
-    from review_requests import Refused, validate
+    from dubtitlerr.review.review_requests import Refused, validate
 
     # Catastrophic ReDoS example from reviewer H1 must be refused
     with pytest.raises(Refused) as exc1:
@@ -927,8 +927,8 @@ def test_h1_safe_grammar_property_adversarial_timing_and_acceptance():
     import re
     import time
 
-    import review_webhooks
-    from review_requests import validate
+    from dubtitlerr.review import review_webhooks
+    from dubtitlerr.review.review_requests import validate
 
     # UI examples and safe grammar patterns must be accepted
     accepted_patterns = [
@@ -981,7 +981,7 @@ def test_h1_safe_grammar_property_adversarial_timing_and_acceptance():
 
 
 def test_h1_four_reviewer_shapes_refused():
-    from review_requests import Refused, validate
+    from dubtitlerr.review.review_requests import Refused, validate
 
     # 1. Nested {1,3} groups with 0*
     shape1 = "(?:(?:(?:(?:0*|0*)){1,3}){1,3}){1,3}x"
@@ -1011,7 +1011,7 @@ def test_h1_four_reviewer_shapes_refused():
 def test_requeue_atomic_and_status(tmp_path, monkeypatch):
     import pathlib
 
-    import review_requests
+    from dubtitlerr.review import review_requests
 
     requests_dir = tmp_path / "requests"
     requests_dir.mkdir()
@@ -1049,7 +1049,7 @@ def test_requeue_atomic_and_status(tmp_path, monkeypatch):
 
 
 def test_h1_leading_space_with_quantifier_refused():
-    from review_requests import Refused, validate
+    from dubtitlerr.review.review_requests import Refused, validate
 
     # Leading space plus quantifier must be refused after normalisation
     with pytest.raises(Refused) as exc:
@@ -1058,7 +1058,7 @@ def test_h1_leading_space_with_quantifier_refused():
 
 
 def test_h1_guard_pinning_group_quantifier_ban():
-    from review_requests import Refused, validate
+    from dubtitlerr.review.review_requests import Refused, validate
 
     # Depth is 1 (passes depth cap <= 2), 0 zero-star tokens (passes single 0*),
     # but group has quantifier {2}
@@ -1068,7 +1068,7 @@ def test_h1_guard_pinning_group_quantifier_ban():
 
 
 def test_h1_guard_pinning_depth_cap():
-    from review_requests import Refused, validate
+    from dubtitlerr.review.review_requests import Refused, validate
 
     # No group quantifiers, 0 zero-star tokens, non-empty branches,
     # but nesting depth is 3 (> 2)
@@ -1078,7 +1078,7 @@ def test_h1_guard_pinning_depth_cap():
 
 
 def test_h1_guard_pinning_single_zero_star_and_chain():
-    from review_requests import Refused, validate
+    from dubtitlerr.review.review_requests import Refused, validate
 
     # Depth 0, no group quantifiers, valid literal branches,
     # but 2 zero-star tokens across branches
@@ -1093,7 +1093,7 @@ def test_h1_guard_pinning_single_zero_star_and_chain():
 
 
 def test_h1_empty_or_quantifier_only_branch_refused():
-    from review_requests import Refused, validate
+    from dubtitlerr.review.review_requests import Refused, validate
 
     # Empty branch
     with pytest.raises(Refused) as exc1:
@@ -1112,7 +1112,7 @@ def test_h1_safe_grammar_property_random_walk_timing():
     import re
     import time
 
-    from review_requests import derive_generate_only_re, validate
+    from dubtitlerr.review.review_requests import derive_generate_only_re, validate
 
     test_files = [
         ("One Pace", "One Pace - S01E05 - Romance Dawn [1080p].mkv"),
@@ -1276,7 +1276,8 @@ def test_shows_cli_prints_one_show_per_line(tmp_path):
     _req(tmp_path, "", "a", "Show A", "pending")
     _req(tmp_path, "", "b", "Show B", "pending")
     out = subprocess.run(
-        [sys.executable, str(Path(review_requests.__file__)), "shows", str(tmp_path), "7"],
+        [sys.executable, "-m", "dubtitlerr.review.review_requests", "shows", str(tmp_path), "7"],
+        cwd=str(Path(__file__).resolve().parent.parent),
         capture_output=True,
         text=True,
         check=True,

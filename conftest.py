@@ -1,6 +1,6 @@
-"""Put the repo root and tools/ on sys.path so tests can `import reflow`, `import
-ordering`, `import sns_extract`, etc. regardless of pytest's import mode / invocation
-directory."""
+"""Put the repo root and tools/ on sys.path so tests can import the pipeline package
+(`from dubtitlerr.pipeline import reflow`), the tools by bare name (`import sns_extract`),
+etc., regardless of pytest's import mode / invocation directory."""
 
 import os
 import sys
@@ -16,7 +16,7 @@ import pytest  # noqa: E402
 def _fresh_word_list_cache(monkeypatch):
     """The common-word guard is on by default, so many tests reach glossary.ordinary_words(), which caches the list and whether
     the configured file was readable. Start every test with that cache empty so one test's status never leaks into the next."""
-    import glossary
+    from dubtitlerr.glossary import glossary
 
     monkeypatch.setattr(glossary, "_ORDINARY", None)
     monkeypatch.setattr(glossary, "_ORDINARY_STATUS", None)
@@ -25,7 +25,7 @@ def _fresh_word_list_cache(monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolated_wiki_cache(monkeypatch, tmp_path):
     """glossary_verify keeps its adjudication journal and wiki title cache under CACHE_DIR; no test may touch a real one."""
-    import glossary_verify
+    from dubtitlerr.glossary import glossary_verify
 
     monkeypatch.setattr(glossary_verify, "CACHE_DIR", str(tmp_path / "wiki_cache"))
 
@@ -36,7 +36,7 @@ def _accounts_are_installed_by_default(request, monkeypatch, tmp_path_factory):
     First run (409 setup required) is exercised only by files marked real_accounts, which get the real functions."""
     if request.node.get_closest_marker("real_accounts"):
         return
-    import review_auth
+    from dubtitlerr.review import review_auth
 
     monkeypatch.setattr(review_auth, "setup_required", lambda: False)
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path_factory.mktemp("auth_config")))  # even when the shell or CI already set one
@@ -52,7 +52,7 @@ def _deterministic_word_list(monkeypatch, tmp_path_factory):
     skips LLM pairs. On this machine that alone turned 31 tests red. Pin an empty list so
     every host runs the bundled baseline CI runs. test_common_word_guard sets its own.
     """
-    import glossary
+    from dubtitlerr.glossary import glossary
 
     empty = tmp_path_factory.mktemp("wordlist") / "empty.txt"
     empty.write_text("")

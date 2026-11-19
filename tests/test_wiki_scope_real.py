@@ -7,7 +7,7 @@ import urllib.parse as up
 
 import pytest
 
-import wiki_scope
+from dubtitlerr.glossary import wiki_scope
 
 FIXTURE = open(os.path.join(os.path.dirname(__file__), "fixtures", "plot_of_naruto.wikitext"), encoding="utf-8").read()
 WIKI = "https://naruto.fandom.com/api.php"

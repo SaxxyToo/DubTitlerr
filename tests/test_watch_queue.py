@@ -3,7 +3,7 @@ correctly-sorted, incomplete list, which is what each source does on its own."""
 
 import pytest
 
-import watch_queue as wq
+from dubtitlerr.pipeline import watch_queue as wq
 
 
 def test_union_takes_the_newer_timestamp(monkeypatch):

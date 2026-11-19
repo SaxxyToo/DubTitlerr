@@ -3,7 +3,7 @@
 import os
 import stat
 
-import review_requests as rr
+from dubtitlerr.review import review_requests as rr
 
 TOKEN = "plex-token-5d2f9c71aa80"
 KEY = "sk-hosted-key-0123456789abcdef"

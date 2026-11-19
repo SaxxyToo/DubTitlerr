@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-import settings_registry as reg
+from dubtitlerr.settings import settings_registry as reg
 
 FIRST_WAVE = {
     "general": ["REVIEW_PORT", "REVIEW_BIND"],

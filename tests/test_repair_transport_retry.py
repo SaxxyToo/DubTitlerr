@@ -8,7 +8,7 @@ import urllib.error
 
 import pytest
 
-import repair
+from dubtitlerr.pipeline import repair
 
 OK = {"choices": [{"message": {"content": "fixed line"}}]}
 
@@ -150,7 +150,7 @@ def test_only_the_openai_backend_retries(env, monkeypatch):
 def test_the_summary_reports_transport_retries_only_when_the_budget_is_set(tmp_path, monkeypatch, env):
     import test_repair
 
-    import glossary
+    from dubtitlerr.glossary import glossary
 
     def run(name):
         sub = tmp_path / name

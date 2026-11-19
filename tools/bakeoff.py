@@ -63,13 +63,15 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, ".")
-import common  # noqa: E402
-import glossary  # noqa: E402
-import hallucination  # noqa: E402
-import ordering  # noqa: E402
-import qc  # noqa: E402
-import reflow  # noqa: E402
-import repair  # noqa: E402
+from dubtitlerr.core import common  # noqa: E402
+from dubtitlerr.glossary import glossary  # noqa: E402
+from dubtitlerr.pipeline import (
+    hallucination,  # noqa: E402
+    ordering,  # noqa: E402
+    qc,  # noqa: E402
+    reflow,  # noqa: E402
+    repair,  # noqa: E402
+)
 
 
 def load_cards(raw_path, conf_path):

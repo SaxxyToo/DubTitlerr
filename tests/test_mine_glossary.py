@@ -19,8 +19,8 @@ import types
 import pysubs2
 import pytest
 
-import common
-import mine_glossary
+from dubtitlerr.core import common
+from dubtitlerr.glossary import mine_glossary
 
 
 def test_mine_text():
@@ -680,7 +680,7 @@ def test_main_passes_lowercase_counts_through_and_reports_the_drop(tmp_path, mon
 def test_the_deadline_aborts_a_stuck_episode(monkeypatch):
     import time
 
-    import mine_glossary
+    from dubtitlerr.glossary import mine_glossary
 
     with pytest.raises(TimeoutError):
         with mine_glossary._deadline(0.05, "mining stuck.mkv"):
@@ -688,14 +688,14 @@ def test_the_deadline_aborts_a_stuck_episode(monkeypatch):
 
 
 def test_a_deadline_of_zero_disables_the_alarm():
-    import mine_glossary
+    from dubtitlerr.glossary import mine_glossary
 
     with mine_glossary._deadline(0, "mining anything"):
         pass
 
 
 def test_the_episode_budget_is_configurable(monkeypatch):
-    import mine_glossary
+    from dubtitlerr.glossary import mine_glossary
 
     monkeypatch.delenv("MINE_EPISODE_TIMEOUT", raising=False)
     assert mine_glossary._episode_timeout() == 180.0

@@ -47,8 +47,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import recreate_srt  # noqa: E402
-from common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, log  # noqa: E402
+from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, log  # noqa: E402
+from dubtitlerr.pipeline import recreate_srt  # noqa: E402
 
 CONF_SUFFIX = ".dubtitles.conf.json"
 SRT_SUFFIX = ".eng.dubtitles.srt"

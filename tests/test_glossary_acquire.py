@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_acquire as ga
 
 
 def test_normalize_title_strips_disambiguator_and_subpage():
@@ -1549,7 +1549,7 @@ def test_end_to_end_admission_tagging_and_repair_weighting(tmp_path, monkeypatch
     ONE chain. Two mapped episodes (one partially) and one unmapped episode all contribute
     the same near-miss token ("Hazzard" -> the already-known anchor "Hazard"), so its
     overall admission_method must land on "mixed"."""
-    import repair
+    from dubtitlerr.pipeline import repair
 
     gp = tmp_path / "Show.json"
     gp.write_text(json.dumps({"show": "Show", "names": ["Hazard"], "episode_page_pattern_absolute": "Episode {n}"}))
