@@ -10,6 +10,7 @@ import json
 import os
 
 import pytest
+import repair_ref_stub
 
 from dubtitlerr.core import common, decisions, unresolved
 from dubtitlerr.glossary import glossary
@@ -363,7 +364,7 @@ def test_process_writes_latency_ms_column(tmp_path, monkeypatch):
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     assert repair.process(conf_path) == "repaired"
@@ -422,7 +423,7 @@ def test_process_two_pass_reverifies_name_change(tmp_path, monkeypatch):
     g = gl(names=["Spandam"])
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_2pass.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
 
     def fake_llm(prompt, model=None):
         if model == "secondary-model":
@@ -452,7 +453,7 @@ def test_process_two_pass_is_noop_when_secondary_equals_primary(tmp_path, monkey
     g = gl(names=["Spandam"])
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_noop.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
 
     calls = []
 
@@ -491,7 +492,7 @@ def test_process_writes_repair_summary_json(tmp_path, monkeypatch):
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_summary.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     assert repair.process(conf_path) == "repaired"
@@ -520,7 +521,7 @@ def _unchanged_episode(tmp_path, monkeypatch, stem_name):
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / (stem_name + ".mkv")))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     # Verbatim echo: accept_repair refuses it, and the `if not admitted` inner guard
     # (new.lower() != c["text"].lower()) is false by construction, so before the counter
     # existed this outcome incremented nothing and recorded nothing.
@@ -571,7 +572,7 @@ def test_process_logs_chown_failure_instead_of_swallowing(tmp_path, monkeypatch,
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_chown.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     def _boom(*a, **kw):
@@ -595,7 +596,7 @@ def test_process_counts_skipped_no_ref_and_never_calls_llm(tmp_path, monkeypatch
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_noref.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])  # no fansub anchor anywhere
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))  # no fansub anchor anywhere
     monkeypatch.setattr(
         repair,
         "llm",
@@ -635,7 +636,7 @@ def test_repair_rewraps_even_when_it_changes_nothing(tmp_path, monkeypatch):
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_rewrap_noop.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])  # no fansub anchor -> no-op
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))  # no fansub anchor -> no-op
     monkeypatch.setattr(
         repair,
         "llm",
@@ -661,7 +662,7 @@ def test_repair_rewraps_a_repaired_line_too(tmp_path, monkeypatch):
     long_fix = "The fixed longer version of a dreamy lyric line right there tonight"
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_rewrap_fixed.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 5.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 5.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: long_fix)
 
     assert repair.process(conf_path) == "repaired"
@@ -1018,7 +1019,7 @@ def _repair_env(tmp_path, monkeypatch, stem, rows, out, g=None):
     _write_conf(conf_path, stem + repair.SRT_SUFFIX, rows)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g or gl())
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 30.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 30.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", out if callable(out) else (lambda prompt, model=None: out))
     return conf_path
 
@@ -1143,8 +1144,7 @@ def test_process_selects_the_reference_by_the_source_window(tmp_path, monkeypatc
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_src.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
     monkeypatch.setattr(
-        repair, "dialogue_intervals", lambda video: [(10.0, 10.9, "the right line"), (11.9, 13.0, "the neighbour's line")]
-    )
+        repair, "reference_tracks", repair_ref_stub.stub([(10.0, 10.9, "the right line"), (11.9, 13.0, "the neighbour's line")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     assert repair.process(conf_path) == "repaired"
@@ -1166,14 +1166,181 @@ def test_process_still_uses_display_timing_for_a_pre_c6_sidecar(tmp_path, monkey
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_old.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
     monkeypatch.setattr(
-        repair, "dialogue_intervals", lambda video: [(10.0, 10.9, "the right line"), (11.9, 13.0, "the neighbour's line")]
-    )
+        repair, "reference_tracks", repair_ref_stub.stub([(10.0, 10.9, "the right line"), (11.9, 13.0, "the neighbour's line")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     assert repair.process(conf_path) == "repaired"
     with open(stem + ".dubtitles.repair.csv") as f:
         rows = list(csv.reader(f))
     assert rows[1][2] == "the neighbour's line"
+
+
+# --- R2: one classified reference track per card ------------------------------
+# Pre-R2 the reference was every English track merged into one string, so a card where a
+# dub-caption track and a translation track both speak got both wordings at once. These
+# tests pin the replacement: ONE track, dub before translation, never a cross-track join.
+
+
+def test_select_reference_picks_one_track_and_never_joins_roles():
+    trans = repair_ref_stub.track([(1.0, 2.0, "the translation line")], role="translation", title="Full Subtitles [GJM]", index=2)
+    dub = repair_ref_stub.track([(1.0, 2.0, "the dub caption line")], role="dub", title="English Dub", index=1)
+    track, text = repair.select_reference([trans, dub], 1.0, 2.0)
+    assert track is dub
+    assert text == "the dub caption line"  # not "... dub caption line the translation line"
+    assert "translation" not in text
+
+
+def test_select_reference_falls_back_to_translation_when_the_dub_does_not_overlap():
+    dub = repair_ref_stub.track([(9.0, 10.0, "dub wording elsewhere")], role="dub", index=1)
+    trans = repair_ref_stub.track([(1.0, 2.0, "translation wording here")], role="translation", index=2)
+    track, text = repair.select_reference([dub, trans], 1.0, 2.0)
+    assert track is trans
+    assert text == "translation wording here"
+
+
+def test_select_reference_within_a_role_takes_the_most_overlapping_characters():
+    thin = repair_ref_stub.track([(1.0, 1.5, "hi")], index=2)
+    fat = repair_ref_stub.track([(0.5, 2.5, "the whole long line is here")], index=3)
+    assert repair.select_reference([thin, fat], 1.0, 2.0)[1] == "the whole long line is here"
+
+
+def test_select_reference_breaks_a_tie_by_stream_index():
+    first = repair_ref_stub.track([(1.0, 2.0, "same text")], index=1)
+    second = repair_ref_stub.track([(1.0, 2.0, "same text")], index=2)
+    assert repair.select_reference([second, first], 1.0, 2.0)[0] is first
+
+
+def test_select_reference_never_uses_our_own_or_signs_tracks():
+    ours = repair_ref_stub.track([(1.0, 2.0, "our own sidecar text")], role="translation", provenance="ours", index=1)
+    signs = repair_ref_stub.track([(1.0, 2.0, "a sign on screen")], role="signs", index=2)
+    assert repair.select_reference([ours, signs], 1.0, 2.0) is None
+
+
+def test_select_reference_returns_none_when_nothing_overlaps():
+    track = repair_ref_stub.track([(9.0, 10.0, "somewhere else entirely")], index=1)
+    assert repair.select_reference([track], 1.0, 2.0) is None
+    assert repair.select_reference([], 1.0, 2.0) is None
+
+
+def test_anchor_mode_summarises_the_roles_actually_used():
+    assert repair.anchor_mode(["dub"]) == "native-dub"
+    assert repair.anchor_mode(["translation"]) == "native-translation"
+    assert repair.anchor_mode(["dub", "translation"]) == "mixed"
+    assert repair.anchor_mode([]) == "none"
+    assert repair.anchor_mode([None]) == "none"
+
+
+def _r2_episode(tmp_path, monkeypatch, stem, tracks, out="a repaired line"):
+    """process() over one card with ``tracks`` as the episode's classified references."""
+    conf_path = stem + repair.CONF_SUFFIX
+    _write_conf(conf_path, stem + repair.SRT_SUFFIX, [_conf_row(0.0, 2.0, "garbled line")])
+    g = gl()
+    monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_r2.mkv"))
+    monkeypatch.setattr(repair, "glossary_for", lambda video: g)
+    monkeypatch.setattr(repair, "reference_tracks", lambda video, conf=None: tracks)
+    prompts = []
+    monkeypatch.setattr(repair, "llm", lambda prompt, model=None: prompts.append(prompt) or out)
+    return conf_path, prompts
+
+
+def test_process_feeds_the_prompt_only_the_winning_track_and_records_its_role(tmp_path, monkeypatch):
+    """The bug: the prompt saw dub+translation joined. Now it sees the dub track alone, and
+    the queue entry + summary say which role/track/provenance the reference came from."""
+    stem = str(tmp_path / "ep_r2_dub")
+    dub = repair_ref_stub.track([(0.0, 2.0, "dub caption wording")], role="dub", title="English Dub", index=1)
+    trans = repair_ref_stub.track([(0.0, 2.0, "translation wording")], role="translation", title="Full Subtitles [GJM]", index=2)
+    conf_path, prompts = _r2_episode(tmp_path, monkeypatch, stem, [trans, dub])
+
+    assert repair.process(conf_path) == "repaired"
+    assert len(prompts) == 1
+    assert "dub caption wording" in prompts[0]
+    assert "translation wording" not in prompts[0]
+
+    entries = unresolved.items(stem)
+    applied = [e for e in entries if e.get("stage") == "repair_applied"]
+    assert len(applied) == 1
+    assert applied[0]["ref_role"] == "dub"
+    assert applied[0]["ref_provenance"] == "native"
+    assert applied[0]["ref_track_title"] == "English Dub"
+    assert applied[0]["reference"] == "dub caption wording"
+    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    assert summary["anchor_mode"] == "native-dub"
+
+
+def test_process_records_translation_anchor_mode_when_only_a_translation_anchors(tmp_path, monkeypatch):
+    stem = str(tmp_path / "ep_r2_trans")
+    trans = repair_ref_stub.track([(0.0, 2.0, "translation wording")], role="translation", index=2)
+    conf_path, _ = _r2_episode(tmp_path, monkeypatch, stem, [trans])
+    repair.process(conf_path)
+    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    assert summary["anchor_mode"] == "native-translation"
+    assert [e for e in unresolved.items(stem) if e.get("stage") == "repair_applied"][0]["ref_role"] == "translation"
+
+
+def test_process_keeps_the_skip_behaviour_when_no_classified_track_overlaps(tmp_path, monkeypatch):
+    """R2 removes the merged pool, so the fallback is the pre-existing one: no reference,
+    no repair, the card is recorded as skipping for want of an anchor."""
+    stem = str(tmp_path / "ep_r2_none")
+    empty = repair_ref_stub.track([], index=1)
+    conf_path, prompts = _r2_episode(tmp_path, monkeypatch, stem, [empty])
+    assert repair.process(conf_path) == "repaired"  # the srt is still rewritten
+    assert prompts == []  # the LLM was never asked
+    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    assert summary["skipped_no_ref"] == 1 and summary["repaired"] == 0
+    assert summary["anchor_mode"] == "none"
+    assert [e.get("reason") for e in unresolved.items(stem)] == ["no_reference"]
+
+
+def test_queue_reference_is_recorded_up_to_the_prompt_window(tmp_path, monkeypatch):
+    """Queue entries used to truncate the reference at 120 chars; the prompt saw 300. The
+    evidence the reviewer gets is now the same window the model saw."""
+    stem = str(tmp_path / "ep_r2_wide")
+    long_line = "this is a deliberately long reference line that runs past one hundred and twenty characters " * 2
+    dub = repair_ref_stub.track([(0.0, 2.0, long_line)], role="dub", index=1)
+    conf_path, _ = _r2_episode(tmp_path, monkeypatch, stem, [dub], out="")  # llm_empty path
+    repair.process(conf_path)
+    entry = [e for e in unresolved.items(stem) if e.get("reason") == "llm_empty"][0]
+    assert 120 < len(entry["reference"]) <= repair.REF_WINDOW_CAP == 300
+    assert entry["ref_role"] == "dub"
+
+
+def test_ref_classic_restores_the_legacy_merged_pool(tmp_path, monkeypatch):
+    """Kill-switch: REPAIR_REF_CLASSIC=1 joins every track again, exactly as before R2,
+    and skips classification entirely; the summary marks the anchor as unclassified."""
+    monkeypatch.setenv("REPAIR_REF_CLASSIC", "1")
+    stem = str(tmp_path / "ep_r2_classic")
+    conf_path = stem + repair.CONF_SUFFIX
+    _write_conf(conf_path, stem + repair.SRT_SUFFIX, [_conf_row(0.0, 2.0, "garbled line")])
+    g = gl()
+    monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_r2.mkv"))
+    monkeypatch.setattr(repair, "glossary_for", lambda video: g)
+    monkeypatch.setattr(
+        repair, "dialogue_intervals", lambda video: [(0.0, 2.0, "dub caption wording"), (0.0, 2.0, "translation wording")]
+    )
+    monkeypatch.setattr(
+        repair, "reference_tracks", lambda *a, **k: (_ for _ in ()).throw(AssertionError("classifier must not run"))
+    )
+    prompts = []
+    monkeypatch.setattr(repair, "llm", lambda prompt, model=None: prompts.append(prompt) or "a repaired line")
+
+    assert repair.process(conf_path) == "repaired"
+    assert "dub caption wording" in prompts[0] and "translation wording" in prompts[0]  # the old joined string
+    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    assert summary["anchor_mode"] == "unclassified"
+    applied = [e for e in unresolved.items(stem) if e.get("stage") == "repair_applied"][0]
+    assert "ref_role" not in applied  # classic entries stay unclassified
+
+
+def test_legacy_queue_entries_without_ref_fields_still_read(tmp_path):
+    """Backward compatibility: files written before R2 must keep reading fine."""
+    stem = str(tmp_path / "ep_legacy")
+    line = json.dumps(
+        {"stage": "repair_applied", "reason": "accepted", "original_text": "a", "proposed_text": "b", "resolved": False}
+    )
+    open(unresolved.path_for(stem), "w").write(line + "\n")
+    items = unresolved.items(stem)
+    assert len(items) == 1 and items[0]["proposed_text"] == "b"
+    assert items[0].get("ref_role") is None
 
 
 # --- non-worsening gate on an already-invalid card (C2 refinement) --------------
@@ -1283,7 +1450,7 @@ def test_process_takes_no_reference_from_an_implausible_source_window(tmp_path, 
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_badwin.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(6.5, 7.5, "a neighbour's line")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(6.5, 7.5, "a neighbour's line")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "should never be called")
 
     repair.process(conf_path)
@@ -1319,7 +1486,7 @@ def test_process_still_anchors_a_plausible_window(tmp_path, monkeypatch):
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_okwin.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(12.0, 12.9, "the right line")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(12.0, 12.9, "the right line")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     repair.process(conf_path)
@@ -1774,7 +1941,7 @@ def test_the_queue_records_the_secondary_models_text_not_the_first_passes(tmp_pa
     )
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_2pass_q.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(
         repair, "llm", lambda prompt, model=None: "I saw Spandam there" if model == "secondary-model" else "I saw Spandam"
     )
@@ -1825,7 +1992,7 @@ def test_a_reject_verdict_keeps_the_post_correction_asr_text(tmp_path, monkeypat
     stem, conf_path = _one_target(tmp_path, "ep_reject")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_reject.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandom")
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: (_store("I saw spondum", "I saw Spandam", "reject"), "Show"))
 
@@ -1850,7 +2017,7 @@ def test_a_correct_verdict_applies_the_humans_text(tmp_path, monkeypatch):
     stem, conf_path = _one_target(tmp_path, "ep_correct")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_correct.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandom")
     store = _store("I saw spondum", "I saw Spandam", "correct", text="I saw Spandam over there")
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: (store, "Show"))
@@ -1870,7 +2037,7 @@ def test_a_correct_that_does_not_fit_the_card_is_refused_and_recorded(tmp_path, 
     stem, conf_path = _one_target(tmp_path, "ep_unfit")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_unfit.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandom")
     too_long = "I saw Spandam standing over there beside the harbour gate"
     monkeypatch.setattr(
@@ -1921,7 +2088,7 @@ def test_a_correct_too_wide_for_one_line_but_splittable_ships_as_two_cues(tmp_pa
     )
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_split.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandom")
     monkeypatch.setattr(
         decisions,
@@ -1945,7 +2112,7 @@ def _run_force_case(tmp_path, monkeypatch, name, store):
     stem, conf_path = _one_target(tmp_path, name)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / (name + ".mkv")))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandom by the gate here")
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: (store, "Show"))
     repair.process(conf_path)
@@ -1972,7 +2139,7 @@ def test_a_forced_repair_that_cannot_be_rendered_is_still_refused(tmp_path, monk
     stem, conf_path = _one_target(tmp_path, "ep_force_unfit")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_force_unfit.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     unrenderable = "I saw Spandam standing over there beside the harbour gate"
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: unrenderable)
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: (_store("I saw spondum", unrenderable, "force"), "Show"))
@@ -1991,7 +2158,7 @@ def _run_accept_case(tmp_path, monkeypatch, name, store):
     stem, conf_path = _one_target(tmp_path, name)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / (name + ".mkv")))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandom")
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: (store, "Show"))
     repair.process(conf_path)
@@ -2035,7 +2202,7 @@ def test_an_empty_store_is_byte_identical_and_still_reaches_the_lookup(tmp_path,
     stem, conf_path = _one_target(tmp_path, "ep_empty")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_empty.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandom")
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: ({}, "Show"))
     seen = []
@@ -2082,7 +2249,7 @@ def test_a_human_verdict_is_not_overridden_by_the_secondary_model(tmp_path, monk
     stem, conf_path = _one_target(tmp_path, "ep_verdict_2pass")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_verdict_2pass.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(
         repair, "llm", lambda prompt, model=None: "I saw Spandam there" if model == "secondary-model" else "I saw Spandom"
     )
@@ -2148,7 +2315,7 @@ def test_the_summary_still_accounts_for_every_target_once_verdicts_fire(tmp_path
 
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_acct.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 6.0, "the official sub line")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 6.0, "the official sub line")]))
     monkeypatch.setattr(repair, "llm", fake_llm)
     store = decisions.record({}, "I saw spondum", "I saw Spandam", "reject")
     store = decisions.record(
@@ -2186,7 +2353,7 @@ def test_a_second_repair_pass_does_not_re_queue_a_line_already_in_the_queue(tmp_
     stem, conf_path = _one_target(tmp_path, "ep_twice")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_twice.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandom")
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: ({}, "Show"))
 
@@ -2217,7 +2384,7 @@ def test_a_changed_proposal_supersedes_the_pending_one_for_that_line(tmp_path, m
     # (on by default since phase 27) would refuse, so the check is set back off here.
     monkeypatch.setenv("REPAIR_KEEP_NAME_PARTS", "0")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_superseded.mkv"))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: ({}, "Show"))
 
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"], hard_fixes={"Spandom": "Spandam"}))
@@ -2282,7 +2449,7 @@ def test_process_honours_the_shows_declaration_not_just_the_global(tmp_path, mon
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)  # the global stays shut
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_declared.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])  # no fansub anchor anywhere
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))  # no fansub anchor anywhere
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: calls.append(prompt) or "garbled line")
 
     assert repair.process(conf_path) == "repaired"
@@ -2321,7 +2488,7 @@ def test_a_pass_that_would_skip_every_target_refuses_to_overwrite_prior_repairs(
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_prior.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])  # no fansub anchor anywhere
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))  # no fansub anchor anywhere
 
     assert repair.process(conf_path) == "refused"
     assert open(srt_path).read() == shipped, "the shipped repairs were overwritten with raw ASR"
@@ -2345,7 +2512,7 @@ def test_refusing_to_overwrite_prior_repairs_records_a_failure_not_no_reference(
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_prior_stage.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: glossary.load_dict({"show": "One Pace"}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "refused"
     assert common.read_stages(stem)["repair"]["outcome"] == "refused"
@@ -2399,7 +2566,7 @@ def _atomic_repair_setup(tmp_path, monkeypatch, n_cards=2):
     _write_conf(conf_path, srt_path, rows)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_atomic.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl())
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 9.0, "a reference line")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 9.0, "a reference line")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "line fixed")
     return stem, conf_path, srt_path
 
@@ -2475,7 +2642,7 @@ def test_the_refusal_is_narrow_and_a_quiet_episode_still_rewrites(tmp_path, monk
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_quiet.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 2.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 2.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "anchored line")  # nothing to fix
 
     assert repair.process(conf_path) == "repaired"
@@ -2504,7 +2671,7 @@ def test_an_llm_empty_card_still_ships_a_stored_human_correction(tmp_path, monke
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: (store, "Show"))
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_rescue_empty.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 4.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 4.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "")  # transport failure
 
     assert repair.process(conf_path) == "repaired"
@@ -2530,7 +2697,7 @@ def test_an_unanchored_card_still_ships_a_stored_human_correction(tmp_path, monk
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_rescue_noref.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])  # no anchor at all
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))  # no anchor at all
     monkeypatch.setattr(
         repair, "llm", lambda prompt, model=None: (_ for _ in ()).throw(AssertionError("no anchor -> the LLM must not be called"))
     )
@@ -2562,7 +2729,7 @@ def test_a_rescued_correction_too_wide_for_one_line_ships_as_two_cues(tmp_path, 
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_rescue_split.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])  # no anchor -> the skip branch
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))  # no anchor -> the skip branch
 
     assert repair.process(conf_path) == "repaired"
     srt = open(srt_path).read()
@@ -2593,7 +2760,7 @@ def test_a_rescued_correction_that_cannot_be_rendered_is_still_refused(tmp_path,
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_rescue_unfit.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
     shipped = open(srt_path).read()
@@ -2625,7 +2792,7 @@ def test_a_skipped_card_a_human_ruled_on_is_never_silent(tmp_path, monkeypatch):
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_owed.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
     summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
@@ -2657,7 +2824,7 @@ def test_a_forced_verdict_on_a_skipped_card_still_ships(tmp_path, monkeypatch):
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_forced.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=[]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
     shipped = open(srt_path).read()
@@ -2684,7 +2851,7 @@ def test_an_accept_verdict_on_a_skipped_card_is_owed_not_guessed(tmp_path, monke
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_accept.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
     summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
@@ -2719,7 +2886,7 @@ def test_an_approval_orphaned_by_a_new_proposal_is_queued_not_silent(tmp_path, m
     monkeypatch.setattr(repair, "llm", lambda *a, **k: "I saw Spandine")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_stale.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam", "Spandine"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
     summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
@@ -2751,7 +2918,7 @@ def test_a_superseded_rejection_is_not_flagged_as_stale(tmp_path, monkeypatch):
     monkeypatch.setattr(repair, "llm", lambda *a, **k: "I saw Spandine")
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_superseded.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam", "Spandine"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
     summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
@@ -2779,7 +2946,7 @@ def test_a_first_run_with_no_anchor_says_so_loudly(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_first_run.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl())
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
     out = capsys.readouterr().out
@@ -2800,7 +2967,7 @@ def test_an_episode_that_repaired_something_does_not_get_the_no_anchor_warning(t
     )
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_healthy.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gl(names=["Spandam"]))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 4.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 4.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandam")
 
     assert repair.process(conf_path) == "repaired"
@@ -2823,7 +2990,7 @@ def test_a_show_with_no_glossary_is_reported_not_silently_no_opped(tmp_path, mon
     )
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_nogloss.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: glossary.load_dict({}))  # nothing resolved
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 4.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 4.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "I saw Spandam")
 
     assert repair.process(conf_path) == "repaired"
@@ -2851,7 +3018,7 @@ def test_a_dead_backend_refuses_the_episode_instead_of_rebuilding_raw_asr(tmp_pa
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_deadbackend.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 2.0, "a reference line")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 2.0, "a reference line")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: repair.LLM_UNREACHABLE)
 
     assert repair.process(conf_path) == "refused"
@@ -2875,7 +3042,7 @@ def test_backend_unreachable_and_llm_empty_are_never_the_same_stage_outcome(tmp_
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_unreachable_stage.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: g)
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 2.0, "a reference line")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 2.0, "a reference line")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: repair.LLM_UNREACHABLE)
 
     assert repair.process(conf_path) == "refused"
@@ -3212,7 +3379,7 @@ def _many_target_episode(tmp_path, monkeypatch, n, with_ref, llm_fn):
     _write_conf(conf_path, stem + repair.SRT_SUFFIX, rows)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_many.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda v: gl())
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda v: [(0.0, with_ref * 3.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, with_ref * 3.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", llm_fn)
     return stem, conf_path
 

@@ -466,12 +466,17 @@ for _k in [_k for _k in list(sys.modules) if _k == "dubtitlerr" or _k.startswith
     del sys.modules[_k]
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import repair
+from dubtitlerr.core.reftracks import Event, Track
 
 with open(os.environ["CALLLOG"], "a") as f:
     f.write("repair " + os.path.basename(sys.argv[1]).split(".")[0] + "\\n")
 g = glossary.load_dict({{"names": [], "hard_fixes": {{}}, "show": "T"}})
 repair.glossary_for = lambda video: g
-repair.dialogue_intervals = lambda video: [(0.0, 30.0, "the official sub")]
+repair.reference_tracks = lambda video, conf=None: [
+    Track(index=1, codec="ass", lang="en", title="Full Subtitles", provenance="native",
+          role="translation", role_confirmed=True, role_overlap=None,
+          events=(Event(0.0, 30.0, "the official sub"),))
+]
 
 
 def llm(prompt, model=None):

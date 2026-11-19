@@ -6,6 +6,7 @@ Synthetic lines only; the one word-count rule is unresolved.word_changes."""
 import json
 
 import pytest
+import repair_ref_stub
 
 from dubtitlerr.core import unresolved
 from dubtitlerr.glossary import glossary
@@ -125,7 +126,7 @@ def _episode(tmp_path, monkeypatch, original, proposal, gloss=None):
     )
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: gloss or glossary.load_dict({}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 6.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 6.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: proposal)
     repair.process(conf)
     return stem, json.load(open(stem + ".dubtitles.repair-summary.json"))
@@ -282,7 +283,7 @@ def test_the_summary_counts_the_newly_accepted_proposals_only_when_the_flag_is_o
         )
         monkeypatch.setattr(repair, "find_video", lambda s: str(sub / "ep.mkv"))
         monkeypatch.setattr(repair, "glossary_for", lambda video: glossary.load_dict({}))
-        monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.5, "the official sub")])
+        monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.5, "the official sub")]))
         monkeypatch.setattr(repair, "llm", lambda prompt, model=None: DENSE + ".")
         repair.process(conf)
         return json.load(open(stem + ".dubtitles.repair-summary.json"))
@@ -305,7 +306,7 @@ def test_a_punctuation_only_repair_the_guards_would_have_admitted_anyway_is_not_
     )
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: glossary.load_dict({}))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 6.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 6.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: DENSE + ".")
     repair.process(conf)
     summary = json.load(open(stem + ".dubtitles.repair-summary.json"))

@@ -4,6 +4,7 @@ Sol's probe: unchanged original, successive model proposals X, Y, X with no huma
 superseded by Y; run 3 found X among the queue's history, so it neither reopened X nor retired Y: the SRT held X while the only
 pending question was Y, and an accept on Y released the review gate for a line nobody had reviewed."""
 
+import repair_ref_stub
 import test_repair as tr
 
 from dubtitlerr.core import decisions, unresolved
@@ -16,7 +17,7 @@ X, Y = "the new line", "the good line"
 def _run(tmp_path, monkeypatch, replies):
     stem, conf_path = tr._one_target(tmp_path, "ep_osc", text=ORIG)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_osc.mkv"))
-    monkeypatch.setattr(repair, "dialogue_intervals", lambda video: [(0.0, 1.0, "the official sub")])
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.0, "the official sub")]))
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: ({}, "Show"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: tr.gl())
     it = iter(replies)

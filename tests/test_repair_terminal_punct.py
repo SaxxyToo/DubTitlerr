@@ -5,6 +5,7 @@ trailing ellipsis to or from '.'/'!'. Synthetic lines only."""
 import json
 
 import pytest
+import repair_ref_stub
 
 from dubtitlerr.core import unresolved
 from dubtitlerr.glossary import glossary
@@ -27,7 +28,9 @@ def run_episode(tmp_path, monkeypatch, cards, answers, name="ep", dur=6.0):
     monkeypatch.setattr(repair, "find_video", lambda s: str(sub / "ep.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: glossary.load_dict({}))
     monkeypatch.setattr(
-        repair, "dialogue_intervals", lambda video: [(k * dur, (k + 1) * dur, "the official sub") for k in range(len(cards))]
+        repair,
+        "reference_tracks",
+        repair_ref_stub.stub([(k * dur, (k + 1) * dur, "the official sub") for k in range(len(cards))]),
     )
     it = iter(answers)
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: next(it))
