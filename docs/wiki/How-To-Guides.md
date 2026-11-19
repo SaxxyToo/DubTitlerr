@@ -724,6 +724,127 @@ Community glossaries live in their own repository with a pull-request path for c
 
 ---
 
+## Get notified when runs finish
+
+**Problem:** you want a message when a sweep or a merge pass ends, or when one fails, without
+watching the log.
+
+**1. Open the panel.** As an admin, go to **Settings > Connect** (`#/settings/connect`) and find the
+**Notifications** list. A signed-in non-admin sees the providers read-only.
+
+**2. Add a provider and pick its kind.**
+
+- **Discord.** In Discord, open the channel's settings, then **Integrations > Webhooks > New
+  Webhook**, and copy the webhook URL. In DubTitlerr, name the provider (for example `discord-runs`),
+  choose `Discord`, and paste the URL into the write-only **Webhook URL** field.
+- **ntfy.** Choose `ntfy`, then enter the server (`https://ntfy.sh`, or your own instance's base URL)
+  and a topic. If the topic needs an access token, enter it in the write-only **Token** field.
+  Subscribe to the same topic in the ntfy app or at `https://ntfy.sh/<topic>`.
+- **Webhook.** Choose `Webhook` and paste the endpoint URL — anything that accepts a JSON `POST`,
+  such as Notifiarr or a small script of your own. It receives the envelope described in
+  [Reference](Reference.md#notifications).
+
+**3. Pick triggers.** Tick the events this provider should receive:
+
+| Trigger             | Sent when |
+| ------------------- | --------- |
+| Run requested       | a run request is queued from the UI or the API |
+| Sweep completed     | a generation sweep ends |
+| Merge completed     | a merge pass ends |
+| Pass failed         | a loop or stage fails: a stalled generate pass, a merge pass that cannot start, the generate loop exiting |
+| Review pending      | a sweep ends with unresolved review items |
+| Episode delivered   | every episode a merge pass delivers — one message each, so it starts unticked |
+
+**4. Save, then Test.** Save the list and click **Test** on the provider. A saved provider answers
+with one test message (`DubTitlerr test notification`); an error names the failure without ever
+showing the URL or token. The Test path is the same code the pipeline uses, so a passing Test is
+evidence the next real event will arrive.
+
+**5. Confirm on the next pass.** `Sweep completed` and `Merge completed` arrive at the end of the
+next pass. A notification that fails (the endpoint is down, the token is wrong) writes one log line
+and is retried once; it never blocks, fails or delays a run.
+
+If you would rather send a test from the shell:
+
+```sh
+docker exec dubtitlerr python3 -m dubtitlerr.core.notify test --name discord-runs
+```
+
+Secrets stay write-only: after saving, the page shows **set** or **not set** and never the value.
+Changing a provider's kind, or changing an ntfy server, drops its stored secret unless you enter a
+new one in the same save. The values live in `secrets.json` (mode 0600), and no log line carries
+them.
+
+---
+
+## Drive DubTitlerr from an agent
+
+**Problem:** an agent or script should read the pipeline's state and start runs without a browser.
+
+**1. Get the admin API key.** In the web UI, open the **Security** page, which reads
+`GET /api/apikey`, or read `/config/apikey` (mode 0600) on the host. Rotating the key from that page
+(`POST /api/apikey/reset`) invalidates the old one immediately.
+
+**2. Keep the key out of the repository.** Put it in the agent's environment or secret store; never
+in a config file you commit:
+
+```sh
+export DUBTITLER_URL=http://<host>:8842
+export DUBTITLER_KEY="$(cat /path/to/apikey)"
+```
+
+**3. Read state.** Every `/api/v1` read requires a signed-in user or the API key; the key is an admin
+credential, so it covers reads and writes.
+
+```sh
+curl -sS -H "X-Api-Key: $DUBTITLER_KEY" "$DUBTITLER_URL/api/v1/system/status"
+curl -sS -H "X-Api-Key: $DUBTITLER_KEY" "$DUBTITLER_URL/api/v1/queue"
+curl -sS -H "X-Api-Key: $DUBTITLER_KEY" "$DUBTITLER_URL/api/v1/history?limit=25&offset=0"
+curl -sS -H "X-Api-Key: $DUBTITLER_KEY" "$DUBTITLER_URL/api/v1/library"
+```
+
+`status` reports the version tier, boot id, loop state (`running`, `idle`, `stalled`, `stopping`,
+`unknown`), queue depth, library cache age and health in one call — enough for an agent to decide
+whether to queue work before asking.
+
+**4. Queue work with the command endpoint.** Every write is `POST /api/v1/command` with
+`{"name": ..., "params": {...}}`:
+
+```sh
+curl -sS -X POST -H "X-Api-Key: $DUBTITLER_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "run.request", "params": {"show": "Frieren", "season": 1, "episode_re": "E0[1-3]"}}' \
+  "$DUBTITLER_URL/api/v1/command"
+```
+
+`run.request` takes the same fields as the Runs page: `show` (required, must be an existing folder
+under `ANIME_ROOT`), `season`, `episode_re`, `require_eng`, `force`. An identical request that is
+still pending returns **409** with the existing request id instead of queueing a second copy.
+
+**5. Configure or test a notification from the same surface.**
+
+```sh
+curl -sS -X POST -H "X-Api-Key: $DUBTITLER_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "notification.test", "params": {"name": "discord-runs"}}' \
+  "$DUBTITLER_URL/api/v1/command"
+```
+
+`GET /api/v1/notifications` lists providers with their secrets reported as set or not set;
+`POST /api/v1/notifications` creates one and `PUT /api/v1/notification/<name>` merges into an
+existing one (an omitted secret keeps the stored one; `{"clear": true}` drops it). The body shape is
+the same `notifications` list Settings saves.
+
+**6. Point the agent at the spec.** `GET /api/v1/openapi.json` (also
+`$DUBTITLER_URL/api/v1/openapi.json`) is the full surface: every path, method, parameter, response
+and the required role, carried as `x-dubtitlerr-role` on each operation. Reads need `user`, writes
+need `admin`, and the spec is checked against the live route table by the test suite, so an agent can
+trust it over anything in prose.
+
+A valid `X-Api-Key` also exempts the request from the browser's `X-DubTitlerr-Request` CSRF header,
+so send the key and a JSON body and nothing else. Secret-bearing values are never returned by any
+`/api/v1` route.
+
+---
+
 ## Report a problem
 
 Include:

@@ -1,11 +1,13 @@
 # Design decisions
 
-Understanding-oriented. The two decisions that are expensive to rediscover, recorded because the
-code that carried them no longer explains itself. Each one names the measurement that forced it, so
-a future change can be argued against the evidence rather than against a comment.
+Understanding-oriented. The decisions that are expensive to rediscover, recorded because the code
+that carried them no longer explains itself. Each one names the evidence that forced it, or says
+plainly where evidence is still owed, so a future change can be argued against the record rather
+than against a comment.
 
-If you are about to reverse one of these, read the measurement first. Both were made after an
-earlier instinct turned out to be wrong.
+If you are about to reverse one of these, read the evidence first. The first two were made after an
+earlier instinct turned out to be wrong. The last three were made against a measured gap, and the
+Jellyfin entry is marked as a reason rather than a measurement.
 
 ---
 
@@ -161,3 +163,195 @@ the thing to beat, not the threshold.
 Historical `conf.json` sidecars still carry `flag: "maybe_silence"` from past runs, so
 `tools/timing_compare.py` keeps its bucket for that key. Deleting the rule does not retroactively
 clean the data it produced.
+
+---
+
+## 3. `/api/v1` is a frozen, additive contract beside the UI's backend
+
+**Accepted 2026-11-19.** The code is `dubtitlerr/review/review_api_v1.py` and the static
+`dubtitlerr/review/openapi.json`.
+
+### The problem
+
+The review server already had role-based access control, an admin API key in `X-Api-Key`, and audit
+logging on every mutating action. What it did not have was a contract. The `/api/*` surface is the
+web UI's backend: it moves when the UI moves, its shapes are whatever the current page needs, and
+nothing promises stability. The intended consumer — an AI agent driving DubTitlerr — would have been
+building on a surface that changes without notice, and there was no machine-readable description of
+it at all, so every client would re-derive the routes from source.
+
+### The decision
+
+A versioned namespace, `/api/v1`, is the frozen contract for external consumers. The classic
+`/api/*` routes stay exactly as they are; v1 is dispatched from the same router and shares the same
+role table and auth path.
+
+- Reads are `user`, writes are `admin`. A v1 path the module does not serve is not public: it falls
+  through to the role table's fail-closed default and needs `admin`.
+- `X-Api-Key` is an admin credential, and a valid key exempts the request from the browser CSRF
+  header, so an agent sends a key and a JSON body.
+- Writes are a closed set: `run.request`, `system.restart`, `notification.test`. Supporting
+  resources are the ones that already existed — status, health, queue, history, library, settings,
+  notification CRUD, API-key rotation state.
+- `openapi.json` is a static file served at `/api/v1/openapi.json`, with `x-dubtitlerr-role` on every
+  operation. `tests/test_review_api_v1_openapi.py` compares it with the live route table, so the
+  document cannot silently describe a surface that no longer exists.
+- No v1 route returns a stored secret. A notification reports `{"set": true}`; settings reuse the
+  masked read; the key route reports rotation state only.
+
+Rejected alternatives:
+
+- **Freeze the classic `/api/*` surface instead.** Cheap in the short term and wrong in the long
+  term: it is the UI's private backend, and freezing it would either stop the UI from evolving or
+  break the promise on the first redesign.
+- **Add routes to `/api/*` without a version.** Indistinguishable from the UI's backend to any
+  consumer, so there is no way to know which routes are safe to depend on.
+- **Generate the OpenAPI document from the handlers.** Tempting, and it would remove one hand-kept
+  file. It also couples the contract to handler internals, which is the opposite of a frozen shape;
+  the consistency test buys the drift protection without that coupling.
+- **Include queue removal in v1.** Deliberately left out: it is upstream issue #45 territory ("remove
+  a queued request before it starts"), and inventing it here would create a fork-only API surface
+  that upstream has no way to honour.
+
+### What it costs
+
+Easier: an agent has one stable, self-describing surface, and the wiki can point at a spec instead of
+restating fourteen endpoints in prose. The key that already existed now buys something defined.
+
+Harder, and accepted: two surfaces to keep working. The spec is hand-maintained, and the test guards
+route and role drift, not field-level schema drift between an operation and its handler — a renamed
+response field is caught by a client, not by CI. `GET /api/v1/history` also has a real first-call cost:
+it reads up to two small sidecars per episode on the media mount, once per library walk, capped at
+5,000 episodes with `truncated: true` past the cap. And because reads are `user`+, `/api/v1/health`
+and `/api/v1/apikey/info` are visible to a plain reviewer, unlike the public `/healthz` and the
+admin-only classic `/api/apikey`; the key route returns rotation state only, never the key.
+
+---
+
+## 4. Notifications are a Connect-style provider list, and their failure is not a run failure
+
+**Accepted 2026-11-19.** The code is `dubtitlerr/core/notify.py` for the sender,
+`dubtitlerr/settings/settings_notifications.py` for the validation, and the emitters at the pass
+boundaries in `gen_loop.sh`, `merge_pass.sh` and `container_run.sh`.
+
+### The problem
+
+Nothing in the pipeline pushed events anywhere. The run was only observable by reading logs or
+reloading the review UI, which is the wrong shape for an unattended overnight builder: a failed merge
+pass and a finished sweep looked the same until someone looked.
+
+The naive fix — one environment variable per destination, or a single "post to this URL" hook —
+multiplies configuration paths and loses the thing the UI already does well. Connections had already
+established the pattern for a user-defined list with write-only secrets, per-item validation, a Test
+button, and URL safety guards. A second, bespoke mechanism for outbound destinations would be a second
+set of rules to keep honest.
+
+### The decision
+
+A notification is a provider: `{name, kind, enabled, triggers[]}` plus its kind's fields, stored with
+the same settings machinery as Connections (`settings.json` for visible fields, `secrets.json` mode
+0600 for write-only ones). Kinds are a registry — `discord`, `ntfy`, `webhook` today, so another kind
+is an addition, not a rewrite. Each provider chooses its own triggers from a fixed event set:
+`run.requested`, `sweep.completed`, `merge.completed`, `pass.failed`, `review.pending`, and
+`episode.delivered` (off by default in the panel, because it is one message per episode).
+
+Delivery is deliberately boring and bounded: one `POST` per provider per event through `urllib`, one
+10-second timeout, one retry after a timeout, a network error or a 5xx, never a retry after a 4xx.
+Every failure is logged as one line naming the provider, the event and the outcome, and swallowed.
+The loops call the sender with `|| true`; the review server emits in-process *after* a request is
+already written. A notification can fail; a run cannot fail because a notification failed.
+
+The sender is a stdlib-only leaf, like `atomic_file.py` and `glossary_lock.py`, because the shell
+loops import it from a minimal app directory that does not ship `pysubs2`. For the same reason its
+URL guard is a duplicate of `settings_connections.host_problem` rather than an import.
+
+Rejected alternatives:
+
+- **A single generic webhook.** One URL, one JSON body, no per-destination formatting. It is less
+  code, and it makes the common case (a phone notification) somebody else's problem.
+- **A persistent delivery queue with retries.** It turns notifications into pipeline state: a
+  destination that is down would produce a backlog to reason about, and a bug there could stall a
+  pass. The event is a status line, not a ledger; one retry and a log line is the right weight.
+- **Fail the pass when a configured provider cannot receive.** The notification is a report about
+  work that already happened. Discarding that work because the report bounced is the worse failure.
+- **A `version` field in the envelope.** The repo exposes no runtime application version — pyproject's
+  number is packaging metadata — so any value there would be a claim a consumer could not check.
+
+### What it costs
+
+Easier: one place to add a destination, one validation path shared with Settings (including the rule
+that changing a kind or an ntfy server drops the stored secret unless a new one arrives in the same
+save), and a Test button that exercises exactly the code path a real event uses.
+
+Harder, and accepted: the 10-second timeout is one number, because `urllib` exposes a single timeout
+covering connect and reads — connect cannot be bounded separately from reads. A delivery failure is
+visible only as a log line; there is no inbox of failed notifications to replay. The secret-never-logged
+rule depends on the log line staying outcome-only, which is why the renderer catches every exception
+and records its type, never its text.
+
+---
+
+## 5. The watch queue is the union of three incomplete sources, read under a tri-state rule
+
+**Accepted 2026-08-21 by measurement; Jellyfin added 2026-11-19.** The code is
+`dubtitlerr/pipeline/watch_queue.py`.
+
+### The problem
+
+The queue's only question is *is this show live?*, and it originally answered it from WatchState plus
+Plex as though the two were interchangeable views of the same fact. The 2026-08-21 measurement showed
+they are not, and that each one alone returns a confident, correctly-sorted, **incomplete** list:
+
+- **WatchState only** left One Pace 40.0 days stale. Playback was on Jellyfin, and WatchState syncs
+  the watched flag into Plex without bumping Plex's show-level `lastViewedAt`.
+- **Plex only** missed shows that WatchState was not configured for: SPY x FAMILY, Serial Experiments
+  Lain, Mashle and SK8 the Infinity. WatchState covered one Plex account, so other Plex users were
+  invisible to it.
+
+Neither source is a superset, so "prefer the better one" has no correct answer. The second problem is
+an outage: a source that cannot be reached also returns nothing, and a queue rebuilt from "nothing
+watched" silently narrows the sweep.
+
+### The decision
+
+The queue is the **union** of independent sources, and each source is read under a tri-state rule:
+reachable-with-data, reachable-empty, unreachable. An empty answer and an unreachable source are
+different facts, and only one of them is evidence.
+
+- If a **configured** source cannot be read, the order file is left alone. A stale queue is safe; a
+  queue narrowed by an outage is not.
+- Jellyfin became a third direct source — the server both WatchState and Plex are downstream of. Its
+  rows are additive: with neither `JELLYFIN_URL` nor `JELLYFIN_API_KEY` set it is simply not a source,
+  so every existing deployment keeps working unconfigured. A half-configured Jellyfin is a mistake,
+  not an absent source, and refuses.
+- Sources are matched to folders by TVDB id first (`parent.guid_tvdb`, the Plex `tvdb://` Guid,
+  Jellyfin's `ProviderIds.Tvdb`) against `{tvdb-N}` in the folder name, and only then by title, with a
+  shared title reported as unmatched rather than guessed.
+- Pagination walks **every page**. A partial first page is not an answer; Jellyfin hitting its page
+  backstop raises `Unreachable` instead of returning a slice.
+- The report line names all three sources, so a source that is absent is visible rather than implied.
+
+Rejected alternatives:
+
+- **Treat an unreachable source as empty.** This is the silent-narrowing bug in one line, and it is
+  the failure the tri-state rule exists to prevent.
+- **Make Jellyfin required like WatchState and Plex.** That would refuse every existing deployment
+  until it configured a server, for a source that is additive.
+- **Pick one authoritative source.** Falsified by the two measurements above: whichever one is
+  chosen, the other holds shows it cannot see.
+- **Match by title alone.** A title two folders share (`JoJo's Bizarre Adventure`, 1993 and 2012) has
+  no correct answer, so it is reported unfound and the id settles it.
+
+### What it costs
+
+Easier: the queue no longer depends on what a sync layer managed to copy, and an outage degrades into
+a stale-but-safe queue instead of a quietly shorter one. The three-source line in the report makes the
+difference visible on every run.
+
+Harder, and accepted: three network dependencies sit on the generate path, and each must be reachable
+or the write is refused. The Jellyfin entry carries a debt the other two do not: **its justification
+is a reason, not a measurement.** No live comparison of Jellyfin against the WatchState ∪ Plex union
+has been recorded yet, and two behaviours — whether `Filters=IsPlayed,IsResumable` is applied as OR by
+the deployed server, and whether `GET /Users` succeeds with the configured API key — are confirmed
+only against mocked HTTP. `TODO(deploy)` in the module docstring records exactly what the deploy phase
+must measure before this section can cite a number.
