@@ -1283,3 +1283,107 @@ def test_shows_cli_prints_one_show_per_line(tmp_path):
         check=True,
     ).stdout
     assert out == "Show A\nShow B\n"
+
+
+# --- run.requested: reported after creation, never able to fail it ----------------------------------
+
+# The notify module is reached through a lazy import inside _emit_run_requested, so these tests
+# replace notify.emit rather than any module-level name -- the server's own import path is what is
+# under test.
+
+
+def _create_one_request(tmp_path):
+    (tmp_path / "anime" / "Bleach").mkdir(parents=True, exist_ok=True)
+    return create(
+        {"show": "Bleach", "season": 2, "episode_re": "E01"},
+        anime_root=str(tmp_path / "anime"),
+        requests_dir=str(tmp_path / "requests"),
+    )
+
+
+def test_creating_a_request_emits_run_requested(tmp_path, monkeypatch):
+    from dubtitlerr.core import notify
+
+    seen = []
+    monkeypatch.setattr(notify, "emit", lambda event, summary, **kw: seen.append((event, summary, kw)) or [])
+
+    status, resp = _create_one_request(tmp_path)
+
+    assert status == 201
+    event, summary, kwargs = seen[0]
+    assert event == "run.requested"
+    assert summary == "run requested: Bleach S02 E01"
+    assert kwargs["loop"] == "review"
+    assert kwargs["counts"] == {"requests": 1}
+    assert kwargs["detail"] == {"request_id": resp["id"], "show": "Bleach"}
+
+
+def test_a_refused_duplicate_emits_nothing(tmp_path, monkeypatch):
+    from dubtitlerr.core import notify
+
+    seen = []
+    monkeypatch.setattr(notify, "emit", lambda event, summary, **kw: seen.append(event) or [])
+    assert _create_one_request(tmp_path)[0] == 201
+    assert _create_one_request(tmp_path)[0] == 409
+    assert seen == ["run.requested"]
+
+
+def test_a_failing_notification_never_fails_the_request(tmp_path, monkeypatch, capsys):
+    from dubtitlerr.core import notify
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(notify, "emit", boom)
+    status, resp = _create_one_request(tmp_path)
+
+    assert status == 201
+    assert (tmp_path / "requests" / f"{resp['id']}.json").exists()
+    assert "run.requested notification failed (RuntimeError)" in capsys.readouterr().err
+
+
+def test_a_notify_module_that_cannot_be_imported_never_fails_the_request(tmp_path, monkeypatch, capsys):
+    import dubtitlerr.core as core_pkg
+
+    # Both layers, because `from dubtitlerr.core import notify` prefers the package attribute once
+    # anything has imported the module: the real end state is "the module is not there".
+    monkeypatch.delattr(core_pkg, "notify", raising=False)
+    monkeypatch.setitem(sys.modules, "dubtitlerr.core.notify", None)
+
+    status, resp = _create_one_request(tmp_path)
+
+    assert status == 201
+    assert (tmp_path / "requests" / f"{resp['id']}.json").exists()
+    assert "run.requested notification failed" in capsys.readouterr().err
+
+
+def test_unresolved_pending_count_counts_open_entries_only(tmp_path):
+    queue = tmp_path / "Show"
+    queue.mkdir()
+    (queue / "ep01.dubtitles.unresolved.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"stage": "repair", "reason": "rejected_guard"}),
+                json.dumps({"stage": "repair", "reason": "no_reference", "resolved": True}),
+                json.dumps({"stage": "punctuation", "reason": "llm_empty"}),
+                "{torn final line",
+            ]
+        )
+        + "\n"
+    )
+    (queue / "ep02.dubtitles.unresolved.jsonl").write_text(json.dumps({"resolved": False}) + "\n")
+    (queue / "notes.txt").write_text("ignored\n")
+
+    assert review_requests.unresolved_pending_count(str(tmp_path)) == 3
+
+
+def test_unresolved_count_cli_prints_the_integer(tmp_path):
+    (tmp_path / "ep01.dubtitles.unresolved.jsonl").write_text(json.dumps({"stage": "repair"}) + "\n")
+    out = subprocess.run(
+        [sys.executable, "-m", "dubtitlerr.review.review_requests", "unresolved-count", str(tmp_path)],
+        cwd=str(Path(__file__).resolve().parent.parent),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert out == "1\n"

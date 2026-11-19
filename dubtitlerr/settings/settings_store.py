@@ -17,6 +17,7 @@ import urllib.parse
 from dubtitlerr.core.atomic_file import atomic_write_bytes
 from dubtitlerr.glossary import glossary_lock
 from dubtitlerr.settings import settings_connections as conns
+from dubtitlerr.settings import settings_notifications as notif
 from dubtitlerr.settings import settings_registry as reg
 
 VERSION = 1
@@ -33,6 +34,8 @@ class State:
         self.stages = {}  # stage -> connection name
         self.secret_values = {}  # KEY -> string
         self.conn_keys = {}  # connection name -> API key
+        self.notifications = []  # [{name, kind, enabled, triggers, <kind fields>}]
+        self.notif_secrets = {}  # notification name -> {url|token: secret}
         self.error = ""  # settings.json is unusable: why (saving is refused)
         self.secrets_error = ""  # secrets.json is unusable or not private: why (the exporter skips secrets)
         self.notes = []  # entries ignored on load, for the log
@@ -162,6 +165,21 @@ def _load_stages(state, stages):
     state.stages = stages
 
 
+def _load_notifications(state, items):
+    """Keep the notifications a PUT would accept; each dropped entry leaves a note naming it, never a secret."""
+    seen = set()
+    for index, item in enumerate(items):
+        prov, problems = notif.validate_notification(item)
+        label = item.get("name") if isinstance(item, dict) and isinstance(item.get("name"), str) else f"#{index}"
+        if problems:
+            state.notes.append(f"notification {label} ignored: {'; '.join(f'{f} {m}' for f, m in sorted(problems.items()))}")
+        elif prov["name"] in seen:
+            state.notes.append(f"notification {label} ignored: the name is used twice")
+        else:
+            seen.add(prov["name"])
+            state.notifications.append(prov)
+
+
 def load(environ=None):
     """The current State. Never raises."""
     state = State()
@@ -188,6 +206,8 @@ def load(environ=None):
             _load_connections(state, data["connections"])
         if isinstance(data.get("stages"), dict):
             _load_stages(state, {k: v for k, v in data["stages"].items() if isinstance(k, str) and isinstance(v, str)})
+        if isinstance(data.get("notifications"), list):
+            _load_notifications(state, data["notifications"])
     state.secrets_error = ensure_secret_perms(secrets_path(environ))
     if not state.secrets_error:
         sdata, state.secrets_error = _read_json(secrets_path(environ))
@@ -216,6 +236,23 @@ def load(environ=None):
                         state.conn_keys[name] = k
                     elif k is not None and k != "":
                         state.notes.append(f"connection key {name} ignored: must be one line of at most 512 characters")
+            raw_notifs = sdata.get("notifications") if isinstance(sdata.get("notifications"), dict) else {}
+            for name, fields in raw_notifs.items():
+                if not isinstance(name, str) or not isinstance(fields, dict):
+                    continue
+                prov = next((n for n in state.notifications if n["name"] == name), None)
+                if prov is None:
+                    continue  # a secret for a provider settings.json no longer holds: nothing reads it
+                kept = {}
+                for field in notif.SECRET_FIELDS.get(prov["kind"], ()):
+                    value = fields.get(field)
+                    why = notif.secret_problem(prov["kind"], field, value) if _valid_secret(value) else ""
+                    if why:
+                        state.notes.append(f"notification secret {name}.{field} ignored: {why}")
+                    elif _valid_secret(value):
+                        kept[field] = value
+                if kept:
+                    state.notif_secrets[name] = kept
     return state
 
 
@@ -267,11 +304,13 @@ def save(state, environ=None):
         "values": {**state.unknown, **state.values},
         "connections": state.connections,
         "stages": state.stages,
+        "notifications": state.notifications,
     }
     private = {
         "version": VERSION,
         "values": state.secret_values,
         "connections": {n: {"api_key": k} for n, k in sorted(state.conn_keys.items())},
+        "notifications": {n: dict(fields) for n, fields in sorted(state.notif_secrets.items())},
     }
     spath, ppath = settings_path(environ), secrets_path(environ)
     prev_secrets = None
@@ -298,8 +337,12 @@ def save(state, environ=None):
 
 
 def scrub(text, state):
-    """``text`` with every stored secret (and any connection key) replaced, for an error string that came from outside."""
-    for secret in [*state.secret_values.values(), *state.conn_keys.values()]:
+    """``text`` with every stored secret (and any connection key or notification secret) replaced, for an error string that
+    came from outside."""
+    stored = [*state.secret_values.values(), *state.conn_keys.values()]
+    for fields in state.notif_secrets.values():
+        stored.extend(fields.values())
+    for secret in stored:
         if len(secret) >= 8:
             text = text.replace(secret, "[redacted]")
     return text

@@ -34,6 +34,9 @@ def _run_loop(tmp_path, sweep, with_order=True, **extra):
     # review_requests now shares the atomic-write primitive, which is stdlib-only so this
     # minimal app dir stays pysubs2-free.
     shutil.copy(REPO / "dubtitlerr" / "core" / "atomic_file.py", app / "dubtitlerr" / "core" / "atomic_file.py")
+    # The loop reports at pass boundaries through the notify CLI. notify must import from this
+    # pysubs2-free skeleton: a module-scope common/pysubs2 import here would fail every test.
+    shutil.copy(REPO / "dubtitlerr" / "core" / "notify.py", app / "dubtitlerr" / "core" / "notify.py")
     (app / "dubtitlerr" / "glossary" / "mine_glossary.py").write_text("")
     (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(_STUB_GENERATE)
     (app / "dubtitlerr" / "pipeline" / "watch_queue.py").write_text(
