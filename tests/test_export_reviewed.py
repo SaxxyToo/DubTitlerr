@@ -10,8 +10,8 @@ import os
 import subprocess
 import sys
 
-import decisions
-import unresolved
+from dubtitlerr.core import decisions
+from dubtitlerr.core import unresolved
 
 EP_SUFFIX = ".dubtitles.conf.json"
 

@@ -47,13 +47,13 @@ import os
 import re
 import time
 
-import decisions
-from common import SIDECAR_MODE, atomic_write, out_for
+from dubtitlerr.core import decisions
+from dubtitlerr.core.common import SIDECAR_MODE, atomic_write, out_for
 
 # Imported as a NAME so the CLI resolves a show exactly the way the store and the mux gate
 # do. decisions.py imports stdlib plus common, and common imports nothing from this repo
 # (it is the leaf), so this cannot cycle back through here.
-from decisions import show_for
+from dubtitlerr.core.decisions import show_for
 
 SUFFIX = ".dubtitles.unresolved.jsonl"
 

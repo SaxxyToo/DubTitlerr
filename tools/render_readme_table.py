@@ -20,7 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from common import atomic_write
+from dubtitlerr.core.common import atomic_write
 
 START = "<!-- shows-table:start -->"
 END = "<!-- shows-table:end -->"

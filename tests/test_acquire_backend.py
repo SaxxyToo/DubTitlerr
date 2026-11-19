@@ -8,9 +8,9 @@ import json
 
 import pytest
 
-import glossary_acquire as ga
-import glossary_decision as gd
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_decision as gd
+from dubtitlerr.glossary import glossary_verify as gv
 
 HOSTED_ENV = {
     "TEST_DECISION_KEY": "sk-test-0123456789",  # gitleaks:allow -- test fixture, not a real credential

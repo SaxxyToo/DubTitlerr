@@ -8,8 +8,8 @@ import urllib.parse as up
 
 import pytest
 
-import glossary_acquire as ga  # noqa: F401  (the glossary save helper lives here)
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_acquire as ga  # noqa: F401  (the glossary save helper lives here)
+from dubtitlerr.glossary import glossary_verify as gv
 
 NARUTO = "https://naruto.fandom.com/api.php"
 FIXTURE = open(os.path.join(os.path.dirname(__file__), "fixtures", "plot_of_naruto.wikitext"), encoding="utf-8").read()
@@ -275,7 +275,7 @@ def add_episode(show, season, episode):
 def test_a_missing_wiki_scope_module_is_an_incomplete_scope_not_a_crash(tmp_path, wiki, monkeypatch):
     import sys
 
-    monkeypatch.setitem(sys.modules, "wiki_scope", None)  # `import wiki_scope` now raises ImportError
+    monkeypatch.setitem(sys.modules, "dubtitlerr.glossary.wiki_scope", None)  # the lazy import now raises ImportError
     show = library(tmp_path, {1: [1, 2]})
     path = gloss(tmp_path, ARC_INDEX)
     rep = gv.tag_arcs(str(path), str(show))

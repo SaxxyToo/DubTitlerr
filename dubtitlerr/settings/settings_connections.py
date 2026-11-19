@@ -14,7 +14,7 @@ import re
 import socket
 import urllib.parse
 
-import settings_registry as reg
+from dubtitlerr.settings import settings_registry as reg
 
 KINDS = ("llamacpp", "ollama", "openai")
 STAGES = ("repair", "restore", "verify", "decision", "acquire")
@@ -46,7 +46,7 @@ FIELDS = ("name", "kind", "url", "model", "model_secondary", "extra_body", "time
 def allowed_decision_hosts():
     """The hosts decision_client.py will call. Imported on demand: decision_client pulls in the whole repair stage, which the
     shell loops' exporter (it imports this module before every show) must not load."""
-    import decision_client
+    from dubtitlerr.core import decision_client
 
     return {urllib.parse.urlsplit(u).hostname.lower() for u, _ in decision_client.PROVIDERS.values()} | {
         "127.0.0.1",

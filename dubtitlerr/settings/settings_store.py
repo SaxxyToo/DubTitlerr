@@ -14,10 +14,10 @@ import json
 import os
 import urllib.parse
 
-import glossary_lock
-import settings_connections as conns
-import settings_registry as reg
-from atomic_file import atomic_write_bytes
+from dubtitlerr.glossary import glossary_lock
+from dubtitlerr.settings import settings_connections as conns
+from dubtitlerr.settings import settings_registry as reg
+from dubtitlerr.core.atomic_file import atomic_write_bytes
 
 VERSION = 1
 MAX_BYTES = 256 * 1024
@@ -59,7 +59,7 @@ def secrets_path(environ=None):
 
 def _log(message):
     try:
-        from common import log
+        from dubtitlerr.core.common import log
     except ImportError:  # the exporter runs from a minimal app directory in tests
         log = print
     log(message)

@@ -55,8 +55,8 @@ import subprocess
 import sys
 import time
 
-import unresolved
-from common import (
+from dubtitlerr.core import unresolved
+from dubtitlerr.core.common import (
     MEDIA_GID,
     MEDIA_UID,
     STAMP_SUFFIX,
@@ -74,7 +74,7 @@ from common import (
 # Imported as a NAME so "which show is this path in" has exactly one definition, shared
 # with the decision store. A second answer here would gate one show while storing verdicts
 # under another, and the two would only disagree for the shows an operator actually listed.
-from decisions import decisions_for, show_for
+from dubtitlerr.core.decisions import decisions_for, show_for
 
 ROOTS = os.environ.get("MUX_ROOTS", "/data/Media/Anime Library").split(":")
 # [S-6] Shows whose episodes wait for a human before they are released. Colon list, the

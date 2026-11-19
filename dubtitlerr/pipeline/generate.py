@@ -57,14 +57,14 @@ try:  # local ASR only: the lite (endpoint-backed) image ships no torch/ctransla
 except ImportError:  # pragma: no cover - endpoint-only deployments
     WhisperModel = None
 
-import common
-import glossary
-import hallucination
-import ordering
-import punctuation
-import qc
-import reflow
-from common import (
+from dubtitlerr.core import common
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import hallucination
+from dubtitlerr.pipeline import ordering
+from dubtitlerr.pipeline import punctuation
+from dubtitlerr.pipeline import qc
+from dubtitlerr.pipeline import reflow
+from dubtitlerr.core.common import (
     STAMP_SUFFIX,
     TRANSCRIBE_VERSION,
     VIDEO_EXTS,

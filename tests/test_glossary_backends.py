@@ -5,9 +5,9 @@ Synthetic only; a fake 127.0.0.1 server stands in for the provider."""
 import pytest
 from fake_servers import FakeServer, chat_reply
 
-import common
-import glossary_acquire as ga
-import glossary_verify as gv
+from dubtitlerr.core import common
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_verify as gv
 
 KEY = "sk-test-SECRET-0123456789"  # gitleaks:allow -- test fixture, not a real credential
 
@@ -232,7 +232,7 @@ def test_a_bad_configuration_makes_no_request_and_returns_empty_text(monkeypatch
     monkeypatch.setenv("TEST_PROVIDER_KEY", KEY)
     kw.setdefault("openai_key_env", "TEST_PROVIDER_KEY")
     monkeypatch.setattr(common, "_post_json", lambda *a, **k: pytest.fail("no request"))
-    import repair
+    from dubtitlerr.pipeline import repair
 
     monkeypatch.setattr(repair, "_post_json", lambda *a, **k: pytest.fail("no request"))
     assert common.llm_chat("P", backend="openai", **kw) == ""

@@ -8,11 +8,11 @@ import sys
 
 import pytest
 
-import review_auth
-import review_requests
-import review_server as rs
-import settings_api as api
-import settings_store as store
+from dubtitlerr.review import review_auth
+from dubtitlerr.review import review_requests
+from dubtitlerr.review import review_server as rs
+from dubtitlerr.settings import settings_api as api
+from dubtitlerr.settings import settings_store as store
 
 TOKEN = "plex-tok-7f3a91c2d8e54b60"  # gitleaks:allow -- test fixture, not a real credential
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

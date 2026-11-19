@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_acquire as ga
 
 FLAGGED = {
     "show": "S",

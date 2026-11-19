@@ -44,7 +44,7 @@ from collections import Counter
 
 import pysubs2
 
-from common import (
+from dubtitlerr.core.common import (
     KARAOKE,
     MEDIA_GID,
     MEDIA_UID,
@@ -58,7 +58,7 @@ from common import (
     signs_track_dedicated,
     write_stage,
 )
-from common import extract_sub as extract
+from dubtitlerr.core.common import extract_sub as extract
 
 SAFE_FONTS = {
     "Arial",

@@ -1,6 +1,6 @@
 """Unit tests for hallucination.py (B1). Pure functions; plain card dicts."""
 
-import hallucination as h
+from dubtitlerr.pipeline import hallucination as h
 
 
 def card(text, lp=-0.2, nsp=0.1, start=0.0, end=2.0):
@@ -130,7 +130,7 @@ def test_drop_reason_records_evaluated_and_activated():
     successful episode with zero drops looks identical to one where the rule is dead.
     This instrument is what proved `music` could never fire, which is why ADR 0002 deleted
     it rather than tuning it -- so the counters must keep working for what remains."""
-    import qc
+    from dubtitlerr.pipeline import qc
 
     rec = qc.Recorder()
     speech = {"text": "Hello there.", "no_speech_prob": 0.1, "avg_logprob": -0.2}
@@ -147,7 +147,7 @@ def test_drop_reason_records_evaluated_and_activated():
 
 
 def test_flag_reason_records_liveness():
-    import qc
+    from dubtitlerr.pipeline import qc
 
     rec = qc.Recorder()
     h.flag_reason({"avg_logprob": -0.2, "no_speech_prob": 0.1}, rec=rec)
@@ -178,8 +178,8 @@ def _card(text, ss=None, se=None, start=0.0, end=1.0):
 def test_a_two_word_card_spanning_more_than_max_dur_is_a_bad_window():
     """VAD design S6: whisper emits an implausible word timestamp on music-masked audio.
     'disobeys' and 'it' each came back with a 7.0s span for ONE word."""
-    import hallucination as h
-    import reflow
+    from dubtitlerr.pipeline import hallucination as h
+    from dubtitlerr.pipeline import reflow
 
     assert h.bad_source_window(_card("it", ss=0.0, se=reflow.MAX_DUR + 0.5))
 
@@ -187,14 +187,14 @@ def test_a_two_word_card_spanning_more_than_max_dur_is_a_bad_window():
 def test_a_card_with_three_words_is_left_alone():
     """The guard is scoped to 1-2 word cards on purpose: a long span across several words
     is ordinary dialogue, and widening this silently would start discarding real evidence."""
-    import hallucination as h
-    import reflow
+    from dubtitlerr.pipeline import hallucination as h
+    from dubtitlerr.pipeline import reflow
 
     assert not h.bad_source_window(_card("it was him", ss=0.0, se=reflow.MAX_DUR + 0.5))
 
 
 def test_a_short_span_is_not_a_bad_window():
-    import hallucination as h
+    from dubtitlerr.pipeline import hallucination as h
 
     assert not h.bad_source_window(_card("it", ss=1.0, se=2.0))
 
@@ -202,7 +202,7 @@ def test_a_short_span_is_not_a_bad_window():
 def test_a_card_with_no_source_fields_is_never_a_bad_window():
     """The VAD design records TWO of its own measurements invalidated by a .get() default
     silently answering the question asked. The guard must not fabricate a window."""
-    import hallucination as h
+    from dubtitlerr.pipeline import hallucination as h
 
     assert not h.bad_source_window(_card("it"))
     assert not h.bad_source_window(_card("it", ss=0.0))
@@ -212,9 +212,9 @@ def test_a_card_with_no_source_fields_is_never_a_bad_window():
 def test_the_guard_records_liveness_like_every_other_rule():
     """evaluated>0 with activated==0 is the dead-rule signal; the counters ARE the value
     of this guard -- it is observability, not recovery."""
-    import hallucination as h
-    import qc
-    import reflow
+    from dubtitlerr.pipeline import hallucination as h
+    from dubtitlerr.pipeline import qc
+    from dubtitlerr.pipeline import reflow
 
     rec = qc.Recorder()
     h.bad_source_window(_card("it", ss=1.0, se=2.0), rec=rec)
@@ -227,8 +227,8 @@ def test_the_guard_records_liveness_like_every_other_rule():
 
 
 def test_a_card_with_no_source_fields_records_no_activation():
-    import hallucination as h
-    import qc
+    from dubtitlerr.pipeline import hallucination as h
+    from dubtitlerr.pipeline import qc
 
     rec = qc.Recorder()
     h.bad_source_window(_card("it"), rec=rec)
@@ -248,7 +248,7 @@ def test_the_nsp_gated_rules_are_not_reintroduced():
     If this test fails, someone re-added a rule on the intuition that an unreachable
     threshold is a bug. Read docs/wiki/Design-decisions.md before changing it: the precision ceiling
     is the thing to beat, not the threshold."""
-    import hallucination as h
+    from dubtitlerr.pipeline import hallucination as h
 
     assert not hasattr(h, "NSP_DROP"), "the music rule was re-added; see docs/wiki/Design-decisions.md"
     assert not hasattr(h, "LP_DROP"), "the music rule was re-added; see docs/wiki/Design-decisions.md"
@@ -258,14 +258,14 @@ def test_the_nsp_gated_rules_are_not_reintroduced():
 def test_drop_reason_no_longer_reads_no_speech_prob():
     """The production decoder returns nsp of exactly 0.0, so a gate that consults it is
     deciding on a field nothing populates."""
-    import hallucination as h
+    from dubtitlerr.pipeline import hallucination as h
 
     assert h.drop_reason({"text": "a real line", "no_speech_prob": 0.99, "avg_logprob": -9.0}) is None
 
 
 def test_the_surviving_rules_still_fire():
     """Deleting the dead ones must not disturb the live ones."""
-    import hallucination as h
+    from dubtitlerr.pipeline import hallucination as h
 
     assert h.drop_reason({"text": "To be continued...", "avg_logprob": -0.2}) == "blocklist"
     assert h.flag_reason({"avg_logprob": -0.9}) == "low_conf"
@@ -273,7 +273,7 @@ def test_the_surviving_rules_still_fire():
 
 
 def test_a_high_nsp_card_is_no_longer_flagged():
-    import hallucination as h
+    from dubtitlerr.pipeline import hallucination as h
 
     assert h.flag_reason({"avg_logprob": -0.1, "no_speech_prob": 0.99}) is None
 

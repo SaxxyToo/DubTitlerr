@@ -15,7 +15,7 @@ import os
 
 import pytest
 
-import common
+from dubtitlerr.core import common
 from tools import reclaim_orphans as ro
 
 

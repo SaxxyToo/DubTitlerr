@@ -16,9 +16,9 @@ not to reproduce repair's output."""
 import json
 import os
 
-import common
-import decisions
-import review_apply
+from dubtitlerr.core import common
+from dubtitlerr.core import decisions
+from dubtitlerr.review import review_apply
 
 CONF = ".dubtitles.conf.json"
 SRT = ".eng.dubtitles.srt"
@@ -198,7 +198,7 @@ def test_the_rebuilt_srt_wraps_long_cards_the_way_the_pipeline_does(tmp_path):
 
     review_apply.apply_episode(stem, store, apply=True)
 
-    import reflow
+    from dubtitlerr.pipeline import reflow
 
     assert _cues(stem + SRT)[0][1] == reflow.wrap_balance(long_text)
     assert "\n" in _cues(stem + SRT)[0][1], "the fixture must actually reach the wrapping branch"

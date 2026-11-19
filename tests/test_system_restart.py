@@ -6,9 +6,9 @@ import re
 import subprocess
 import time
 
-import common
-import review_status
-import settings_api as api
+from dubtitlerr.core import common
+from dubtitlerr.review import review_status
+from dubtitlerr.settings import settings_api as api
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -122,15 +122,15 @@ def test_the_healthcheck_follows_review_port():
 
 
 def test_the_port_help_says_the_compose_mapping_must_match():
-    import settings_registry as reg
+    from dubtitlerr.settings import settings_registry as reg
 
     help_text = reg.REGISTRY["REVIEW_PORT"]["help"]
     assert "compose" in help_text.lower() and "port mapping" in help_text.lower()
 
 
 def test_the_server_routes_restart_through_the_settings_api_and_names_the_principal(tmp_path, monkeypatch, capsys):
-    import review_auth
-    import review_server as rs
+    from dubtitlerr.review import review_auth
+    from dubtitlerr.review import review_server as rs
 
     flag = tmp_path / "stop"
     monkeypatch.setenv("STOP_FLAG", str(flag))

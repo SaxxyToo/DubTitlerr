@@ -24,7 +24,7 @@ from collections.abc import Collection
 
 import pysubs2
 
-from common import NON_DIALOGUE_STYLE, SIGNS_TITLE, STAMP_SUFFIX, is_our_track, load_extras, stop_requested, stream_title
+from dubtitlerr.core.common import NON_DIALOGUE_STYLE, SIGNS_TITLE, STAMP_SUFFIX, is_our_track, load_extras, stop_requested, stream_title
 
 EXTRA_DIRS = load_extras()  # data/extras.txt is the source (see common.load_extras)
 
@@ -377,7 +377,7 @@ def main():
     show_dir = sys.argv[1].rstrip("/")
     show = os.path.basename(show_dir)
     gpath = os.path.join(GLOSS_DIR, show + ".json")
-    import glossary_lock
+    from dubtitlerr.glossary import glossary_lock
 
     with glossary_lock.locked(gpath, "mine") as ok:  # the whole read-count-write: a busy glossary skips this sweep's mining
         if ok:

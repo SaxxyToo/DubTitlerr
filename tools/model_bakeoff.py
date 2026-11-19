@@ -48,7 +48,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import hallucination  # noqa: E402
+from dubtitlerr.pipeline import hallucination  # noqa: E402
 
 # generate is imported LAZILY inside the functions that transcribe: it pulls in
 # faster_whisper at module scope, and the report-shaping half of this tool must stay
@@ -120,7 +120,7 @@ def run_model(model_name: str, videos: list[str], compute_type: str, model_dir: 
     """Transcribe every episode with one model, then unload it completely."""
     from faster_whisper import WhisperModel
 
-    import generate
+    from dubtitlerr.pipeline import generate
 
     before = vram_used_mib()
     result: dict = {"model": model_name, "vram_before_load_mib": before, "episodes": []}
@@ -205,7 +205,7 @@ def main() -> int:
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
-    import generate
+    from dubtitlerr.pipeline import generate
 
     generate.load_glossary()
     report = {

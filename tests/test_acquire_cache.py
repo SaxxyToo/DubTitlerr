@@ -14,7 +14,7 @@ token still reaches propose()/source_gate() in full on every run."""
 import os
 import stat
 
-import acquire_cache as ac
+from dubtitlerr.core import acquire_cache as ac
 
 
 def test_absence_is_the_cache_miss(tmp_path):
@@ -64,7 +64,7 @@ def test_roundtrip_and_group_writable(tmp_path):
     cache = ac.remember_escalation({}, "a", "B", {"same_entity": True, "confidence": "high"})
     assert ac.save(g, cache)
     assert ac.load(g) == cache
-    import common
+    from dubtitlerr.core import common
 
     mode = stat.S_IMODE(os.stat(ac.path_for(g)).st_mode)
     assert mode == common.SIDECAR_MODE

@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import json
 
-from common import atomic_write
+from dubtitlerr.core.common import atomic_write
 
 SUFFIX = ".acquire-cache.json"
 

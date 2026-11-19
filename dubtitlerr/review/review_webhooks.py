@@ -356,7 +356,7 @@ def handle(
     if action == "ignored":
         return 200, {"ok": True, "ignored": True, "reason": data}
     if create is None or list_requests is None:
-        import review_requests
+        from dubtitlerr.review import review_requests
 
         create = create or review_requests.create
         list_requests = list_requests or review_requests.list_requests

@@ -12,11 +12,11 @@ import socket
 import urllib.parse
 import urllib.request
 
-import review_auth
-import review_settings
-import settings_connections as conns
-import settings_registry as reg
-import settings_store as store
+from dubtitlerr.review import review_auth
+from dubtitlerr.review import review_settings
+from dubtitlerr.settings import settings_connections as conns
+from dubtitlerr.settings import settings_registry as reg
+from dubtitlerr.settings import settings_store as store
 
 _URL_USERINFO_RE = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/@,]*@")
 
@@ -566,7 +566,7 @@ def test_connection(name, environ=None, opener=None, context=None):
 def request_restart(environ=None, who="admin"):
     """Ask the builder for a soft stop: touch the flag every loop checks between units of work. The episode in flight (a mux
     included) finishes, the loops exit 0, and the container's restart policy brings the container back with a new boot id."""
-    from common import boot_id, log
+    from dubtitlerr.core.common import boot_id, log
 
     flag = _env(environ).get("STOP_FLAG") or "/tmp/dubtitlerr.stop"
     try:

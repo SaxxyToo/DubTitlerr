@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-import review_server
+from dubtitlerr.review import review_server
 
 TWO_STEMS = ["Show A/Season 1/Show A - S01E01", "Show B/Season 2/Show B - S02E03"]
 

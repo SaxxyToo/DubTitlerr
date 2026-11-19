@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-import common
+from dubtitlerr.core import common
 
 
 def _stub_faster_whisper():
@@ -29,7 +29,7 @@ def _stub_faster_whisper():
 
 
 _stub_faster_whisper()
-import generate  # noqa: E402
+from dubtitlerr.pipeline import generate  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIB = os.path.join(REPO, "shell", "lib.sh")

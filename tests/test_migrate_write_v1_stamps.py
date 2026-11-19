@@ -13,7 +13,7 @@ import json
 import os
 import types
 
-import common
+from dubtitlerr.core import common
 import scripts.migrate_write_v1_stamps as mig
 
 

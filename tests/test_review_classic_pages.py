@@ -1,4 +1,4 @@
-import review_server
+from dubtitlerr.review import review_server
 
 RETIRED = ("X-Review-Token", "X-Review-Admin-Token", "dubtitlerr_token", "dubtitlerr_review_token")
 

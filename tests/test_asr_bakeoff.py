@@ -455,7 +455,7 @@ def test_endpoint_shape_derives_segment_logprob_from_word_probs_like_reflow():
     into word probs, and reflow.card_confidence derives card confidence back out of
     those. Deriving the same way here means the judge sees what production sees -- and
     it must match reflow's formula, not a re-implementation of it."""
-    import reflow
+    from dubtitlerr.pipeline import reflow
 
     prob_a, prob_b = 0.5, 0.25
     segments = [{"start": 0.0, "end": 2.0, "no_speech_prob": 0.0}]
@@ -480,7 +480,7 @@ def test_endpoint_shape_keeps_word_prob_and_drops_the_endpoint_seg_key():
 def test_endpoint_shape_clamps_a_zero_probability_before_the_log():
     """prob 0 is real (a token the server scored at zero) and ln(0) is -inf, which would
     poison every downstream median. reflow clamps at PROB_FLOOR; this must too."""
-    import reflow
+    from dubtitlerr.pipeline import reflow
 
     segments = [{"start": 0.0, "end": 1.0, "no_speech_prob": 0.0}]
     words = [{"text": " a", "start": 0.0, "end": 1.0, "prob": 0.0, "seg": 0}]
@@ -551,7 +551,7 @@ def test_run_endpoint_transcribes_through_the_real_http_path(tmp_path, monkeypat
     thing a whisper.cpp server has to accept) fails here."""
     import fake_servers
 
-    import generate
+    from dubtitlerr.pipeline import generate
 
     doc = json.load(open("tests/fixtures/whispercpp_verbose_json.json"))
     server = fake_servers.FakeServer(fake_servers.asr_reply(doc))
@@ -592,7 +592,7 @@ def test_run_endpoint_transcribes_through_the_real_http_path(tmp_path, monkeypat
 def test_run_endpoint_restores_the_endpoint_globals_even_on_failure(tmp_path, monkeypatch):
     """A bakeoff URL must not survive the run: a later production call in the same process
     would otherwise be pointed at a bakeoff server."""
-    import generate
+    from dubtitlerr.pipeline import generate
 
     monkeypatch.setattr(ab, "_extract_dub_wav", lambda video, td: None)  # -> per-episode error
     monkeypatch.setattr(generate, "ASR_KEY_ENV", "")
@@ -608,7 +608,7 @@ def test_run_endpoint_restores_the_endpoint_globals_even_on_failure(tmp_path, mo
 
 def test_run_endpoint_records_an_episode_error_instead_of_aborting(tmp_path, monkeypatch):
     """One unreadable mkv must not throw away the other episodes' work."""
-    import generate
+    from dubtitlerr.pipeline import generate
 
     calls = {"n": 0}
 

@@ -130,7 +130,7 @@ def glossary_mishears(path):
         return []
     pairs = list((doc.get("hard_fixes") or {}).items())
     try:
-        from glossary import load
+        from dubtitlerr.glossary.glossary import load
         g = load(path) or {}
         pairs += list((g.get("token_fixes") or {}).items())
         pairs += list((g.get("phrase_fixes") or {}).items())

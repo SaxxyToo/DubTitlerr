@@ -217,7 +217,7 @@ class Recorder:
             self.events.append(fields)
 
     def build(self, show, episode, stem, **meta):
-        import reflow
+        from dubtitlerr.pipeline import reflow
 
         return {
             "schema_version": SCHEMA_VERSION,

@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-import reflow
+from dubtitlerr.pipeline import reflow
 
 # The two no_speech_prob-gated rules that used to live here -- `music`
 # (nsp > 0.95 AND avg_logprob < -2.0 -> drop) and `maybe_silence` (nsp > 0.5 -> flag) --

@@ -4,9 +4,9 @@ import socket
 
 import pytest
 
-import decision_client
-import settings_connections as conns
-import settings_store as store
+from dubtitlerr.core import decision_client
+from dubtitlerr.settings import settings_connections as conns
+from dubtitlerr.settings import settings_store as store
 
 
 def conn(**kw):

@@ -17,7 +17,7 @@ import random
 
 import pytest
 
-import reflow
+from dubtitlerr.pipeline import reflow
 
 SEEDS = range(60)
 

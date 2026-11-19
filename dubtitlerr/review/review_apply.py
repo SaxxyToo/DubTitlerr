@@ -40,10 +40,10 @@ import argparse
 import json
 import os
 
-import card_split
-import decisions
-import reflow
-from common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, atomic_write, log, read_words, ts_srt
+from dubtitlerr.pipeline import card_split
+from dubtitlerr.core import decisions
+from dubtitlerr.pipeline import reflow
+from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, atomic_write, log, read_words, ts_srt
 
 # The SAME fits_card repair.py applies, imported rather than reimplemented. Two writers of
 # the shipped srt that disagreed about C1 would mean a `correct` refused on a re-run and
@@ -51,7 +51,7 @@ from common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, atomic_write, log, read_w
 # unreadable card. Importing costs a module load and buys the guarantee. card_split is the
 # same guarantee for the split path: a correction split here and refused by repair.py's
 # next run (or vice versa) is the identical drift, one card_split.find_legal_split call.
-from repair import fits_card
+from dubtitlerr.pipeline.repair import fits_card
 
 CONF_SUFFIX = ".dubtitles.conf.json"
 SRT_SUFFIX = ".eng.dubtitles.srt"

@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-import adjudication_journal as aj
-import glossary_decision as gd
-import glossary_verify as gv
+from dubtitlerr.core import adjudication_journal as aj
+from dubtitlerr.glossary import glossary_decision as gd
+from dubtitlerr.glossary import glossary_verify as gv
 
 ROOT = Path(__file__).resolve().parents[1]
 TITLES = ["Zorro", "Nami", "Usopp", "Sanjy", "Robyn"]
@@ -192,7 +192,7 @@ def test_a_decision_failure_and_a_local_fallback_answer_are_not_journaled(decisi
 KILL_RUNNER = r"""
 import json, os, sys
 sys.path.insert(0, sys.argv[1])
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_verify as gv
 cache, gloss, die_after = sys.argv[2], sys.argv[3], int(sys.argv[4])
 TITLES = __TITLES__
 ANSWERS = __ANSWERS__

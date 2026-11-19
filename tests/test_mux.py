@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-import mux
+from dubtitlerr.pipeline import mux
 
 
 def sub(lang="", name=""):
@@ -288,7 +288,7 @@ def test_process_skips_on_a_current_version_stamp(tmp_path, monkeypatch):
 def test_process_remuxes_a_file_whose_stamp_is_from_an_older_pipeline_version(tmp_path, monkeypatch):
     """A version bump is the regeneration trigger: the v1 stamp still matches
     size+mtime, but its version is behind, so the file is re-muxed in place."""
-    import common
+    from dubtitlerr.core import common
 
     v = _muxable(tmp_path, monkeypatch, [aud(0, "eng"), subt(1, "eng", mux.TRACK_NAME)])
     mux.write_stamp(str(tmp_path / ("ep" + mux.STAMP_SUFFIX)), v)
@@ -363,7 +363,7 @@ def test_mp4_stamp_write_failure_keeps_orig_and_creates_no_final(tmp_path, monke
 def _stamp_failure_setup(tmp_path, monkeypatch, name):
     """An episode `name` (.mkv or .mp4) with an srt sidecar, mkvmerge stubbed to write a
     different payload, and write_stamp raising. Returns (video path, stem)."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = tmp_path / name
@@ -386,7 +386,7 @@ def _stamp_failure_setup(tmp_path, monkeypatch, name):
 def test_mkv_stamp_write_failure_never_deletes_the_only_copy(tmp_path, monkeypatch):
     """An .mkv source has final == orig. The stamp is written BEFORE the replace, so a
     failed stamp write must leave the original file and its bytes untouched."""
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _stamp_failure_setup(tmp_path, monkeypatch, "ep.mkv")
 
@@ -398,7 +398,7 @@ def test_mkv_stamp_write_failure_never_deletes_the_only_copy(tmp_path, monkeypat
 
 def test_mp4_stamp_write_failure_leaves_orig_and_no_mkv(tmp_path, monkeypatch):
     """Same for an .mp4 source: orig survives, no .mkv is ever created, no temp left."""
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _stamp_failure_setup(tmp_path, monkeypatch, "ep.mp4")
 
@@ -412,7 +412,7 @@ def test_mp4_stamp_write_failure_leaves_orig_and_no_mkv(tmp_path, monkeypatch):
 def test_stamp_written_from_the_temp_file_matches_the_final_file(tmp_path, monkeypatch):
     """The stamp is computed from the temp file before the rename; os.replace keeps size
     and mtime, so the stamp must still validate against the file in its final place."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = tmp_path / "ep.mkv"
@@ -434,7 +434,7 @@ def test_stamp_written_from_the_temp_file_matches_the_final_file(tmp_path, monke
 def _real_stamp_setup(tmp_path, monkeypatch, payload=b"muxed-complete-payload", name="ep.mkv"):
     """An .mkv episode (final == orig) with the REAL write_stamp/_finalize; mkvmerge is
     stubbed to write `payload` at the temp output. Returns (video path, stem)."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = tmp_path / name
@@ -453,7 +453,7 @@ def test_failed_cross_device_copy_keeps_temp_output_and_drops_stamp(tmp_path, mo
     """EXDEV fallback: shutil.move overwrites final (== orig for an .mkv) in place, so if
     it fails partway the temp output is the ONLY complete copy and must survive. The
     stamp written for this run must go, so nothing reads the episode as done."""
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     real_replace = os.replace
@@ -500,7 +500,7 @@ def test_finalize_failure_removes_the_stamp_written_this_run(tmp_path, monkeypat
 def test_failure_after_a_completed_rename_keeps_the_valid_stamp(tmp_path, monkeypatch):
     """The stamp is only withdrawn when the rename did NOT complete. A later failure (here
     the 'ok' stage write) must not delete a valid stamp and force a multi-GB re-mux."""
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     real_write_stage = mux.write_stage
@@ -556,7 +556,7 @@ def _heal_and_remux_differently(monkeypatch):
 
 
 def test_failed_finalize_rename_fails_marker_blocks_next_sweep(tmp_path, monkeypatch):
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     _break_finalize(monkeypatch, rename_fails=True)
@@ -577,7 +577,7 @@ def test_failed_finalize_rename_fails_marker_blocks_next_sweep(tmp_path, monkeyp
 
 
 def test_failed_finalize_rename_succeeds_marker_blocks_next_sweep(tmp_path, monkeypatch):
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     _break_finalize(monkeypatch, rename_fails=False)
@@ -618,7 +618,7 @@ def test_recovery_marker_wins_over_a_valid_stamp(tmp_path, monkeypatch):
 def test_plain_rename_failure_takes_no_recovery_path_and_retries(tmp_path, monkeypatch):
     """A non-EXDEV os.replace error (EACCES) fails BEFORE any copy starts: the original is
     untouched, so no marker, no .recovered; the next sweep simply retries."""
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
 
@@ -667,7 +667,7 @@ def test_unwritable_recovery_marker_log_is_accurate(tmp_path, monkeypatch, capsy
 
 
 def test_recovery_pending_writes_no_stage_in_dry_run(tmp_path, monkeypatch):
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     (tmp_path / ("ep" + mux.RECOVERY_SUFFIX)).write_text("{}")
@@ -703,7 +703,7 @@ def test_mkv_source_never_removes_orig(tmp_path, monkeypatch):
 
 def test_process_records_verification_failure_as_mux_build_error(tmp_path, monkeypatch):
     """A failed verification must be persisted as a valid mux-stage failure record."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = _muxable(tmp_path, monkeypatch, [aud(0, "eng")])
@@ -731,7 +731,7 @@ def test_signs_regression_refused_when_signs_stage_failed_and_only_srt_remains(t
     """[S-8] A forced dub_signs_merge.py failure ("build-error" or "no-video") recorded in
     the stage sidecar must not let mux silently fall back from .ass to the dialogue-only
     .srt and stamp the demoted output as done -- it must refuse instead."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = tmp_path / "ep.mkv"
@@ -747,7 +747,7 @@ def test_signs_regression_refused_when_signs_stage_failed_and_only_srt_remains(t
 def test_signs_regression_refused_for_no_video_outcome_too(tmp_path, monkeypatch):
     """[S-8] The same refusal applies to a forced "no-video" signs outcome, not only
     "build-error"."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = tmp_path / "ep.mkv"
@@ -764,7 +764,7 @@ def test_genuinely_signs_free_episode_muxes_normally(tmp_path, monkeypatch):
     """[S-8] A genuinely signs-free episode (dub_signs_merge.py returned "no-signs",
     recorded as signs stage outcome "ok") mux proceeds normally on the .srt under the
     identical harness -- the two fixtures must produce different mux outcomes."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = tmp_path / "ep.mkv"
@@ -987,7 +987,7 @@ def test_stages_ran_omits_what_it_cannot_determine(tmp_path):
 
 def _gated(tmp_path, monkeypatch, show="Gated Show", entries=1):
     """A muxable episode whose queue holds `entries` pending accepted repairs."""
-    import unresolved
+    from dubtitlerr.core import unresolved
 
     v = _muxable(tmp_path, monkeypatch, [aud(0, "eng"), subt(1, "eng", mux.TRACK_NAME)])
     stem = str(tmp_path / "ep")
@@ -1002,7 +1002,7 @@ def test_a_gated_show_holds_an_episode_with_a_pending_accepted_repair(tmp_path, 
     must mux exactly as today (the default for every install), and resolving the entry must
     release the episode -- otherwise a gate that simply never muxed anything would pass."""
     v, stem = _gated(tmp_path, monkeypatch)
-    import unresolved
+    from dubtitlerr.core import unresolved
 
     monkeypatch.setattr(mux, "REVIEW_GATE_SHOWS", ["Gated Show"])
     assert mux.process(v, apply=False) == "held-for-review"
@@ -1019,7 +1019,7 @@ def test_a_gate_holds_only_on_accepted_repairs_not_on_guard_rejections(tmp_path,
     """A REJECTED repair means the ASR text shipped -- the safe outcome, and nothing a
     viewer sees that a human has not effectively approved by default. The unchecked change
     is the ACCEPTED one, which is the only thing worth stopping a release for."""
-    import unresolved
+    from dubtitlerr.core import unresolved
 
     v = _muxable(tmp_path, monkeypatch, [aud(0, "eng"), subt(1, "eng", mux.TRACK_NAME)])
     stem = str(tmp_path / "ep")
@@ -1038,7 +1038,7 @@ def test_a_stale_hold_is_reported_loudly_and_is_still_not_released(tmp_path, mon
     logging half and fails the second assertion. That is the whole point of the story --
     releasing unreviewed repairs on a timer is the failure this spec exists to prevent, and
     an alert that quietly releases is worse than none because it reads as supervision."""
-    import unresolved
+    from dubtitlerr.core import unresolved
 
     v, stem = _gated(tmp_path, monkeypatch)
     monkeypatch.setattr(mux, "REVIEW_GATE_SHOWS", ["Gated Show"])
@@ -1153,7 +1153,7 @@ def test_a_queued_line_that_already_has_a_verdict_does_not_hold_the_episode(tmp_
     trusted only the flag, a line settled by a verdict -- recorded by hand, by a future
     sync, or by a server whose resolve() write failed -- would hold the episode forever
     while the pipeline itself considered it decided. The verdict is the authority."""
-    import decisions as dec
+    from dubtitlerr.core import decisions as dec
 
     v, stem = _gated(tmp_path, monkeypatch)
     monkeypatch.setattr(mux, "REVIEW_GATE_SHOWS", ["Gated Show"])
@@ -1184,7 +1184,7 @@ def test_an_entry_orphaned_by_a_version_bump_does_not_hold_the_episode(tmp_path,
     judged, and the input to the later accept_repair tightening) and have the gate ignore
     the orphans. The second half is what stops this passing on a gate that never holds."""
     v, stem = _gated(tmp_path, monkeypatch, entries=0)
-    import unresolved
+    from dubtitlerr.core import unresolved
 
     monkeypatch.setattr(mux, "REVIEW_GATE_SHOWS", ["Gated Show"])
     unresolved.record(stem, "repair_applied", "accepted", original_text="a line from the OLD transcript", proposed_text="x")
@@ -1201,7 +1201,7 @@ def test_matching_a_live_entry_ignores_case_and_whitespace(tmp_path, monkeypatch
     """Normalised with decisions.key, the same function the store keys on. A raw string
     compare would orphan a live entry over a doubled space and release it silently."""
     v, stem = _gated(tmp_path, monkeypatch, entries=0)
-    import unresolved
+    from dubtitlerr.core import unresolved
 
     monkeypatch.setattr(mux, "REVIEW_GATE_SHOWS", ["Gated Show"])
     unresolved.record(stem, "repair_applied", "accepted", original_text="  I saw   SPONDUM ", proposed_text="z")
@@ -1223,7 +1223,7 @@ def test_an_unreadable_conf_json_holds_everything(tmp_path, monkeypatch):
 
 def test_process_records_signs_regression_refusal_as_mux_build_error(tmp_path, monkeypatch):
     """A refused SRT fallback must be observable as a mux-stage build failure."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = tmp_path / "ep.mkv"
@@ -1242,7 +1242,7 @@ def test_process_records_signs_regression_refusal_as_mux_build_error(tmp_path, m
 
 def test_process_records_unexpected_mux_exception_as_crashed(tmp_path, monkeypatch):
     """An unexpected mux exception must be returned, sanitized, and recorded as crashed."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = _muxable(tmp_path, monkeypatch, [aud(0, "eng")])
@@ -1273,7 +1273,7 @@ def test_process_post_stamp_cleanup_failure_still_records_ok(tmp_path, monkeypat
     """Once the stamp is written the episode is done: a failing mux.log write must not
     turn into a crashed record (the next sweep returns already-muxed before it could
     ever clear it, leaving merge_pass.sh counting a failed stage forever)."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = _muxable(tmp_path, monkeypatch, [aud(0, "eng")])
@@ -1300,7 +1300,7 @@ def test_process_post_stamp_cleanup_failure_still_records_ok(tmp_path, monkeypat
 def test_process_orig_removal_failure_still_removes_sidecars(tmp_path, monkeypatch):
     """mp4->mkv: if dropping the OLD .mp4 link fails, the sidecar removals and mux.log
     write that follow must still run, and the stage must record ok."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = tmp_path / "ep.mp4"
@@ -1334,7 +1334,7 @@ def test_process_orig_removal_failure_still_removes_sidecars(tmp_path, monkeypat
 def test_process_post_stamp_cleanup_removes_a_stale_ass_part(tmp_path, monkeypatch):
     """A SIGKILL during dub_signs_merge's install leaves <ep>.eng.dubtitles.ass.part behind.
     Nothing else ever reads or removes it, so the mux cleanup that drops the sidecars takes it too."""
-    import common
+    from dubtitlerr.core import common
 
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     v = tmp_path / "ep.mp4"
@@ -1377,7 +1377,7 @@ def test_two_concurrent_mux_calls_never_write_same_temp_path(tmp_path):
     import subprocess
 
     stem = str(tmp_path / "ep")
-    cmd = ["python3", "-c", "import mux, sys; print(mux.temp_path(sys.argv[1]))", stem]
+    cmd = ["python3", "-c", "import sys; from dubtitlerr.pipeline import mux; print(mux.temp_path(sys.argv[1]))", stem]
     p1 = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
     p2 = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
     out1, _ = p1.communicate()
@@ -1416,7 +1416,7 @@ def test_source_changed_mid_mux_is_not_overwritten(tmp_path, monkeypatch, capsys
 
 
 def test_two_concurrent_mux_runs_loser_returns_already_muxed(tmp_path, monkeypatch):
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
 
@@ -1448,7 +1448,7 @@ def test_two_concurrent_mux_runs_both_outcomes_muxed_and_already_muxed(tmp_path,
     import threading
     import time
 
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     lock = threading.Lock()
@@ -1481,7 +1481,7 @@ def test_two_concurrent_mux_runs_both_outcomes_muxed_and_already_muxed(tmp_path,
 
 
 def test_race_interleaving_second_check_keeps_winner_stamp(tmp_path, monkeypatch):
-    import common
+    from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     real_write_stamp = mux.write_stamp

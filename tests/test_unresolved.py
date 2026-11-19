@@ -5,8 +5,8 @@ import json
 import os
 import stat
 
-import decisions
-import unresolved
+from dubtitlerr.core import decisions
+from dubtitlerr.core import unresolved
 
 
 def test_records_per_stage_and_survives_reread(tmp_path):
@@ -46,7 +46,7 @@ def test_never_raises_and_never_blocks_an_episode(tmp_path):
 
 def test_sidecar_is_group_writable(tmp_path):
     """A non-root writer must be able to append later -- see common.SIDECAR_MODE."""
-    import common
+    from dubtitlerr.core import common
 
     stem = str(tmp_path / "ep")
     unresolved.record(stem, "repair", "no_reference")
@@ -161,7 +161,7 @@ def test_the_primary_filter_returns_only_the_judgement_worthy_reasons(tmp_path):
 
 
 def _queued(tmp_path, name, stage, reason, orig, proposed):
-    import unresolved as u
+    from dubtitlerr.core import unresolved as u
 
     stem = str(tmp_path / name)
     u.record(stem, stage, reason, original_text=orig, proposed_text=proposed)
@@ -187,8 +187,8 @@ def test_needs_fixing_on_an_applied_repair_records_a_reject(tmp_path, monkeypatc
     Without this the answer set a flag, repair.py re-applied the same repair on the next
     run, and the re-queue suppression kept it out of the queue -- so the reviewer's
     judgement was invisible to the pipeline AND to the reviewer."""
-    import decisions
-    import unresolved as u
+    from dubtitlerr.core import decisions
+    from dubtitlerr.core import unresolved as u
 
     stem = _queued(tmp_path, "ep_f", "repair_applied", "accepted", "I saw spondum", "I saw Spandam")
     monkeypatch.setattr(decisions, "DECISIONS_DIR", str(tmp_path))
@@ -207,8 +207,8 @@ def test_keep_as_is_and_needs_fixing_are_distinguishable_in_the_store(tmp_path, 
     """Both answers currently produce an identical queue state apart from one boolean, and
     neither reaches the store at all. If only one of them recorded a verdict the CLI would
     still be lossy, so this asserts the PAIR."""
-    import decisions
-    import unresolved as u
+    from dubtitlerr.core import decisions
+    from dubtitlerr.core import unresolved as u
 
     stem = str(tmp_path / "ep_both")
     u.record(stem, "repair_applied", "accepted", original_text="line one", proposed_text="fix one")
@@ -233,8 +233,8 @@ def test_needs_fixing_on_a_refused_repair_records_a_force(tmp_path, monkeypatch)
     "keep as-is" endorses that refusal (a `reject` of the proposal) and "needs fixing" says
     the ASR is wrong and the refused proposal should stand, which is exactly `force`.
     Recording `reject` for both stages would silently invert the reviewer's meaning here."""
-    import decisions
-    import unresolved as u
+    from dubtitlerr.core import decisions
+    from dubtitlerr.core import unresolved as u
 
     stem = _queued(tmp_path, "ep_guard", "repair", "rejected_guard", "asr text", "model text")
     monkeypatch.setattr(decisions, "DECISIONS_DIR", str(tmp_path))
@@ -251,8 +251,8 @@ def test_a_store_write_failure_is_reported_not_swallowed(tmp_path, monkeypatch, 
     """A review that silently discards the human's decision is worse than one that errors,
     because the human believes the line is settled. The queue entry must NOT be marked
     resolved either -- that would hide the unsaved verdict from the next walk."""
-    import decisions
-    import unresolved as u
+    from dubtitlerr.core import decisions
+    from dubtitlerr.core import unresolved as u
 
     stem = _queued(tmp_path, "ep_fail", "repair_applied", "accepted", "orig", "prop")
     monkeypatch.setattr(decisions, "DECISIONS_DIR", str(tmp_path))
@@ -277,7 +277,7 @@ def test_live_only_drops_entries_whose_original_is_gone(tmp_path):
     can answer, and showing it is how a review queue of 6,000 dead items happens."""
     import json as _j
 
-    import unresolved as u
+    from dubtitlerr.core import unresolved as u
 
     stem = str(tmp_path / "ep")
     with open(stem + ".dubtitles.conf.json", "w") as f:
@@ -296,7 +296,7 @@ def test_live_only_normalises_like_the_decision_store(tmp_path):
     """Matched through decisions.key, so whitespace or case cannot orphan a live entry."""
     import json as _j
 
-    import unresolved as u
+    from dubtitlerr.core import unresolved as u
 
     stem = str(tmp_path / "ep_ws")
     with open(stem + ".dubtitles.conf.json", "w") as f:
@@ -310,7 +310,7 @@ def test_live_only_keeps_everything_when_conf_is_unreadable(tmp_path):
     CLOSED there (holds everything) because the cost of guessing wrong is shipping an
     unreviewed repair; the review page fails OPEN for the same reason inverted -- hiding a
     live question is worse than showing a dead one."""
-    import unresolved as u
+    from dubtitlerr.core import unresolved as u
 
     stem = str(tmp_path / "ep_noconf")
     entries = [{"stage": "repair_applied", "original_text": "anything"}]
@@ -521,7 +521,7 @@ def test_appends_to_a_clean_file_add_no_blank_lines(tmp_path):
 
 
 def test_a_torn_tail_does_not_hold_back_an_opted_in_episode_from_being_held(tmp_path, monkeypatch):
-    import mux
+    from dubtitlerr.pipeline import mux
 
     stem = str(tmp_path / "ep")
     with open(unresolved.path_for(stem), "w") as f:

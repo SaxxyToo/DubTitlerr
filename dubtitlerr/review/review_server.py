@@ -58,23 +58,23 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-import common
-import decisions
-import review_apply
-import review_auth
-import review_glossary
-import review_requests
-import review_status
-import review_webhooks
-import settings_api
-import unresolved
-from common import log
-from decisions import show_for
+from dubtitlerr.core import common
+from dubtitlerr.core import decisions
+from dubtitlerr.review import review_apply
+from dubtitlerr.review import review_auth
+from dubtitlerr.review import review_glossary
+from dubtitlerr.review import review_requests
+from dubtitlerr.review import review_status
+from dubtitlerr.review import review_webhooks
+from dubtitlerr.settings import settings_api
+from dubtitlerr.core import unresolved
+from dubtitlerr.core.common import log
+from dubtitlerr.core.decisions import show_for
 
 review_auth.register_routes(settings_api.ROLE_ENTRIES)
 
 REVIEW_PORT = int(os.environ.get("REVIEW_PORT", "8842"))
-UI_DIST = Path(__file__).resolve().parent / "web" / "dist"
+UI_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 _AUDIO_SLOTS = threading.BoundedSemaphore(2)
 AUDIO_MAX_SECONDS = 20
 

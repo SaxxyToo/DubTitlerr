@@ -2,7 +2,7 @@
 
 import pytest
 
-import reflow
+from dubtitlerr.pipeline import reflow
 
 
 def mkword(text, start, end, prob=0.9, seg=0):

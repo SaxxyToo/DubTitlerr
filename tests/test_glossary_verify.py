@@ -4,7 +4,7 @@ import json
 import threading
 import time
 
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_verify as gv
 
 
 def gl(**kw):

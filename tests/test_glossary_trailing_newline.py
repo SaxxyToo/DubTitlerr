@@ -14,7 +14,7 @@ import ast
 import json
 import pathlib
 
-import glossary_acquire
+from dubtitlerr.glossary import glossary_acquire
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 

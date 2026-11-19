@@ -5,9 +5,9 @@ target. The previous file survives any failure and no temp is left behind.
 Stdlib only, deliberately: this is the one helper the shell loops' CLIs need at IMPORT time, and
 they run from a minimal app directory with no pysubs2 (see settings_store._log and the harnesses
 in tests/test_gen_loop_*.py). common.py imports pysubs2, so anything those CLIs need on the import
-path has to live in a module with no third-party imports -- the same reason glossary_lock.py sits
-beside it rather than inside common.py. common re-exports all of this, so `common.atomic_write`
-and `from common import SIDECAR_MODE` keep working.
+path has to live in a module with no third-party imports -- the same reason glossary_lock.py is its own
+module rather than folded into common.py. common re-exports all of this, so `common.atomic_write`
+and `from dubtitlerr.core.common import SIDECAR_MODE` keep working.
 """
 
 import os

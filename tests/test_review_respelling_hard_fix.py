@@ -7,9 +7,9 @@ approved, but wrote no hard fix, so the runtime still left 'Usop' exactly as spo
 import json
 import sys
 
-import glossary
-import glossary_acquire as ga
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_verify as gv
 
 
 def flagged(term, canon, **env):

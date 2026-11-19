@@ -42,12 +42,12 @@ def main():
         os.environ["HEARTBEAT_PATH"] = str(base / "heartbeat.json")
         os.environ["GLOSSARY_DIR"] = str(glossary_dir)
         os.environ["DECISIONS_DIR"] = str(ddir)
-        import common
-        import decisions
-        import review_auth
-        import review_server as rs
-        import review_settings
-        import unresolved
+        from dubtitlerr.core import common
+        from dubtitlerr.core import decisions
+        from dubtitlerr.review import review_auth
+        from dubtitlerr.review import review_server as rs
+        from dubtitlerr.review import review_settings
+        from dubtitlerr.core import unresolved
 
         common.heartbeat(last_sweep_end=time.time(), roots_readable=True, order_file_present=True)
         review_settings.EFFECTIVE_ENV_PATH = str(base / "no-effective.env")  # absent: settings come from the environment

@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-import adjudication_journal as aj
-import glossary_acquire as ga
-import glossary_decision as gd
-import glossary_verify as gv
+from dubtitlerr.core import adjudication_journal as aj
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_decision as gd
+from dubtitlerr.glossary import glossary_verify as gv
 
 ROOT = Path(__file__).resolve().parents[1]
 PAIRS = [("Smokey", "Smoker"), ("Brannic", "Brannoc"), ("Tilvash", "Tilvish"), ("Jorvane", "Jorvene"), ("Kelmara", "Kelmira")]
@@ -202,7 +202,7 @@ def test_decision_pair_answers_are_journaled_with_model_and_acquire_tau_and_a_fa
 RUNNER = r"""
 import json, os, sys
 sys.path.insert(0, sys.argv[1])
-import glossary_acquire as ga, glossary_verify as gv
+from dubtitlerr.glossary import glossary_acquire as ga, glossary_verify as gv
 gloss, show_dir, die_after, apply = sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5] == "apply"
 TITLES = __TITLES__
 gv.VERIFY_BACKEND = "llamacpp"; gv.BACKEND_PROBLEM = ""

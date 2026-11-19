@@ -35,7 +35,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from atomic_file import atomic_write
+from dubtitlerr.core.atomic_file import atomic_write
 
 WATCHSTATE_URL = os.environ.get("WATCHSTATE_URL", "")
 WATCHSTATE_API_KEY = os.environ.get("WATCHSTATE_API_KEY", "")

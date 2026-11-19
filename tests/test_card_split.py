@@ -8,8 +8,8 @@ reach this module -- only `over_line_len`/`over_chars` shapes are fixed by split
 
 import pytest
 
-import card_split as cs
-import reflow
+from dubtitlerr.pipeline import card_split as cs
+from dubtitlerr.pipeline import reflow
 
 
 def test_sentence_end_ranks_above_clause_end_and_word_boundary():

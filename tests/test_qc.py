@@ -1,6 +1,6 @@
 import pytest
 
-import qc
+from dubtitlerr.pipeline import qc
 
 
 def test_quantiles_are_complete_even_when_events_truncate():
@@ -74,7 +74,7 @@ def test_qc_mode_matches_common(tmp_path):
     This is the guard that stops the two drifting -- referenced by name in both files."""
     import stat
 
-    import common
+    from dubtitlerr.core import common
 
     p = tmp_path / "e.dubtitles.qc.json"
     assert qc.write(str(p), {"a": 1}) is True
@@ -87,7 +87,7 @@ def test_plain_open_sidecars_are_group_writable(tmp_path):
     group-writable without each one needing its own chmod."""
     import stat
 
-    import common  # noqa: F401  (import applies the umask)
+    from dubtitlerr.core import common  # noqa: F401  (import applies the umask)
 
     p = tmp_path / "plain.json"
     with open(p, "w") as f:
@@ -246,7 +246,7 @@ def test_generate_record_qc_wires_duration_flags():
         fake.WhisperModel = _UnusedWhisperModel
         sys.modules["faster_whisper"] = fake
 
-    import generate
+    from dubtitlerr.pipeline import generate
 
     r = qc.Recorder()
     cards = [

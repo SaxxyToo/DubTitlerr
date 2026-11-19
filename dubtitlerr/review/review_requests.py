@@ -12,7 +12,7 @@ import uuid
 import zoneinfo
 from typing import Any
 
-from atomic_file import atomic_write, atomic_write_bytes
+from dubtitlerr.core.atomic_file import atomic_write, atomic_write_bytes
 
 REQUESTS_DIR = os.environ.get("REQUESTS_DIR", "/config/requests")
 ANIME_ROOT = os.environ.get("ANIME_ROOT", "/media/Anime Library")
@@ -880,7 +880,7 @@ def _strip_url_userinfo(val: str) -> str:
 def _reportable(key: str) -> bool:
     """Every registry key a builder process reads is reported, so the page can tell a pending change from an applied one."""
     try:
-        import settings_registry
+        from dubtitlerr.settings import settings_registry
     except ImportError:  # a minimal app directory without the registry keeps the fixed allow-list above
         return False
     entry = settings_registry.REGISTRY.get(key)
@@ -890,7 +890,7 @@ def _reportable(key: str) -> bool:
 def _known_secret_values(source_env: dict) -> list:
     """The values of every secret the registry knows (and the per-stage key holders), so no other line can repeat one."""
     try:
-        import settings_registry
+        from dubtitlerr.settings import settings_registry
     except ImportError:
         registry = {}
     else:

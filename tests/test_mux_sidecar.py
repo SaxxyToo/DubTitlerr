@@ -9,8 +9,8 @@ switching back to mux re-muxes instead of reading the sidecar stamp as already d
 import json
 import os
 
-import common
-import mux
+from dubtitlerr.core import common
+from dubtitlerr.pipeline import mux
 
 SRT = "1\n00:00:01,000 --> 00:00:02,000\nHello\n"
 

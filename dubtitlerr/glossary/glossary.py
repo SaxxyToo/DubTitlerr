@@ -39,9 +39,9 @@ def fuzzy_cutoff(n: int) -> float:
 
 
 # Wordlist for the English-word gate: the apt `wamerican` dict in the image, plus a
-# bundled fallback shipped next to this module (also what the tests use).
+# bundled fallback shipped in data/ at the repo root (also what the tests use).
 WORDLIST_PATH = os.environ.get("WORDLIST_PATH", "/usr/share/dict/american-english")
-_BUNDLED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "common_words.txt")
+_BUNDLED = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "common_words.txt")
 _WORDS: set[str] | None = None
 
 

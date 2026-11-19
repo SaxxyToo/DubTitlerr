@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-import review_server as rs
+from dubtitlerr.review import review_server as rs
 
 TOKEN = "retired-token"
 PROBE = ("POST", "/api/_admin_probe")
@@ -56,7 +56,7 @@ def test_startup_says_once_that_the_admin_token_is_retired(env, tmp_path, capsys
 
 
 def test_the_registry_marks_the_admin_token_keys_retired_with_a_pointer_to_the_api_key():
-    import settings_registry as reg
+    from dubtitlerr.settings import settings_registry as reg
 
     by_key = {s["key"]: s for s in reg.schema()["settings"]}
     for key in ("REVIEW_ADMIN_TOKEN", "REVIEW_ADMIN_TOKEN_FILE"):

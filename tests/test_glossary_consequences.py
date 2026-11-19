@@ -4,7 +4,7 @@ Synthetic items only. The classification is checked against production by runnin
 
 import pytest
 
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_verify as gv
 import tools.glossary_consequences as gc
 import tools.glossary_score as gs
 
@@ -202,7 +202,7 @@ def test_production_policy_substring_only_match_refused():
 
 
 def test_production_policy_common_word_refused(monkeypatch):
-    import glossary
+    from dubtitlerr.glossary import glossary
 
     monkeypatch.setattr(glossary, "_ORDINARY", {"castle", "government"})
     item = _item("Castle", ["Castle Rock"], "Castle Rock", "expansion")

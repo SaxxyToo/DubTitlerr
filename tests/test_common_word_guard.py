@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-import glossary
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary
+from dubtitlerr.glossary import glossary_verify as gv
 
 
 @pytest.fixture(autouse=True)

@@ -19,10 +19,10 @@ import re
 import shutil
 import unicodedata
 
-import decisions
-import glossary_lock
-import glossary_verify
-from common import MODE_KEEP, atomic_write_bytes, log
+from dubtitlerr.core import decisions
+from dubtitlerr.glossary import glossary_lock
+from dubtitlerr.glossary import glossary_verify
+from dubtitlerr.core.common import MODE_KEEP, atomic_write_bytes, log
 
 EDITABLE = ("names", "phrases", "hard_fixes")
 OPS = ("add", "update", "delete")

@@ -70,7 +70,7 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import common  # noqa: E402
+from dubtitlerr.core import common  # noqa: E402
 
 VIDEO_EXTS = (".mkv", ".mp4", ".m4v")
 

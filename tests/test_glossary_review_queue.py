@@ -3,8 +3,8 @@ collapsed in the CLI. Synthetic data only."""
 
 import json
 
-import glossary_acquire as ga
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_verify as gv
 
 NO_MATCH = {"canonical": "", "confidence": "none", "dub_note": ""}
 LOW = {"canonical": "Zorro", "confidence": "low", "dub_note": ""}

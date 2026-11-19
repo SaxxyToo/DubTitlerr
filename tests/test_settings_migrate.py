@@ -7,9 +7,9 @@ import sys
 
 import pytest
 
-import settings_api as api
-import settings_migrate as mig
-import settings_store as store
+from dubtitlerr.settings import settings_api as api
+from dubtitlerr.settings import settings_migrate as mig
+from dubtitlerr.settings import settings_store as store
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROFILES = {

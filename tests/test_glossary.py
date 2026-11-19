@@ -2,7 +2,7 @@
 
 import json
 
-import glossary
+from dubtitlerr.glossary import glossary
 
 
 def gloss(names=None, phrases=None, hard_fixes=None, prompt="", show="Test"):
@@ -322,7 +322,7 @@ def test_load_reaches_repair_glossary_terms_through_the_real_load_path(tmp_path)
     repair.py:process()'s gloss = glossary_for(video) -> glossary.load(path)
     chain could never deliver a populated arc_tags to _glossary_terms, no
     matter what the glossary JSON file on disk held."""
-    import repair
+    from dubtitlerr.pipeline import repair
 
     # An UNTAGGED name defaults IN to every arc's tier (repair.py:183), so tagging
     # only Doflamingo to Dressrosa would not demote an untagged Zoro relative to

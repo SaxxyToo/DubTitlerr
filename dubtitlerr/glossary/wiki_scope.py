@@ -52,8 +52,8 @@ import re
 import urllib.parse
 from typing import Callable, NamedTuple
 
-import glossary_verify
-from glossary_verify import _extract_links, _http_json, redirect_targets
+from dubtitlerr.glossary import glossary_verify
+from dubtitlerr.glossary.glossary_verify import _extract_links, _http_json, redirect_targets
 
 
 class ScopeResult(NamedTuple):

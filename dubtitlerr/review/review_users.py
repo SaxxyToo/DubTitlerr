@@ -10,7 +10,7 @@ import secrets
 import sys
 import time
 
-import review_auth
+from dubtitlerr.review import review_auth
 
 
 def _set_password(name: str, new: str) -> int:

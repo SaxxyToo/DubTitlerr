@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import review_server as rs
-import unresolved
+from dubtitlerr.review import review_server as rs
+from dubtitlerr.core import unresolved
 
 
 @pytest.fixture

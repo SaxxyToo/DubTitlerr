@@ -127,8 +127,8 @@ def main(argv=None):
     import time
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    import glossary as glossary_mod
-    import repair
+    from dubtitlerr.glossary import glossary as glossary_mod
+    from dubtitlerr.pipeline import repair
     from tools.bakeoff import ask_llamacpp_chat
 
     ap = argparse.ArgumentParser()

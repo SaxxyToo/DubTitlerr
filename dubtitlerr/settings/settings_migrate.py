@@ -19,9 +19,9 @@ import math
 import os
 import re
 
-import settings_connections as conns
-import settings_registry as reg
-import settings_store as store
+from dubtitlerr.settings import settings_connections as conns
+from dubtitlerr.settings import settings_registry as reg
+from dubtitlerr.settings import settings_store as store
 
 OLD_KEYS = ("REPAIR_PROFILE", "REPAIR_MODEL", "VERIFY_BACKEND", "VERIFY_DECISION_MODEL", "REQUIRE_ENG", "ACQUIRE_APPLY")
 VERIFY_BACKENDS = ("llamacpp", "ollama", "openai", "decision")  # what the 0.2.x exporter knew

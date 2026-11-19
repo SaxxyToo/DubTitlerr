@@ -26,7 +26,7 @@ import pysubs2
 # the settings store) from a minimal app directory that has no pysubs2, so what they need at
 # import time cannot come from this module. Re-exported here because common is the shared
 # helper surface the rest of the pipeline imports.
-from atomic_file import MODE_KEEP, SIDECAR_MODE, atomic_write, atomic_write_bytes  # noqa: F401
+from dubtitlerr.core.atomic_file import MODE_KEEP, SIDECAR_MODE, atomic_write, atomic_write_bytes  # noqa: F401
 
 MEDIA_UID = int(os.environ.get("MEDIA_UID", "1000"))
 MEDIA_GID = int(os.environ.get("MEDIA_GID", "100"))
@@ -872,7 +872,7 @@ def _llm_chat_openai(prompt, *, url, key_env, extra_body, model, max_tokens, fir
     NAME at call time; only the name, an HTTP status or an exception class is ever logged -- a provider may echo the key in
     an error body and http.client quotes a bad header value. Transport is repair's hardened helper (connect/read timeouts and
     a wall-clock request deadline); 429 and 5xx get OPENAI_RETRIES retries, Retry-After honoured and capped."""
-    import repair  # at call time: repair imports this module
+    from dubtitlerr.pipeline import repair  # at call time: repair imports this module
 
     key_name = key_env or "VERIFY_OPENAI_KEY_ENV"
     raw_key = os.environ.get(key_env, "") if key_env else ""

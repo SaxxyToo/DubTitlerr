@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-import decision_client as dc
-import repair
+from dubtitlerr.core import decision_client as dc
+from dubtitlerr.pipeline import repair
 
 KEY = "sk-SENTINEL-KEY-12345"  # gitleaks:allow -- test fixture, not a real credential
 MODEL = "inception/mercury-decide:free"
@@ -609,5 +609,5 @@ def test_the_client_is_a_top_level_production_module():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    assert pathlib.Path(dc.__file__).resolve() == root / "decision_client.py"
+    assert pathlib.Path(dc.__file__).resolve() == root / "dubtitlerr" / "core" / "decision_client.py"
     assert not (root / "tools" / "decision_client.py").exists()

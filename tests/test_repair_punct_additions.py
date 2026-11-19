@@ -3,8 +3,8 @@ only on the lenient list, and a glossary spelling only when it is a real name. S
 
 import pytest
 
-import glossary
-import repair
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import repair
 
 GL = glossary.load_dict(
     {

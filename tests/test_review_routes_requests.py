@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-import review_requests
-import review_server as rs
+from dubtitlerr.review import review_requests
+from dubtitlerr.review import review_server as rs
 
 TOKEN = "review-token"
 ADMIN = "admin-token"

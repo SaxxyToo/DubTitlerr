@@ -4,9 +4,9 @@ The flags are produced by the real apply_results, so the entries have the shape 
 
 import pytest
 
-import glossary
-import glossary_acquire as ga
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_verify as gv
 
 
 @pytest.fixture(autouse=True)

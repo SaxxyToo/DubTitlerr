@@ -43,7 +43,7 @@ import os
 import threading
 import time
 
-from common import SIDECAR_MODE, atomic_write, log
+from dubtitlerr.core.common import SIDECAR_MODE, atomic_write, log
 
 VERSION = 1
 MAX_AGE_DAYS = 30

@@ -12,13 +12,12 @@ dev = ["pytest", "ruff"]
 # the dep-free fallback when this extra isn't installed.
 analysis = ["webrtcvad>=2.0"]
 
-# This is a flat collection of top-level pipeline scripts (mux.py, generate.py, ...),
-# not an importable library — tests reach them via conftest.py's sys.path insert, not
-# a package import. Tell setuptools there's nothing to package so `pip install -e
-# ".[dev]"` (used purely to pull in the runtime + dev dependencies) doesn't choke on
-# auto-discovering glossaries/, tests/, tools/ as spurious top-level packages.
-[tool.setuptools]
-py-modules = []
+# The pipeline is an importable package: dubtitlerr/{core,pipeline,glossary,review,settings}/.
+# Name it explicitly so setuptools never auto-discovers glossaries/, tests/, tools/ or
+# data/ as spurious top-level packages; `pip install -e ".[dev]"` (used purely to pull
+# in the runtime + dev dependencies) must keep working.
+[tool.setuptools.packages.find]
+include = ["dubtitlerr*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

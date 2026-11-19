@@ -32,7 +32,7 @@ import time
 import urllib.parse
 from dataclasses import dataclass, field
 
-import repair
+from dubtitlerr.pipeline import repair
 
 DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 USER_AGENT = "DubTitlerr-glossary-bakeoff/1.0"  # an honest UA; OpenRouter accepts it

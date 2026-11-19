@@ -36,9 +36,9 @@ from __future__ import annotations
 import os
 import string
 
-import reflow
-import unresolved
-from common import LEGACY_BACKENDS, inherit_repair_backend, llm_chat
+from dubtitlerr.pipeline import reflow
+from dubtitlerr.core import unresolved
+from dubtitlerr.core.common import LEGACY_BACKENDS, inherit_repair_backend, llm_chat
 
 # The detector must ask the SAME question reflow asks when it splits, or it would "fix"
 # segments reflow can already split and skip ones it cannot.

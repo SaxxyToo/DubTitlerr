@@ -6,7 +6,7 @@ import socket
 import threading
 import time
 
-import review_server
+from dubtitlerr.review import review_server
 
 
 def _start_server(monkeypatch, timeout):

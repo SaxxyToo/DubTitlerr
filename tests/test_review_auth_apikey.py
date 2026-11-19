@@ -3,7 +3,7 @@ import stat
 
 import pytest
 
-import review_auth
+from dubtitlerr.review import review_auth
 
 pytestmark = pytest.mark.real_accounts
 

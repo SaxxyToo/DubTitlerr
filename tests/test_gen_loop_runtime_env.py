@@ -175,7 +175,7 @@ elif show == 'Show2':
 
 
 def test_the_shell_and_the_registry_agree_on_every_off_spelling():
-    import settings_registry as reg
+    from dubtitlerr.settings import settings_registry as reg
 
     def registry_applies(raw):
         value, ok = reg.from_env("ACQUIRE_APPLY", raw)

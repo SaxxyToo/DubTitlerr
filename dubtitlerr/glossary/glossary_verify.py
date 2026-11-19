@@ -33,9 +33,9 @@ import time
 import urllib.parse
 import urllib.request
 
-import adjudication_journal
-import common
-from common import llm_chat, stop_requested
+from dubtitlerr.core import adjudication_journal
+from dubtitlerr.core import common
+from dubtitlerr.core.common import llm_chat, stop_requested
 
 
 def log(*a):
@@ -100,7 +100,7 @@ def backend_problem(backend=None):
             return BACKEND_PROBLEM or f"VERIFY_BACKEND={VERIFY_BACKEND!r} is not one of {', '.join(VERIFY_BACKENDS)}"
         backend = VERIFY_BACKEND
     if backend == "decision":
-        import glossary_decision
+        from dubtitlerr.glossary import glossary_decision
 
         why = glossary_decision.problem()
         if why:
@@ -110,7 +110,7 @@ def backend_problem(backend=None):
             if local and local not in LEGACY_BACKENDS:
                 return f"VERIFY_DECISION_LOCAL_BACKEND must be one of {', '.join(LEGACY_BACKENDS)}"
     if backend == "openai":
-        import repair
+        from dubtitlerr.pipeline import repair
 
         url = os.environ.get("VERIFY_OPENAI_URL", "").strip()
         key_env = os.environ.get("VERIFY_OPENAI_KEY_ENV", "").strip()
@@ -173,7 +173,7 @@ def announce(stage, backend=None):
     nothing: nothing leaves the machine."""
     backend = backend or VERIFY_BACKEND
     if backend == "decision":
-        import glossary_decision
+        from dubtitlerr.glossary import glossary_decision
 
         glossary_decision.announce(stage)
     elif backend == "openai":
@@ -196,7 +196,7 @@ def begin_run(stage, backend=None):
     if backend in ("openai", "decision"):
         announce(stage, backend)
     if backend == "decision":
-        import glossary_decision
+        from dubtitlerr.glossary import glossary_decision
 
         glossary_decision.reset()
 
@@ -205,7 +205,7 @@ def end_run(rep, backend=None):
     """End of a run: on the decision backend print the one summary line and add the counters to the report as `decision`.
     Any other backend: the report is returned untouched and nothing is printed."""
     if (backend or VERIFY_BACKEND) == "decision":
-        import glossary_decision
+        from dubtitlerr.glossary import glossary_decision
 
         log(glossary_decision.summary_line())
         rep = {**rep, "decision": glossary_decision.counters()}
@@ -235,7 +235,7 @@ def worker_count():
     """Concurrent adjudications in verify(): VERIFY_WORKERS for the local backends (as always); VERIFY_DECISION_WORKERS
     (default 1) for the decision backend, whose provider meters requests and rate-limits per key."""
     if VERIFY_BACKEND == "decision":
-        import glossary_decision
+        from dubtitlerr.glossary import glossary_decision
 
         return glossary_decision.settings().workers
     return VERIFY_WORKERS
@@ -339,7 +339,7 @@ PROMPT_VERSION = "1"
 def prompt_version(kind: str) -> str:
     """PROMPT_VERSION plus a digest of the prompt template for ``kind`` ('pick' here; acquire adds 'pair')."""
     if kind == "pair":
-        import glossary_acquire
+        from dubtitlerr.glossary import glossary_acquire
 
         sample = glossary_acquire.build_merge_prompt("VARIANT", "CANONICAL", ["CTX-V"], ["CTX-C"], "SHOW")
     else:
@@ -352,7 +352,7 @@ def backend_identity(backend: str | None, kind: str) -> dict:
     b = backend or VERIFY_BACKEND
     ident: dict = {"backend": b}
     if b == "decision":
-        import glossary_decision
+        from dubtitlerr.glossary import glossary_decision
 
         s = glossary_decision.settings()
         ident.update(
@@ -429,7 +429,7 @@ def adjudicate(term: str, cands: list[str], show: str, backend: str | None = Non
         raise BackendConfigError(problem)
     backend = backend or VERIFY_BACKEND
     if backend == "decision":
-        import glossary_decision
+        from dubtitlerr.glossary import glossary_decision
 
         # The local fallback's answer is marked: it must never be remembered as if the decision model had given it.
         return glossary_decision.adjudicate_verify(
@@ -477,7 +477,7 @@ def auto_writes(term: str, canon: str) -> bool:
     term itself stays in the glossary and the reviewer can accept the write). 'Dr. K' has three letters and is not held
     back. Read per call."""
     # Imported at call time, NOT at module scope: glossary_acquire imports this module (a hard cycle otherwise).
-    from glossary_acquire import is_expansion
+    from dubtitlerr.glossary.glossary_acquire import is_expansion
 
     if not is_expansion(term, canon):
         return False
@@ -577,7 +577,7 @@ def arc_universe(gloss: dict):
 
 def _common_word_block(blocked: int) -> dict:
     """The report's common_word block: the count, plus wordlist='missing' when the configured word list could not be read."""
-    import glossary
+    from dubtitlerr.glossary import glossary
 
     block = {"blocked": blocked}
     if glossary.wordlist_status() == "missing":
@@ -608,7 +608,7 @@ def write_decision(term: str, canon: str, universe) -> str:
         return "respelling"
     # Common-word guard (default on, VERIFY_SKIP_COMMON_WORDS=0 turns it off).
     if skip_common_words() and " " not in term.strip():
-        import glossary
+        from dubtitlerr.glossary import glossary
 
         if glossary.is_ordinary_word(term):
             rescued = (
@@ -643,7 +643,7 @@ def blocked_kind(term: str, canon: str, decision: str) -> str:
     means the correct spelling is never offered. Only the droppable kinds are returned as themselves."""
     longer = len(canon.split()) > len(term.split())
     if decision == "respelling":
-        from glossary_acquire import is_expansion
+        from dubtitlerr.glossary.glossary_acquire import is_expansion
 
         return "expansion-guarded" if longer and is_expansion(term, canon) else "respelling"
     return decision if longer else "respelling"
@@ -1250,7 +1250,7 @@ _STOPPED = object()  # _one's marker for a term skipped by the soft stop (None i
 def arcs_in_show(show_dir: str) -> list[str]:
     """The distinct arc names of the show's seasons: every directory under ``show_dir`` holding a season.nfo, read with
     glossary.arc_for (the repair stage's own resolver). Sorted; [] when there are none."""
-    import glossary
+    from dubtitlerr.glossary import glossary
 
     arcs = set()
     for root, _dirs, files in os.walk(show_dir):
@@ -1353,7 +1353,7 @@ def scopes_in_show(cfg: dict, show_dir: str) -> list[dict]:
     debt: a library whose files carry no SxxExx tag (absolute numbering in plain names, or no tag at all) cannot be mapped to
     seasons or episodes, so arc_index / season_page get NO scopes for it; whole_wiki still works. Revisit if such a show needs
     an arc index (e.g. read an absolute number from the name, or from the .nfo 'Covers anime episode(s)' line)."""
-    import common
+    from dubtitlerr.core import common
 
     rung = cfg.get("rung")
     if rung == "whole_wiki":
@@ -1405,7 +1405,7 @@ def fetch_scope_cached(cfg: dict, scope: dict, show_key: str) -> tuple[set[str],
     if entry and (time.time() - entry.get("fetched_at", 0)) < WIKI_TTL:
         return set(entry["titles"]), "cached"
     try:
-        import wiki_scope  # inside the try: a module missing from the image is an incomplete scope, not a crash
+        from dubtitlerr.glossary import wiki_scope  # inside the try: a module missing from the image is an incomplete scope, not a crash
 
         res = wiki_scope.resolve_scope(cfg, scope["season"], scope["episodes"], http=_http_json)
     except Exception as e:  # noqa: BLE001 -- the sweep must never fail on a wiki
@@ -1426,7 +1426,7 @@ def fetch_scope_cached(cfg: dict, scope: dict, show_key: str) -> tuple[set[str],
 def tag_arcs(gloss_path: str, show_dir: str, override: str | None = None) -> dict:
     """tag_arcs under the glossary's lock (see glossary_lock): a busy glossary skips the stage, note 'glossary busy: tag-arcs
     skipped'. The work is _tag_arcs."""
-    import glossary_lock
+    from dubtitlerr.glossary import glossary_lock
 
     with glossary_lock.locked(gloss_path, "tag-arcs") as ok:
         if not ok:
@@ -1451,7 +1451,7 @@ def _tag_arcs(gloss_path: str, show_dir: str, override: str | None = None) -> di
     page is named differently ("Water Seven" -> "Water 7"); `arc_waived` [season arcs] accepted as covered by the other arcs
     (non-arc seasons such as "Gaimon"), which are neither fetched nor missing. Without them VERIFY_ARC_GATE cannot turn on for
     One Pace (see arc_universe)."""
-    import glossary
+    from dubtitlerr.glossary import glossary
 
     try:
         gloss = json.load(open(gloss_path))
@@ -1551,7 +1551,7 @@ def _tag_arcs(gloss_path: str, show_dir: str, override: str | None = None) -> di
         gloss.pop("arc_titles_missing", None)
     if json.dumps(gloss, sort_keys=True) == before:
         return rep
-    from glossary_acquire import _write_json
+    from dubtitlerr.glossary.glossary_acquire import _write_json
 
     try:
         _write_json(gloss_path, gloss)
@@ -1574,7 +1574,7 @@ def verify(gloss_path: str, override: str | None = None, force: bool = False) ->
     On a hosted backend the run opens by saying which fields go to which host; on the decision backend it ends with one
     summary line and the report gains `decision` (calls / ok / failures / fallbacks / pending). A term whose decision call
     failed with VERIFY_DECISION_FALLBACK=none stays pending (counted in the report's `pending`), not verified, not flagged."""
-    import glossary_lock
+    from dubtitlerr.glossary import glossary_lock
 
     with glossary_lock.locked(gloss_path, "verify") as ok:  # the whole read-adjudicate-write: a busy glossary skips the stage
         if not ok:
@@ -1655,7 +1655,7 @@ def _verify(gloss_path: str, override: str | None = None, force: bool = False) -
     new = apply_results(gloss, results)
     new.setdefault("wiki", api)
     # Imported at call time for the same cycle reason as is_expansion below.
-    from glossary_acquire import _write_json
+    from dubtitlerr.glossary.glossary_acquire import _write_json
 
     try:
         _write_json(gloss_path, new)

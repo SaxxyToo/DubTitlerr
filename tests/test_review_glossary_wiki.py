@@ -6,11 +6,11 @@ import json
 
 import pytest
 
-import decisions
-import glossary_verify
-import review_auth
-import review_glossary
-import review_server as rs
+from dubtitlerr.core import decisions
+from dubtitlerr.glossary import glossary_verify
+from dubtitlerr.review import review_auth
+from dubtitlerr.review import review_glossary
+from dubtitlerr.review import review_server as rs
 
 SHOW = "Yu-Gi-Oh"
 RAW = {

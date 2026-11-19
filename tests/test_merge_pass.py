@@ -16,7 +16,7 @@ import stat
 import subprocess
 import sys
 
-import common
+from dubtitlerr.core import common
 
 MERGE_PASS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "merge_pass.sh")
 
@@ -96,7 +96,7 @@ def test_crashed_record_written_only_when_stage_left_none(tmp_path):
         [
             sys.executable,
             "-c",
-            f"import common,sys; s={stem!r}; "
+            f"import sys; from dubtitlerr.core import common; s={stem!r}; "
             "sys.exit(0 if 'repair' in common.read_stages(s) else common.write_stage(s, 'repair', 'crashed', 'rc=1') or 1)",
         ],
         cwd=os.path.dirname(MERGE_PASS),
@@ -109,7 +109,7 @@ def test_crashed_record_written_only_when_stage_left_none(tmp_path):
         [
             sys.executable,
             "-c",
-            f"import common,sys; s={stem2!r}; "
+            f"import sys; from dubtitlerr.core import common; s={stem2!r}; "
             "sys.exit(0 if 'repair' in common.read_stages(s) else common.write_stage(s, 'repair', 'crashed', 'rc=1') or 1)",
         ],
         cwd=os.path.dirname(MERGE_PASS),

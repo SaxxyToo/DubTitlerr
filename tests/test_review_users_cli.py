@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-import glossary_lock
-import review_auth
-import review_users
+from dubtitlerr.glossary import glossary_lock
+from dubtitlerr.review import review_auth
+from dubtitlerr.review import review_users
 
 pytestmark = pytest.mark.real_accounts
 

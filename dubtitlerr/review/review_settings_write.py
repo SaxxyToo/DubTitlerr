@@ -37,9 +37,9 @@ import os
 import shlex
 import sys
 
-import settings_connections as conns
-import settings_registry as reg
-import settings_store as store
+from dubtitlerr.settings import settings_connections as conns
+from dubtitlerr.settings import settings_registry as reg
+from dubtitlerr.settings import settings_store as store
 
 SCOPES = ("gen", "merge", "server", "container")
 USAGE = (
@@ -110,7 +110,7 @@ def format_snapshot(scope):
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "migrate":
-        import settings_migrate
+        from dubtitlerr.settings import settings_migrate
 
         with contextlib.redirect_stdout(sys.stderr):
             notes = settings_migrate.migrate()

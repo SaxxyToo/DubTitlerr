@@ -17,7 +17,7 @@ import types
 import pysubs2
 import pytest
 
-import common
+from dubtitlerr.core import common
 
 
 def ev(text="hello", style="Default", start=0, end=1000, comment=False):
@@ -126,7 +126,7 @@ def test_generate_atomic_write_is_the_common_helper():
     import sys
 
     sys.modules.setdefault("faster_whisper", types.SimpleNamespace(WhisperModel=object))
-    import generate
+    from dubtitlerr.pipeline import generate
 
     assert generate._atomic_write is common.atomic_write
 

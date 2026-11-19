@@ -38,7 +38,7 @@ _is_expansion = None
 def _expansion(term, title):
     global _is_expansion
     if _is_expansion is None:
-        from glossary_acquire import (
+        from dubtitlerr.glossary.glossary_acquire import (
             is_expansion,
         )  # at call time, as glossary_verify.apply_results does (an import cycle otherwise)
 
@@ -71,7 +71,7 @@ def classify(item, pick, tau=None, policy="production", universe=None, mode=None
         return "good_write" if accepted else "wrong_write"
 
     # Production policy: call the real guard path (glossary_verify.write_decision)
-    import glossary_verify as gv
+    from dubtitlerr.glossary import glossary_verify as gv
 
     u = universe if universe is not None else item.get("universe")
     decision = gv.write_decision(item["term"], title, u)
@@ -98,7 +98,7 @@ def outcome_action(outcome, term=None, canon=None, decision=None, policy="produc
     if outcome == "flag_nomatch":
         if policy == "legacy":
             return "RECORDED-NOT-QUEUED"
-        import glossary_verify as gv
+        from dubtitlerr.glossary import glossary_verify as gv
 
         return "QUEUED" if gv.queue_no_match() else "RECORDED-NOT-QUEUED"
     if outcome == "flag_low":
@@ -107,7 +107,7 @@ def outcome_action(outcome, term=None, canon=None, decision=None, policy="produc
         return "QUEUED"
     # Blocked write decisions (flag_respelling, flag_common_word, flag_not_in_arc):
     if policy == "production" and term and canon and decision:
-        import glossary_verify as gv
+        from dubtitlerr.glossary import glossary_verify as gv
 
         if gv.blocked_kind(term, canon, decision) in gv.BLOCKED_EXPANSION_KINDS and not gv.queue_blocked_expansions():
             return "RECORDED-NOT-QUEUED"
@@ -164,7 +164,7 @@ def tally(pairs, tau=None, policy="production", universe=None, mode=None):
         # Determine the action (WRITTEN / QUEUED / RECORDED-NOT-QUEUED)
         dec = None
         if policy == "production" and pick and pick.high(tau) and title and title != item["term"]:
-            import glossary_verify as gv
+            from dubtitlerr.glossary import glossary_verify as gv
 
             u = universe if universe is not None else item.get("universe")
             dec = gv.write_decision(item["term"], title, u)

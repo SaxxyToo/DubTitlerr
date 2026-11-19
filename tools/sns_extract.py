@@ -32,7 +32,7 @@ from collections import Counter
 import pysubs2
 
 sys.path.insert(0, ".")
-import dub_signs_merge as dsm
+from dubtitlerr.pipeline import dub_signs_merge as dsm
 
 DEFAULT_PLAY_RES_Y = 288  # matches dub_signs_merge.py's no-PlayRes-declared fallback
 OFF_DEFAULT_Y_FRACTION = 0.75  # top 75% of the frame is "not where dialogue sits"

@@ -42,8 +42,8 @@ import threading
 import urllib.parse
 from dataclasses import dataclass
 
-import decision_client
-from common import log
+from dubtitlerr.core import decision_client
+from dubtitlerr.core.common import log
 
 NONE_OPTION = "no candidate is the same named entity"
 DEFAULT_MODEL = "inception/mercury-decide:free"

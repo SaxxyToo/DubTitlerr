@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 
-import reflow
+from dubtitlerr.pipeline import reflow
 
 # Ranked candidate cut points: a sentence end is the strongest signal that the two
 # halves are independently readable, a clause end (comma/semicolon/colon) the next

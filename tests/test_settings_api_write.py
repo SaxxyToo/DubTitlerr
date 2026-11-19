@@ -7,9 +7,9 @@ import stat
 
 import pytest
 
-import review_auth
-import settings_api as api
-import settings_store as store
+from dubtitlerr.review import review_auth
+from dubtitlerr.settings import settings_api as api
+from dubtitlerr.settings import settings_store as store
 
 SECRET = "plex-secret-7c1e9a52b8d4"  # gitleaks:allow -- test fixture, not a real credential
 
@@ -248,7 +248,7 @@ def test_reset_without_secret_rights_keeps_connection_keys(env, tmp_path, monkey
 
 
 def test_the_server_routes_put_and_reset_through_the_settings_api(env, monkeypatch, tmp_path, capsys):
-    import review_server as rs
+    from dubtitlerr.review import review_server as rs
 
     secrets_off(monkeypatch)
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
@@ -304,7 +304,7 @@ def test_lock_failure_with_enospc_returns_507(env, monkeypatch):
 
 
 def test_the_audit_line_names_the_calling_principal(env, monkeypatch, tmp_path, capsys):
-    import review_server as rs
+    from dubtitlerr.review import review_server as rs
 
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
     principal = review_auth.Principal("session", "alice", "admin")

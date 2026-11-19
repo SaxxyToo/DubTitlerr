@@ -5,7 +5,7 @@ Pure functions with injected inputs (environ dicts, fake openers); no server nee
 import json
 import urllib.error
 
-import review_settings as st
+from dubtitlerr.review import review_settings as st
 
 SECRET = "sk-secret-123"
 

@@ -6,10 +6,10 @@ pending question was Y, and an accept on Y released the review gate for a line n
 
 import test_repair as tr
 
-import decisions
-import mux
-import repair
-import unresolved
+from dubtitlerr.core import decisions
+from dubtitlerr.pipeline import mux
+from dubtitlerr.pipeline import repair
+from dubtitlerr.core import unresolved
 
 ORIG = "the old line"
 X, Y = "the new line", "the good line"

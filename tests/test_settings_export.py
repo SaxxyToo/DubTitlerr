@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-import settings_store as store
+from dubtitlerr.settings import settings_store as store
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXPORTER = os.path.join(REPO, "review_settings_write.py")

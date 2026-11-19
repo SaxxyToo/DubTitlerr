@@ -4,7 +4,7 @@ Lets a library run process the seasons a viewer is ABOUT to watch (>= a start se
 before the ones they've already seen, instead of a flat S01->S36 alphabetical grind.
 Pure stdlib; paths are plain strings. Built with help of Claude (Anthropic)."""
 
-import ordering as o
+from dubtitlerr.pipeline import ordering as o
 
 BASE = "/media/Anime Library/One Pace"
 

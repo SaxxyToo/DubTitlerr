@@ -108,15 +108,15 @@ import threading
 import time
 import urllib.parse
 
-import card_split
-import decisions
-import glossary
-import hallucination
-import ordering
-import qc
-import reflow
-import unresolved
-from common import (
+from dubtitlerr.pipeline import card_split
+from dubtitlerr.core import decisions
+from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import hallucination
+from dubtitlerr.pipeline import ordering
+from dubtitlerr.pipeline import qc
+from dubtitlerr.pipeline import reflow
+from dubtitlerr.core import unresolved
+from dubtitlerr.core.common import (
     MEDIA_GID,
     MEDIA_UID,
     atomic_write,
@@ -135,7 +135,7 @@ _LOGGED_ONCE = set()
 def env_int(name, default, lo=None, hi=None):
     """An integer env var, read safely: unset -> ``default``; not an integer -> ``default`` plus one
     warning that names the variable (never its content); otherwise clamped to lo..hi. A typo in one
-    of these must not take down ``import repair`` for every backend."""
+    of these must not take down importing the repair module for every backend."""
     raw = os.environ.get(name)
     if raw is None or not raw.strip():
         return default

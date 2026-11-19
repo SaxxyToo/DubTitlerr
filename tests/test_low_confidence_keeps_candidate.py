@@ -6,8 +6,8 @@ showed "(no canonical)" and asked "mark this spelling correct as-is?", so the of
 import json
 import sys
 
-import glossary_acquire as ga
-import glossary_verify as gv
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_verify as gv
 
 
 def verified():

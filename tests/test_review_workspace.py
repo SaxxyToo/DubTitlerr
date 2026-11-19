@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-import decisions
-import review_server as rs
-import unresolved
+from dubtitlerr.core import decisions
+from dubtitlerr.review import review_server as rs
+from dubtitlerr.core import unresolved
 
 
 @pytest.fixture

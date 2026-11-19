@@ -29,13 +29,13 @@ import re
 
 import jellyfish
 
-import acquire_cache
-import adjudication_journal
-import glossary
-import glossary_verify
-import mine_glossary
-import ordering
-from common import MODE_KEEP, atomic_write, find_video, llm_chat, log, stop_requested
+from dubtitlerr.core import acquire_cache
+from dubtitlerr.core import adjudication_journal
+from dubtitlerr.glossary import glossary
+from dubtitlerr.glossary import glossary_verify
+from dubtitlerr.glossary import mine_glossary
+from dubtitlerr.pipeline import ordering
+from dubtitlerr.core.common import MODE_KEEP, atomic_write, find_video, llm_chat, log, stop_requested
 
 _DISAMBIG_RE = re.compile(r"\s*\([^)]*\)\s*$")
 _REDUCE_RE = re.compile("[\\s" + chr(0x27) + chr(0x2019) + "-]")
@@ -361,7 +361,7 @@ def adjudicate_merge(variant: str, canonical: str, ctx_v: list, ctx_c: list, sho
             raise glossary_verify.BackendConfigError(problem)
         backend = glossary_verify.acquire_backend()
         if backend == "decision":
-            import glossary_decision
+            from dubtitlerr.glossary import glossary_decision
 
             # The local fallback's answer is marked: it must never be journaled as if the decision model had given it.
             return glossary_decision.adjudicate_pair(
@@ -1215,7 +1215,7 @@ def acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str |
     leaves the glossary untouched and is reported, not raised. On a hosted backend the run opens by saying which fields go
     to which host (the transcript lines among them); on the decision backend it ends with one summary line and the report
     gains `decision` (calls / ok / failures / fallbacks / pending)."""
-    import glossary_lock
+    from dubtitlerr.glossary import glossary_lock
 
     if not apply:  # a dry run writes no glossary (only the acquire cache): nothing to lose, nothing to lock
         return _acquire_run(gloss_path, show_dir, apply, override)
@@ -1558,7 +1558,7 @@ def _commit_answers(gloss_path: str, answers: list, stage: str = "review") -> bo
     an answer is applied only to a term that is still flagged in the fresh glossary WITH THE SAME CANONICAL the human saw; one
     decided meanwhile, re-proposed differently, or saved in the older two-element format is skipped and logged, so a stale answer
     can never undo a decision or approve a proposal the human never saw."""
-    import glossary_lock
+    from dubtitlerr.glossary import glossary_lock
 
     if answers:
         _append_pending(gloss_path, answers)
@@ -1596,7 +1596,7 @@ def _commit_answers(gloss_path: str, answers: list, stage: str = "review") -> bo
 
 
 def _prune_cli(a) -> None:
-    import glossary_lock
+    from dubtitlerr.glossary import glossary_lock
 
     g = json.load(open(a.glossary, encoding="utf-8"))
     pruned, n = prune_no_match(g)
@@ -1700,7 +1700,7 @@ def main():
         out = revert(g)
         written = False
         if a.apply:
-            import glossary_lock
+            from dubtitlerr.glossary import glossary_lock
 
             with glossary_lock.locked(a.glossary, "revert", wait=glossary_lock.interactive_wait_seconds(), announce=True) as ok:
                 if ok:

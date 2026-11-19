@@ -12,10 +12,10 @@ import sys
 
 import pytest
 
-import acquire_cache
-import glossary_acquire as ga
-import glossary_verify as gv
-import mine_glossary
+from dubtitlerr.core import acquire_cache
+from dubtitlerr.glossary import glossary_acquire as ga
+from dubtitlerr.glossary import glossary_verify as gv
+from dubtitlerr.glossary import mine_glossary
 
 
 @pytest.fixture
