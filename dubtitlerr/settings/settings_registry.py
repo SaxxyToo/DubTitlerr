@@ -233,6 +233,7 @@ MAX_REF_BORROW^repair^int^3^merge^next_merge_pass^-^Reference borrow limit^Most 
 NSP_MAX^repair^float^0.5^merge^next_merge_pass^-^No-speech ceiling^Highest no-speech probability still repaired.
 REPAIR_ACCEPT_PUNCT_CASE_ONLY^repair^bool^false^merge^next_merge_pass^-^Accept punctuation-only repairs^Accept repairs that only change punctuation or case.
 REPAIR_GUARD_TERMINAL_PUNCT^repair^bool^false^merge^next_merge_pass^-^Guard terminal punctuation^Reject repairs that change the final punctuation.
+REPAIR_GATE_DUB_VOUCHED_MAX_RATIO^repair^float^3.0^merge^next_merge_pass^-^Dub-vouched length cap^Longest repair ratio allowed when a native dub-caption reference attests every added word.
 REPAIR_MAX_CONSECUTIVE_UNREACHABLE^repair^int^5^merge^next_merge_pass^-^Unreachable streak limit^Consecutive unreachable calls before repair stops.
 REPAIR_MAX_TOKENS^repair^int^1024^merge^next_merge_pass^-^Repair token budget^Largest reply repair asks for.
 REPAIR_OPENAI_RETRIES^repair^int^2^merge^next_merge_pass^-^Hosted retries^Retries per request on a hosted backend.
