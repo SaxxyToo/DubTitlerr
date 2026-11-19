@@ -1,7 +1,30 @@
+@font-face {
+  font-family: Archivo;
+  src: url('/review/fonts/archivo-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: Gurajada;
+  src: url('/review/fonts/gurajada-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/review/fonts/jetbrains-mono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/review/fonts/jetbrains-mono-500.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
+}
 :root {
   font-family:
-    Roboto,
-    Inter,
+    Archivo,
     ui-sans-serif,
     system-ui,
     -apple-system,
@@ -15,19 +38,19 @@
   font-synthesis: none;
   color-scheme: dark;
   /* Servarr token table. Every colour below derives from these. */
-  --bg: #202020;
-  --panel: #2a2a2a;
-  --surface: #333333;
-  --border: #3f3f3f;
-  --text: #e9e8f3;
-  --muted: #b4b4b4;
-  --accent: #2e6ea8;
-  --ok: #7cd48a;
-  --warn: #e8b45c;
-  --bad: #f08a8a;
-  --info: #6cb2f0;
-  --focus: #4cc2ff;
-  --on-accent: #ffffff;
+  --bg: #191819;
+  --panel: #222122;
+  --surface: #2a292a;
+  --border: #363537;
+  --text: #f1f2f2;
+  --muted: #b3b3b0;
+  --accent: #e79b32;
+  --ok: #7ac886;
+  --warn: #e0a84f;
+  --bad: #e08a8a;
+  --info: #86d6d2;
+  --focus: #9ff5f5;
+  --on-accent: #1c1a17;
   /* Derived steps: hover states and 12% status tints on a panel, opaque so contrast stays measurable. */
   --accent-hover: color-mix(in srgb, var(--accent) 85%, black);
   --surface-hover: color-mix(in srgb, var(--surface) 85%, var(--text));
@@ -168,32 +191,36 @@ textarea:disabled {
 }
 .app-shell {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
 .sidebar {
-  width: 224px;
   flex-shrink: 0;
   background: var(--panel);
-  border-right: 1px solid var(--border);
-  position: fixed;
-  inset: 0 auto 0 0;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
   display: flex;
-  flex-direction: column;
-  padding: 20px 12px;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 4px;
+  min-height: 56px;
+  padding: 0 18px;
   z-index: 20;
-  overflow-y: auto;
 }
 .brand {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  padding: 0 8px 22px;
-  font-size: 18px;
-  font-weight: 600;
+  padding: 0 10px 0 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 .brand-icon {
-  height: 32px;
-  width: 32px;
+  height: 26px;
+  width: 26px;
   display: grid;
   place-items: center;
   border-radius: var(--radius);
@@ -201,22 +228,24 @@ textarea:disabled {
   color: var(--on-accent);
 }
 .sidebar nav {
-  display: grid;
+  display: flex;
+  align-items: stretch;
   gap: 2px;
+  flex-wrap: wrap;
 }
 .sidebar nav button {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 6px 10px;
   border: 0;
-  border-left: 3px solid transparent;
+  border-bottom: 2px solid transparent;
   background: transparent;
-  border-radius: 0 var(--radius) var(--radius) 0;
   text-align: left;
   font-size: 14px;
   font-weight: 500;
   color: var(--muted);
+  white-space: nowrap;
 }
 .sidebar nav button:hover:not(:disabled) {
   background: var(--surface);
@@ -224,11 +253,11 @@ textarea:disabled {
 }
 .sidebar nav .nav-active {
   color: var(--text);
-  background: var(--surface);
-  border-left-color: var(--accent);
+  background: transparent;
+  border-bottom-color: var(--accent);
 }
 .nav-count {
-  margin-left: auto;
+  margin-left: 2px;
   border-radius: var(--radius);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -237,10 +266,11 @@ textarea:disabled {
   font-variant-numeric: tabular-nums;
 }
 .sidebar-bottom {
-  margin-top: auto;
-  padding: 22px 8px 0;
-  display: grid;
-  gap: 12px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0;
 }
 .classic-link {
   display: flex;
@@ -269,8 +299,8 @@ textarea:disabled {
   background: var(--warn);
 }
 .main-shell {
-  margin-left: 224px;
-  width: calc(100% - 224px);
+  margin-left: 0;
+  width: 100%;
 }
 .topbar {
   height: 56px;
@@ -1296,14 +1326,6 @@ textarea {
   }
 }
 @media (max-width: 1200px) {
-  .sidebar {
-    width: 200px;
-    padding: 20px 10px;
-  }
-  .main-shell {
-    margin-left: 200px;
-    width: calc(100% - 200px);
-  }
   main {
     padding: 22px 20px;
   }
@@ -1338,13 +1360,6 @@ textarea {
   }
 }
 @media (max-width: 960px) {
-  .sidebar {
-    width: 190px;
-  }
-  .main-shell {
-    margin-left: 190px;
-    width: calc(100% - 190px);
-  }
   .stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1373,9 +1388,51 @@ textarea {
    tweaks below stay at 650px. Sidebar.svelte marks the closed drawer inert so Tab cannot reach it. */
 @media (max-width: 768px) {
   .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: 0;
+    min-height: 0;
+    height: auto;
+    width: 240px;
+    padding: 20px 12px;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+    overflow-y: auto;
     transform: translateX(-100%);
     transition: transform 0.2s;
-    width: 240px;
+  }
+  .sidebar nav {
+    display: grid;
+    gap: 2px;
+  }
+  .sidebar nav button {
+    justify-content: flex-start;
+    padding: 10px 12px;
+    border-left: 3px solid transparent;
+    border-bottom: 0;
+    border-radius: 0 var(--radius) var(--radius) 0;
+  }
+  .sidebar nav .nav-active {
+    background: var(--surface);
+    border-left-color: var(--accent);
+  }
+  .sidebar-bottom {
+    margin-left: 0;
+    margin-top: auto;
+    display: grid;
+    gap: 12px;
+    padding: 22px 8px 0;
+  }
+  .brand {
+    padding: 0 8px 22px;
+    font-size: 18px;
+  }
+  .brand-icon {
+    height: 32px;
+    width: 32px;
   }
   .sidebar.mobile-open {
     transform: translateX(0);

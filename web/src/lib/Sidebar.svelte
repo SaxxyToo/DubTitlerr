@@ -101,17 +101,19 @@
 <style>
   .subnav {
     list-style: none;
-    margin: 0 0 4px;
-    padding: 0;
-    display: grid;
-    gap: 1px;
+    margin: 0;
+    padding: 0 0 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    flex-basis: 100%;
   }
   .subnav a {
     display: block;
-    padding: 6px 12px 6px 40px;
-    border-left: 3px solid transparent;
+    padding: 3px 10px 5px;
     color: var(--muted);
     text-decoration: none;
+    white-space: nowrap;
   }
   .subnav a:hover {
     background: var(--surface);
@@ -123,7 +125,6 @@
   }
   .subnav a.nav-active {
     color: var(--text);
-    background: var(--surface);
-    border-left-color: var(--accent);
+    box-shadow: inset 0 -2px 0 var(--accent);
   }
 </style>
