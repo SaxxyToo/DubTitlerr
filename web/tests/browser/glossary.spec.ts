@@ -327,3 +327,73 @@ test('a non-admin sees the wiki as text with no Test or Save', async ({ page, re
   await expect(page.getByRole('button', { name: 'Test wiki' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Save wiki' })).toHaveCount(0);
 });
+
+// --- the flagged review queue: the CLI's queue, decided from the page ---------------------------------------
+
+test.describe('glossary review queue', () => {
+  test.beforeEach(async ({ request }) => reset(request));
+
+  const queueTab = (page: Page) => page.getByRole('button', { name: 'Review queue', exact: true });
+  const card = (page: Page, term: string) => page.locator('.review-card').filter({ hasText: term });
+
+  test('the tab carries the backlog count and each card carries reason and evidence', async ({ page }) => {
+    await openGlossary(page);
+    await expect(queueTab(page)).toContainText('4');
+    await queueTab(page).click();
+
+    await expect(page.getByRole('region', { name: 'Flagged review queue' })).toBeVisible();
+    await expect(page.getByLabel('New term')).toHaveCount(0, 'the term form belongs to the editing tabs');
+    await expect(page.getByText('4 of 4 flagged entries shown.')).toBeVisible();
+
+    const usop = card(page, 'Usop');
+    await expect(usop).toContainText('→');
+    await expect(usop).toContainText('Usopp');
+    await expect(usop).toContainText('respelling-needs-review');
+    await expect(usop).toContainText('9×');
+    await expect(usop).toContainText('3×');
+    await expect(usop).toContainText('Usop, wait!');
+    await expect(usop).toContainText(/rewrites every occurrence/i);
+
+    // a bare-string verifier entry still renders, with only its reason
+    await expect(card(page, 'Dwarfs')).toContainText('low-confidence');
+  });
+
+  test('accepting a respelling writes the hard fix and shrinks the queue', async ({ page }) => {
+    await openGlossary(page);
+    await queueTab(page).click();
+    await card(page, 'Usop').getByRole('button', { name: 'Accept fix' }).click();
+
+    await expect(page.locator('.notice.success').first()).toContainText(/Accepted “Usop”/);
+    await expect(card(page, 'Usop')).toHaveCount(0);
+    await expect(queueTab(page)).toContainText('3');
+
+    await page.getByRole('button', { name: 'Hard fixes', exact: true }).click();
+    await expect(row(page, 'Usop')).toContainText('Usopp');
+  });
+
+  test('rejecting records the spelling as known and leaves the queue', async ({ page }) => {
+    await openGlossary(page);
+    await queueTab(page).click();
+    await card(page, 'Straw').getByRole('button', { name: 'Reject' }).click();
+
+    await expect(page.locator('.notice.success').first()).toContainText(/“Straw” will not be proposed again/);
+    await expect(card(page, 'Straw')).toHaveCount(0);
+    await expect(queueTab(page)).toContainText('3');
+  });
+
+  test('an entry with no canonical offers only "Keep as correct"', async ({ page }) => {
+    await openGlossary(page);
+    await queueTab(page).click();
+    const dwarfs = card(page, 'Dwarfs');
+    await expect(dwarfs).toContainText('(no canonical)');
+    await expect(dwarfs.getByRole('button')).toHaveCount(1);
+    await expect(dwarfs.getByRole('button', { name: 'Keep as correct' })).toBeVisible();
+  });
+
+  test('the review queue has no accessibility violations', async ({ page }) => {
+    await openGlossary(page);
+    await queueTab(page).click();
+    await expect(card(page, 'Usop')).toBeVisible();
+    await expectNoAxeViolations(page);
+  });
+});

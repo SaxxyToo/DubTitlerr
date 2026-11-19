@@ -19,7 +19,7 @@ RAW = {
     "phrases": [],
     "hard_fixes": {},
     "verified": {"Yugi": {"source": "wiki"}},
-    "flagged": [{"term": "Yugi", "why": "alt"}],
+    "flagged": {"Yugi": {"reason": "low-confidence", "canonical": "Yugi Muto", "variant_count": 2, "canonical_count": 9}},
     "_curated": True,
 }
 

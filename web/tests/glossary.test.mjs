@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import {
   buildOp,
   describeError,
+  evidenceRows,
+  filterReview,
   filterTerms,
   isDirty,
+  reviewAction,
+  reviewNote,
   sortTerms,
   validateTerm,
 } from '../src/lib/glossary.js';
@@ -195,4 +199,74 @@ test('filterTerms and sortTerms tolerate duplicates and non-string entries from 
   const sorted = sortTerms(messy);
   assert.equal(sorted.length, 5);
   assert.deepEqual(messy, ['Luffy', 'Luffy', 5, null, 'zoro'], 'the input is not mutated');
+});
+
+// --- the flagged review queue ---------------------------------------------------------------
+
+const ITEM = {
+  term: 'Usop',
+  reason: 'respelling-needs-review',
+  canonical: 'Usopp',
+  variant_count: 9,
+  canonical_count: 3,
+  bound: 0.72,
+  score: 0.91,
+  context: ['Usop, wait!'],
+  source: 'transcript',
+  scope: 12,
+  effect: 'hard_fix',
+};
+
+test('filterReview matches the term or the canonical, case-insensitively', () => {
+  const items = [ITEM, { term: 'Straw', reason: 'common-word', canonical: 'Straw Hat Pirates' }];
+  assert.deepEqual(filterReview(items, 'usop'), [ITEM]);
+  assert.deepEqual(filterReview(items, 'PIRATES'), [items[1]]);
+  assert.deepEqual(filterReview(items, 'zzz'), []);
+  const copy = filterReview(items, '');
+  assert.deepEqual(copy, items);
+  assert.notEqual(copy, items, 'the caller gets a copy');
+});
+
+test('filterReview tolerates hand-edited non-string fields', () => {
+  assert.deepEqual(filterReview([{ term: 5, canonical: null }], '5').length, 1);
+  assert.deepEqual(filterReview([{ term: 'x' }], 'y'), []);
+});
+
+test('evidenceRows leads with the counts and never repeats the reason or canonical', () => {
+  const rows = evidenceRows(ITEM);
+  const labels = rows.map((r) => r.label);
+  assert.deepEqual(labels.slice(0, 4), ['seen', 'canonical', 'bound', 'score']);
+  assert.equal(rows[0].value, '9×');
+  assert.equal(rows[1].value, '3×');
+  assert.equal(rows[2].value, '0.720');
+  assert.equal(rows[3].value, '0.910');
+  assert.ok(!labels.includes('reason') && !labels.includes('canonical spelling'));
+  assert.ok(labels.includes('context'), 'the transcript line the flag was raised on is shown');
+});
+
+test('evidenceRows carries every extra evidence key the producer attached', () => {
+  const labels = evidenceRows(ITEM).map((r) => r.label);
+  for (const key of ['source', 'scope']) assert.ok(labels.includes(key), key);
+  const bare = evidenceRows({ term: 'Dwarfs', reason: 'low-confidence', canonical: '', bare: 'Dwarfs', possessive: "Dwarfs'" });
+  assert.deepEqual(
+    bare.filter((r) => r.label === 'bare' || r.label === 'possessive').map((r) => r.value),
+    ['Dwarfs', "Dwarfs'"],
+  );
+});
+
+test('reviewAction says what the button does, in the CLI’s terms', () => {
+  assert.deepEqual(reviewAction({ ...ITEM, effect: 'hard_fix' }), { accept: true, label: 'Accept fix' });
+  assert.deepEqual(reviewAction({ ...ITEM, effect: 'additive' }), { accept: true, label: 'Add as name' });
+  assert.deepEqual(reviewAction({ ...ITEM, effect: 'refused' }), { accept: true, label: 'Accept' });
+  assert.deepEqual(reviewAction({ term: 'Frier', reason: 'no-wiki-match', canonical: '', effect: 'none' }), {
+    accept: false,
+    label: 'Keep as correct',
+  });
+});
+
+test('reviewNote warns only where accepting rewrites or adds something', () => {
+  assert.match(reviewNote({ ...ITEM, effect: 'hard_fix' }), /every occurrence/i);
+  assert.match(reviewNote({ ...ITEM, effect: 'additive' }), /adds the canonical/i);
+  assert.equal(reviewNote({ ...ITEM, effect: 'refused' }), '');
+  assert.equal(reviewNote({ term: 'Frier', canonical: '', effect: 'none' }), '');
 });

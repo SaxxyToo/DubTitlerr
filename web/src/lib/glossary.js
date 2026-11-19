@@ -114,3 +114,97 @@ export function describeError(status, payload) {
     return detail ? `Invalid request: ${detail}.` : 'Invalid request. Check the term and try again.';
   return detail ? `${detail}.` : `Request failed (${status}).`;
 }
+
+// --- the flagged review queue ---------------------------------------------------------------
+// The server sends what glossary_acquire.review_items() and accept_effect() produced: `effect` is the
+// CLI's own verdict on what accepting would do, so these helpers only label it -- they never re-decide.
+
+/** @typedef {{ term: string, reason?: string, canonical?: string, effect?: string, variant_count?: number, canonical_count?: number, bound?: number, score?: number, context?: string[] }} ReviewItem */
+
+// Fields the card already shows as its heading or as their own evidence row; never repeated as extras.
+const EVIDENCE_FIELDS = new Set([
+  'term',
+  'reason',
+  'canonical',
+  'effect',
+  'context',
+  'variant_count',
+  'canonical_count',
+  'bound',
+  'score',
+]);
+
+/**
+ * Queue entries whose term or canonical contains the query, case-insensitively. Empty query = a copy.
+ * @param {ReviewItem[]} items
+ * @param {string} query
+ * @returns {ReviewItem[]}
+ */
+export function filterReview(items, query) {
+  const list = Array.isArray(items) ? items : [];
+  const q = String(query ?? '')
+    .trim()
+    .toLowerCase();
+  if (!q) return list.slice();
+  return list.filter(
+    (item) =>
+      String(item?.term ?? '')
+        .toLowerCase()
+        .includes(q) ||
+      String(item?.canonical ?? '')
+        .toLowerCase()
+        .includes(q),
+  );
+}
+
+/**
+ * The evidence a reviewer needs, as label/value rows: counts first, the transcript lines next, then
+ * every other key the producer attached (bare/possessive/source/scope/...).
+ * @param {ReviewItem} item
+ * @returns {{ label: string, value: string }[]}
+ */
+export function evidenceRows(item) {
+  /** @type {{ label: string, value: string }[]} */
+  const rows = [];
+  const it = /** @type {Record<string, any>} */ (item ?? {});
+  const shown = (/** @type {unknown} */ value) => typeof value === 'number' && Number.isFinite(value);
+  if (shown(it.variant_count)) rows.push({ label: 'seen', value: `${it.variant_count}×` });
+  if (shown(it.canonical_count)) rows.push({ label: 'canonical', value: `${it.canonical_count}×` });
+  if (shown(it.bound)) rows.push({ label: 'bound', value: it.bound.toFixed(3) });
+  if (shown(it.score)) rows.push({ label: 'score', value: it.score.toFixed(3) });
+  for (const line of Array.isArray(it.context) ? it.context : [])
+    rows.push({ label: 'context', value: String(line) });
+  for (const key of Object.keys(it).sort()) {
+    if (EVIDENCE_FIELDS.has(key)) continue;
+    const value = it[key];
+    if (value === null || value === undefined || value === '') continue;
+    rows.push({ label: key, value: typeof value === 'string' ? value : JSON.stringify(value) });
+  }
+  return rows;
+}
+
+/**
+ * The one decision button this entry offers: what it does and the accept flag to POST.
+ * A no-canonical entry has nothing to accept, so (like the CLI's y) it is answered accept=false.
+ * @param {ReviewItem} item
+ * @returns {{ accept: boolean, label: string }}
+ */
+export function reviewAction(item) {
+  const effect = item?.effect;
+  if (!item?.canonical) return { accept: false, label: 'Keep as correct' };
+  if (effect === 'hard_fix') return { accept: true, label: 'Accept fix' };
+  if (effect === 'additive') return { accept: true, label: 'Add as name' };
+  return { accept: true, label: 'Accept' };
+}
+
+/**
+ * What accepting will change, in the same words the CLI prompt uses. Empty when there is nothing to warn about.
+ * @param {ReviewItem} item
+ * @returns {string}
+ */
+export function reviewNote(item) {
+  if (!item?.canonical) return '';
+  if (item.effect === 'hard_fix') return 'Accepting rewrites every occurrence of this term in the show.';
+  if (item.effect === 'additive') return 'Accepting adds the canonical spelling only; the spoken term stays.';
+  return '';
+}
