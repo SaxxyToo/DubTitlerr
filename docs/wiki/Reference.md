@@ -853,7 +853,7 @@ Access is controlled by `ROUTE_ROLES`. Every route requires a specific role: `pu
 
 | Method | Path                      | Role      | Purpose                                                                  |
 | ------ | ------------------------- | --------- | ------------------------------------------------------------------------ |
-| GET    | `/healthz`                | `public`  | Health check probe                                                       |
+| GET    | `/healthz`                | `public`  | Health probe: 200/503 from the builder heartbeat (see Heartbeat and health) |
 | GET    | `/api/auth-mode`          | `public`  | Return setup_required and accounts_ok status                             |
 | POST   | `/api/login`              | `public`  | Authenticate with username and password; sets session cookie             |
 | POST   | `/api/setup`              | `public`  | Create initial administrator account (409 if already set up)             |
@@ -911,6 +911,50 @@ Access is controlled by `ROUTE_ROLES`. Every route requires a specific role: `pu
 | GET    | `/api/v1/settings`        | `user`    | Effective settings, read-only, secrets masked                            |
 | GET    | `/api/v1/apikey/info`     | `user`    | API key rotation state, never the key                                    |
 | GET    | `/api/v1/openapi.json`    | `user`    | The OpenAPI document for this surface                                    |
+
+### Heartbeat and health
+
+`/healthz`, `/api/v1/health`, `loop.state` in `/api/v1/system/status` and the Dashboard's
+"Builder heartbeat" figure all read **one** JSON document, `$HEARTBEAT_PATH` (default
+`/config/heartbeat.json`). The running loops write it, so an install that is doing work always has
+a fresh one:
+
+| Writer          | When                                              | Fields it sets                                                                                          |
+| --------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `gen_loop.sh`   | at the start of every sweep                        | `last_sweep_start`, `roots_readable`, `current_show` (cleared)                                           |
+| `gen_loop.sh`   | before each show, and before each run request      | `current_show`                                                                                           |
+| `gen_loop.sh`   | when the sweep's show loop finishes                | `last_sweep_end`, `current_show` (cleared), `roots_readable`, `order_file_present`, `sweep_shows`, `sweep_failed` |
+| `gen_loop.sh`   | on every idle poll while waiting for a rescan      | `last_beat` (liveness only)                                                                              |
+| `merge_pass.sh` | when a merge pass starts, and when it ends         | `merge_last_start`, `merge_last_end`, `merge_delivered`, `merge_failed`                                   |
+
+Every write merges into the existing document (so the two loops never drop each other's fields),
+is atomic, and is best-effort: a heartbeat that cannot be written is never allowed to fail or delay
+a sweep, the same rule runtime notifications follow. A misbuilt image without the writer module
+still runs — it just has no heartbeat, so `/healthz` stays at `503`.
+
+**What the readers decide.** `RESCAN_INTERVAL` (default 21600 s, six hours) is the loop's idle
+period between sweeps; a heartbeat is **stale** once `last_sweep_end` is older than three idle
+periods (`STALE_SWEEP_MULTIPLIER × RESCAN_INTERVAL` — 18 hours by default). One constant, in
+`dubtitlerr/core/heartbeat.py`, so the two routes cannot disagree:
+
+| Heartbeat state                                             | `/healthz` and `/api/v1/health`                    | `loop.state` |
+| ----------------------------------------------------------- | -------------------------------------------------- | ------------ |
+| no document at all                                          | `503`, reason `no heartbeat yet`                   | `unknown`    |
+| a sweep is in progress (no `last_sweep_end` yet)             | `503`, reason `stale: no sweep has completed yet`  | `running`    |
+| `last_sweep_end` within `3 × RESCAN_INTERVAL`                | `200`, `{"ok": true}`                              | `idle`       |
+| `last_sweep_end` older than that                             | `503`, reason `stale: last sweep ended Ns ago`     | `stalled`    |
+| `roots_readable` / `order_file_present` is false             | `503`, with that reason                            | reported in `loop` |
+| the soft-stop flag exists                                    | unchanged                                          | `stopping`   |
+
+A container that has not yet **completed** a sweep is unhealthy on purpose: at this granularity an
+in-progress sweep cannot be told from one wedged mid-episode, and that is the failure the probe
+exists to catch. An install with `LIBRARY_SWEEP=off` reports `order_file_present: true` at sweep
+end, because no order file gated its request-only run. `current_show` is what the Dashboard shows
+while a sweep works on a show.
+
+The container healthcheck in `compose.yaml` is a TCP connect to the review port, not a `/healthz`
+request, so Docker can read healthy while `/healthz` is `503`. If that distinction matters, point
+your own monitor at `/healthz` (public) or `/api/v1/health` (API key).
 
 ### `/api/v1`: the external contract
 

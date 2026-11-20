@@ -33,6 +33,10 @@ ENTRYPOINTS = [
     # store) and the request helper (writes the effective-env reports).
     "dubtitlerr.review.review_settings_write",
     "dubtitlerr.review.review_requests",
+    # The heartbeat writer both shell loops call at every sweep/pass boundary. It writes the
+    # document /healthz, /api/v1/health and loop.state read; a shipped image without it would
+    # leave every health surface at 503/"unknown", which is exactly what v0.4.0 did.
+    "dubtitlerr.core.heartbeat",
 ]
 
 

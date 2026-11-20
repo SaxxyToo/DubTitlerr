@@ -32,6 +32,17 @@ notify_send() {
 	python3 -m dubtitlerr.core.notify send "$@" >/dev/null 2>&1 || true
 }
 
+# The heartbeat is REPORTING ONLY, exactly like notify_send: /healthz, /api/v1/health, loop.state in
+# /api/v1/system/status and the Dashboard all read this one document (dubtitlerr/core/heartbeat.py
+# documents which field each event writes). Every call is failure-swallowed, and the module is
+# stdlib-only, so a missing module (misbuilt image), a read-only config volume or a bad
+# HEARTBEAT_PATH can never change this loop's exit status, write a stage outcome or stop a sweep.
+# Path: the stored/container HEARTBEAT_PATH when set, else the same /config default common.py uses.
+heartbeat_note() {
+	HEARTBEAT_PATH="${HEARTBEAT_PATH:-${CONFIG_DIR:-/config}/heartbeat.json}" \
+		python3 -m dubtitlerr.core.heartbeat "$@" >/dev/null 2>&1 || true
+}
+
 # What this loop saw at start (the container environment), generated from the settings registry: the _INIT_ values and a
 # restore_runtime_env() that puts every key of the scope back. apply_runtime_env calls it first, so a reset reaches this
 # long-running loop without a restart and a crashing exporter cannot leave the previous show's stored value in force.
@@ -258,6 +269,7 @@ EOF
 		# does not start and the request is requeued by the check after it.
 		prep_show "$req_show" "$req_gen_re"
 		GLOSS="$_prep_gloss"
+		heartbeat_note show --name "$req_show"
 
 		attempt=0
 		rc=""
@@ -349,6 +361,9 @@ while :; do
 	fi
 	if [ "$sweep" -eq 1 ] && [ ! -f "$ORDER" ]; then
 		echo "gen_loop: no order file $ORDER — idle 300s"
+		# Liveness only: no sweep has completed, so /healthz stays "no sweep has completed yet"
+		# by design, but the loop itself must not look dead (the file mtime is the Dashboard's age).
+		heartbeat_note ping
 		sleep_unless_stopped 300
 		continue
 	fi
@@ -357,6 +372,9 @@ while :; do
 		echo "gen_loop: LIBRARY_SWEEP is off, running queued requests only"
 		ORDER=/dev/null
 	fi
+	# The sweep is in progress from here until sweep-end below. loop.state reads "running" from
+	# last_sweep_start > last_sweep_end, so a working loop never reports "unknown" again.
+	heartbeat_note sweep-start --root "$ANIME"
 	python3 -m dubtitlerr.review.review_requests recover "$REQUESTS_DIR" </dev/null 2>&1 || echo "  recover failed (continuing)"
 	[ -f "$APP_DIR/dubtitlerr/review/review_settings_write.py" ] || python3 -m dubtitlerr.review.review_requests write-effective-env "$EFFECTIVE_ENV_FILE" </dev/null 2>&1 || echo "  effective.env write failed (continuing)"
 	drain_requests
@@ -382,6 +400,7 @@ while :; do
 		prep_show "$show"
 		[ "$_prep_stopped" -eq 0 ] || exit 0
 		GLOSS="$_prep_gloss"
+		heartbeat_note show --name "$show"
 		echo "#### GENERATE $show $(date)"
 		# crash-resume: re-run until clean exit or no progress (poison files get a .fail marker)
 		attempt=0
@@ -421,6 +440,14 @@ while :; do
 		case "$_show_pending" in '' | *[!0-9]*) _show_pending=0 ;; esac
 		sweep_review_pending=$((sweep_review_pending + _show_pending))
 	done <"$ORDER"
+	# The sweep is over (it always completes the show loop -- a soft stop exits above). Sweep end
+	# is the timestamp /healthz and loop.state judge freshness from; with LIBRARY_SWEEP off no
+	# order file gated the sweep, so none is recorded as missing.
+	if [ "$sweep" -eq 1 ]; then
+		heartbeat_note sweep-end --root "$ANIME" --order "$ORDER" --shows "$sweep_shows" --failed "$sweep_failed"
+	else
+		heartbeat_note sweep-end --root "$ANIME" --shows "$sweep_shows" --failed "$sweep_failed"
+	fi
 	echo "==== SWEEP COMPLETE — idle ${RESCAN_INTERVAL:-21600}s $(date) ===="
 	notify_send --event sweep.completed --loop generate \
 		--summary "sweep complete: $sweep_shows show(s), $sweep_failed failed, $sweep_review_pending review item(s) pending" \
@@ -456,6 +483,10 @@ while :; do
 					drain_requests
 				fi
 			fi
+			# Keep the document fresh while idle: /healthz judges staleness from last_sweep_end (3x
+			# RESCAN_INTERVAL), so this changes no verdict, but the Dashboard's heartbeat age comes
+			# from the file mtime, which would otherwise grow for the whole RESCAN_INTERVAL idle.
+			heartbeat_note ping
 		fi
 		sleep_unless_stopped 1
 		elapsed=$((elapsed + 1))

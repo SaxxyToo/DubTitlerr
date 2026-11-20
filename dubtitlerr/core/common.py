@@ -21,6 +21,10 @@ import uuid
 
 import pysubs2
 
+# The heartbeat document (readers here, writers in the shell loops) is stdlib-only for the same
+# reason atomic_file is: the loops' CLI must import it from an app dir with no pysubs2.
+from dubtitlerr.core import heartbeat as _heartbeat
+
 # The atomic-write primitive and the file-mode constants live in atomic_file.py, which has no
 # third-party imports. The shell loops drive a few CLIs (review_requests.py, watch_queue.py,
 # the settings store) from a minimal app directory that has no pysubs2, so what they need at
@@ -46,28 +50,26 @@ MEDIA_GID = int(os.environ.get("MEDIA_GID", "100"))
 # value, with test_qc_mode_matches_common pinning the two together).
 os.umask(0o002)
 
-HEARTBEAT_PATH = os.environ.get("HEARTBEAT_PATH", "/config/heartbeat.json")
+HEARTBEAT_PATH = os.environ.get("HEARTBEAT_PATH", _heartbeat.DEFAULT_PATH)
+# How stale a completed sweep may be before /healthz and loop.state call the builder unhealthy /
+# stalled. Defined in heartbeat.py next to the writers, re-exported here so both readers use one
+# number (see that module's docstring for the who-writes-when contract).
+STALE_SWEEP_MULTIPLIER = _heartbeat.STALE_SWEEP_MULTIPLIER
 
 
 def heartbeat(**fields):
-    """Write a heartbeat JSON document atomically to HEARTBEAT_PATH, merging with existing fields."""
-    try:
-        with open(HEARTBEAT_PATH) as existing:
-            data = json.load(existing)
-    except (OSError, ValueError):
-        data = {}
-    # Merge, so a later writer's fields do not drop an earlier writer's
-    data.update(fields)
-    atomic_write(HEARTBEAT_PATH, lambda f: json.dump(data, f), mode=0o600)
+    """Merge ``fields`` into the heartbeat document at HEARTBEAT_PATH, atomically.
+
+    Thin wrapper over dubtitlerr.core.heartbeat (stdlib-only, so the shell loops' CLI can import
+    it from an app dir with no pysubs2); the path is resolved through this module's global at
+    call time, which is what keeps HEARTBEAT_PATH patchable for tests and per-loop overrides.
+    """
+    return _heartbeat.write(HEARTBEAT_PATH, **fields)
 
 
 def read_heartbeat():
     """Read the heartbeat JSON document, returning a dict or None if missing/invalid."""
-    try:
-        with open(HEARTBEAT_PATH) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return None
+    return _heartbeat.read(HEARTBEAT_PATH)
 
 
 # OUTPUT_ROOT: write sidecars/output files to this branch path instead of next to the

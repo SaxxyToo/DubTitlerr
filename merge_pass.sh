@@ -22,6 +22,14 @@ APP="${APP_DIR:-$(cd "$(dirname "$0")" 2>/dev/null && pwd)}"
 notify_send() {
 	python3 -m dubtitlerr.core.notify send "$@" >/dev/null 2>&1 || true
 }
+# The heartbeat is REPORTING ONLY, exactly as in gen_loop.sh: /healthz, /api/v1/health, loop.state and
+# the Dashboard read the same document (dubtitlerr/core/heartbeat.py). A pass writes its own merge_*
+# fields and never the sweep fields the readers judge. Failure-swallowed + stdlib-only, so a missing
+# module (misbuilt image) or an unwritable config volume cannot change this pass's exit code.
+heartbeat_note() {
+	HEARTBEAT_PATH="${HEARTBEAT_PATH:-${CONFIG_DIR:-/config}/heartbeat.json}" \
+		python3 -m dubtitlerr.core.heartbeat "$@" >/dev/null 2>&1 || true
+}
 # Fail as a CONFIGURATION error before the per-stem loop, not as a "crashed" repair on the
 # first episode it touches: a missing $APP/dubtitlerr/pipeline/repair.py used to record {"repair": "crashed"}
 # against that stem, which then blocked every later pass until someone cleared the stage.
@@ -132,6 +140,11 @@ EOF
 	fi
 fi
 PATTERN=$(extras_grep_pattern "$APP/data/extras.txt" 2>/dev/null || echo '(Behind The Scenes|Deleted Scenes|Featurettes|Interviews|Scenes|Shorts|Trailers|Other|Extras)')
+# The pass is real work from here until merge-end below (everything that could decline to run has
+# already exited). /api/v1/system/status does not read merge_* (its loop object describes the
+# generate loop), so these fields are additive: what the merge loop last did, without touching the
+# sweep timestamps the health readers judge.
+heartbeat_note merge-start
 
 # Prints the outcome of a stage that failed, nothing if it passed. Fails CLOSED: if the
 # check itself cannot run, report "gate-error" so mux is skipped rather than run blind.
@@ -311,6 +324,7 @@ echo "MERGE_PASS_DONE new=$((after - before)) total_done=$after $(date)"
 # the failed-stage census, and the library-wide delivered total); reporting only, after the work.
 merge_new=$((after - before))
 merge_failed=${failed_count:-0}
+heartbeat_note merge-end --delivered "$merge_new" --failed "$merge_failed"
 notify_send --event merge.completed \
 	--summary "merge pass: $merge_new delivered, $merge_failed failed, $after total done" \
 	--loop merge --counts "{\"delivered\": $merge_new, \"failed\": $merge_failed, \"total_done\": $after}"
