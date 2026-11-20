@@ -1,10 +1,11 @@
 name: release
-# Tag-triggered ONLY. `:latest` follows the tag, never `main` -- main is the working branch
-# and every commit landing there is not a release. A beta user pinning a tag is what makes
-# "I'm on v0.1.0-beta" a reproducible sentence in a bug report.
+# DORMANT (fork guard): this workflow publishes the builder image to GHCR -- upstream's
+# distribution story. This fork builds its images on the host that runs them, so pushing a
+# release tag (v0.4.0 included) must not launch a ~40-minute hosted build and a GHCR push
+# nobody consumes. It stays runnable deliberately: dispatch it by hand from the Actions tab
+# if GHCR publishing is ever adopted (that, or restoring the tag trigger, is the one change).
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
