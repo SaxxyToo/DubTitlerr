@@ -45,14 +45,73 @@ pass. See [Stage outcomes](#stage-outcomes).
 creates the stop flag file (`STOP_FLAG`, default `/tmp/dubtitlerr.stop`) and prints
 `soft stop requested`. While the flag exists, no loop starts a new show, episode, glossary step
 or mux. The unit already running finishes, then the container prints `soft stop complete` and
-exits 0. The flag is deleted at startup, so a stopped container that you start again runs
-normally. `docker stop` sends SIGKILL once its `-t` grace period is over (10 seconds by
-default), so set `-t` above your longest single unit of work. Inside the glossary steps,
-`mine_glossary.py`, `glossary_acquire.py` and `glossary_verify.py` also check the flag between
-episodes, terms and escalation pairs. Releases up to 0.2.2 check it only before a glossary step
-starts, so an acquire step runs to its end or to `ACQUIRE_TIMEOUT`.
+exits 0. The flag is deleted at startup, so a stale flag never stops a fresh run. What the fresh
+run then does is decided by the persisted processing state (below), not by a hard-coded boot.
+`docker stop` sends SIGKILL once its `-t` grace period is over (10 seconds by default), so set
+`-t` above your longest single unit of work. Inside the glossary steps, `mine_glossary.py`,
+`glossary_acquire.py` and `glossary_verify.py` also check the flag between episodes, terms and
+escalation pairs. Releases up to 0.2.2 check it only before a glossary step starts, so an
+acquire step runs to its end or to `ACQUIRE_TIMEOUT`.
 
 The container runs as **root**, so `generate.py` can chown into the media tree. `Dockerfile` builds a merge-only image (signs and dub merge, no transcribe or repair) and is deprecated. `Dockerfile.builder` is the recommended image.
+
+---
+
+## Processing state and controls
+
+The app can be **up without touching the library**. That is the boot default: starting the
+container brings up the review UI and API, and processing waits for an explicit Start.
+
+The state is one tiny JSON file in the config volume, so it survives a recreate:
+
+`$CONFIG_DIR/processing.json` (`PROCESSING_STATE_FILE` overrides the path):
+
+```json
+{"state": "paused", "by": "user:alice", "at": "2026-11-19T18:02:11Z"}
+```
+
+| State     | What the loops do                                                                                                                                                    |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `running` | Work at the normal cadence.                                                                                                                                          |
+| `paused`  | Finish the unit in flight (show, sweep, stem, term), then hold at the boundary, polling every `PROCESSING_POLL_INTERVAL`. UI and API stay up. Nothing is killed.       |
+| `stopped` | The existing soft stop: persist `stopped`, write `STOP_FLAG`, drain the unit, exit the container. With a restart policy the UI returns idle; Start resumes.            |
+
+**Boot honors the file.** `container_run.sh` writes `paused` only when the file is missing (by
+`boot`), then starts the loops. A stored `running` behaves like earlier releases; `paused` and
+`stopped` start no sweep and no merge pass but keep the review server. A corrupt or unknown file
+is read as `paused`. A missing file is `paused` for the app; a stage run directly outside the
+container with no state file keeps working, because there is no app boot to honor.
+
+**Controls.** Settings → General shows the current state, who changed it and when, with Start /
+Pause / Stop for an admin. The same transitions are available as API routes:
+
+| Method | Path                     | Role   | Effect                                            |
+| ------ | ------------------------ | ------ | ------------------------------------------------- |
+| GET    | `/api/system/processing` | `user` | Current state, `by`, `at`, and whether it is the boot default |
+| POST   | `/api/system/start`      | `admin` | Persist `running`; clear a stale `STOP_FLAG`; 202 |
+| POST   | `/api/system/pause`      | `admin` | Persist `paused`; 202                              |
+| POST   | `/api/system/stop`       | `admin` | Persist `stopped`; write `STOP_FLAG`; 202         |
+
+The `/api/v1` command endpoint carries the additive commands `system.start`, `system.pause` and
+`system.stop`; `GET /api/v1/system/status` reports the same `processing` object.
+
+**Host-side, with the container down.** The deploy flow should set `paused` before a recreate:
+
+```sh
+python3 -m dubtitlerr.core.processing_state pause --config-dir /path/to/config --by deploy
+python3 -m dubtitlerr.core.processing_state show --config-dir /path/to/config
+```
+
+`init` writes `paused` only when no file exists; `start`, `pause` and `stop` are the same
+transitions as the API. `--stop-flag PATH` lets `stop` also write the flag outside the container.
+
+**Boundary points.** Generate holds before a sweep, before each show and while idling; merge
+holds before each stem; glossary verification holds before each term. A request that was
+running when a stop arrived is re-queued exactly as before.
+
+Notifications for state changes are deliberately not emitted: the state file and the Settings
+panel are the reporting surface, and a notification failure must never be able to affect the
+control path.
 
 ---
 
@@ -524,7 +583,9 @@ the id settles it.
 | ------------------------------------------ | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `MERGE_INTERVAL`                           | `600`                  | Seconds between merge passes                                                                                                                             |
 | `MERGE_WINDOW`                             | _(empty, always)_      | Hours a merge sweep may run, `HH:MM-HH:MM`. May cross midnight. The end is exclusive. Set it when the repair backend is only up part of the day          |
-| `STOP_FLAG`                                | `/tmp/dubtitlerr.stop` | File the entrypoint creates on SIGTERM or SIGINT. While it exists, loops stop starting work. Deleted at startup. Unset (manual runs), nothing ever stops |
+| `STOP_FLAG`                                | `/tmp/dubtitlerr.stop` | File the entrypoint creates on SIGTERM/SIGINT or an API Stop. While it exists, loops stop starting work. Deleted at startup. Unset (manual runs), nothing ever stops |
+| `PROCESSING_STATE_FILE`                    | `$CONFIG_DIR/processing.json` | Persisted `running` / `paused` / `stopped` state, with who and when. Created as `paused` at boot when absent |
+| `PROCESSING_POLL_INTERVAL`                 | `15`                   | Seconds a paused loop sleeps between boundary checks                                                                                                    |
 | `RESCAN_INTERVAL`                          | `21600`                | Idle seconds after a full generate sweep                                                                                                                 |
 | `ACQUIRE_TIMEOUT`                          | `1800`                 | Seconds                                                                                                                                                  |
 | `VERIFY_TIMEOUT`                           | `1200`                 | Seconds                                                                                                                                                  |
@@ -791,6 +852,10 @@ Access is controlled by `ROUTE_ROLES`. Every route requires a specific role: `pu
 | POST   | `/api/settings/reset`     | `admin`   | Reset settings to environment or built-in defaults                       |
 | POST   | `/api/settings/test`      | `admin`   | Test an LLM connection endpoint                                          |
 | POST   | `/api/system/restart`     | `admin`   | Trigger a soft stop and restart of the builder container                 |
+| GET    | `/api/system/processing`  | `user`    | Read the persisted processing state, who changed it and when            |
+| POST   | `/api/system/start`       | `admin`   | Start processing: persist `running` and clear a stale stop flag          |
+| POST   | `/api/system/pause`       | `admin`   | Pause after the unit in flight: persist `paused`                         |
+| POST   | `/api/system/stop`        | `admin`   | Soft stop: persist `stopped`, write the stop flag, drain, exit           |
 | GET    | `/api/apikey`             | `admin`   | Retrieve current administrator API key                                   |
 | POST   | `/api/apikey/reset`       | `admin`   | Rotate administrator API key                                             |
 | GET    | `/api/users`              | `admin`   | List user accounts and roles                                             |
@@ -802,7 +867,7 @@ Access is controlled by `ROUTE_ROLES`. Every route requires a specific role: `pu
 | GET    | `/api/v1/queue`           | `user`    | Queued and running run requests, with counts                             |
 | GET    | `/api/v1/history`         | `user`    | Recent deliveries and stage outcomes, paged                              |
 | GET    | `/api/v1/library`         | `user`    | Shows in the library                                                     |
-| POST   | `/api/v1/command`         | `admin`   | `{"name", "params"}`: `run.request`, `system.restart`, `notification.test` |
+| POST   | `/api/v1/command`         | `admin`   | `{"name", "params"}`: `run.request`, `system.restart`, `system.start`, `system.pause`, `system.stop`, `notification.test` |
 | GET    | `/api/v1/notifications`   | `user`    | List notification providers (secrets reported as set or not set)         |
 | POST   | `/api/v1/notifications`   | `admin`   | Create a notification provider                                           |
 | GET    | `/api/v1/notification/*`  | `user`    | Read one notification provider                                           |
@@ -829,8 +894,9 @@ renames, moves or changes them. The two surfaces share one role table and one au
 - **Commands.** `run.request` takes the same body as `POST /api/requests` (`show` required;
   `season`, `episode_re`, `require_eng`, `webhook`, `force` optional) and returns that route's status
   code through the envelope `{"name", "ok", "result"}`, including the 409 for an identical pending
-  request. `system.restart` writes the soft-stop flag. `notification.test` needs
-  `params.name`.
+  request. `system.restart` writes the soft-stop flag. `system.start`, `system.pause` and
+  `system.stop` persist the same processing state the Settings panel controls (start clears a
+  stale stop flag; stop also writes it). `notification.test` needs `params.name`.
 - **History paging.** `limit` defaults to 25 and must be 1 to 200; `offset` is 0 or more. A value out
   of range is a 400 rather than a clamp. The first call after a library walk reads up to two small
   sidecars per episode, capped at 5,000 episodes; past the cap the response carries

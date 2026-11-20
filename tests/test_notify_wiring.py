@@ -309,6 +309,7 @@ def _run_container(tmp_path, notify_exit="0"):
     env.update(
         APP_DIR=str(app),
         STOP_FLAG=str(tmp_path / "stop"),
+        CONFIG_DIR=str(tmp_path / "config"),
         MERGE_INTERVAL="600",
         REVIEW_RESTART="600",
         NOTIFYLOG=str(tmp_path / "notify.log"),

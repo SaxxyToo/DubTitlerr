@@ -463,3 +463,62 @@ Harder, accepted:
 - The evidence is one show with a native dub-caption track plus two regression controls. A library
   where every show has dub captions would exercise this path far more; re-run `gate_replay.py`
   there before assuming the ratio cap is generous enough.
+
+---
+
+## 7. Processing is an explicit persisted state, and boot defaults to paused
+
+### The problem
+
+The container's entrypoint did three things at once: start the generate sweep, run the first
+merge pass, and start the review server. There was no "up but idle" state. Anyone who started the
+container to look at the review queue, or to run an operator task, immediately spent GPU time and
+repair calls on the library. The soft stop was the only brake, and it ended the whole container
+including the UI. A flag on disk was deleted at boot, so the container could not remember that a
+human had asked it to stay idle.
+
+### The decision
+
+Processing has three explicit states — `running`, `paused`, `stopped` — persisted in one tiny
+atomic JSON file under the config volume with the actor and time. The boot path materialises
+`paused` when the file is missing, before any loop starts, and every loop honors it at its
+existing boundary. `paused` and `stopped` both leave the review server up and start no sweep or
+merge pass.
+
+- The loops do not get a second stop mechanism. Pause reuses the same boundary checks the soft
+  stop already had (gen: between shows/sweeps; merge: between stems; glossary verify: between
+  terms) and holds there instead of exiting. A stop that arrives during a hold returns the same
+  drain path as today.
+- Stop is still the soft stop: persist `stopped`, write `STOP_FLAG`, finish the unit, exit. The
+  restart policy brings the UI back to the persisted `stopped`, which holds until Start.
+  `docker stop` is a container operation and deliberately writes no state.
+- Start, Pause and Stop are one implementation behind the Settings panel, the classic routes and
+  the `/api/v1` commands, so the three surfaces cannot drift. A host-side CLI writes the same
+  file with the container down, for the deploy flow's "set paused before recreate".
+- A corrupt or unknown file reads as `paused`, not `running`: the safe direction is to leave the
+  library alone. A missing file is paused for the app; a stage invoked directly outside the
+  container with no file keeps running, because there is no app boot there to honor.
+- `system.start` / `system.pause` / `system.stop` are additive `/api/v1` commands. `system.restart`
+  remains what it was; nothing is renamed.
+
+Rejected alternatives:
+
+- **A boot toggle on the container** (`AUTOSTART=0`). It cannot be changed at runtime, does not
+  survive a recreate the way a config-volume file does, and gives no place to record who asked.
+- **Pause by deleting/keeping `STOP_FLAG`.** The flag means "drain and exit"; overloading it would
+  make pause end the container, which is the exact behaviour this decision removes.
+- **Stop the container to stop work.** That was the only option before, and it takes the UI and
+  API down with the GPU work.
+- **Make `stopped` mean "exit and stay down".** A container that stays down cannot show its UI or
+  accept Start from an operator. It drains, exits, and the restart policy returns it idle.
+
+### What it costs
+
+Easier: an operator can start the app, browse the queue, change settings or answer review items
+without spending a single repair token; and a deploy can recreate the container without a race
+against the first sweep.
+
+Harder, and accepted: a pause is honored at the next boundary, not immediately inside a show or
+stem, so a long show keeps one unit of GPU work in flight (the same contract as the soft stop).
+The state is one more small file to keep writable in the config volume; when it is not, the API
+reports a 500 and the app keeps the previous behavior instead of silently processing.

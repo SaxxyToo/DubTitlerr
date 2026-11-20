@@ -226,6 +226,51 @@ accordingly or stop between steps.
 
 ---
 
+## Start the app without processing the library
+
+**Problem:** you want the review UI, API or operators up — but starting the container must not
+immediately begin a generate sweep and a merge pass over the library.
+
+The app keeps a processing state in the config volume, and **boot defaults to paused**. Starting
+the container now brings up the review server only: no sweep, no merge pass, no episode touched.
+
+1. Start (or recreate) the container as usual. The log line says which state boot honored:
+
+   ```text
+   ==== dubtitle-builder up ... — processing=paused merge_interval=600s rescan=21600s ====
+   ```
+
+   `processing paused — holding` appears once from each loop. The review UI answers on its port.
+
+2. Open **Settings → General**. The **Processing** panel shows `Paused`, who last changed it and
+   when (or that it is the boot default). Press **Start** to process normally; the loops resume at
+   their next boundary (≤ `PROCESSING_POLL_INTERVAL`, 15 s).
+
+3. Press **Pause** to stop starting new work without stopping the app. The unit in flight
+   (show, sweep, stem or glossary term) finishes, then each loop holds. The UI and API stay up.
+   Press **Start** to continue.
+
+4. Press **Stop** for the old soft stop from the UI: the unit drains, the container exits, and the
+   restart policy brings the UI back. It returns idle because `stopped` is persisted; Start
+   resumes processing. `docker stop` behaves exactly as before and writes no state.
+
+**Before a recreate, with the container down.** Set the state explicitly from the host, so the
+next boot cannot start on the library:
+
+```sh
+python3 -m dubtitlerr.core.processing_state pause --config-dir /path/to/dubtitlerr-config --by deploy
+python3 -m dubtitlerr.core.processing_state show  --config-dir /path/to/dubtitlerr-config
+```
+
+The first prints `paused`; the second confirms it. The file is
+`/path/to/dubtitlerr-config/processing.json`. From an agent or script with the app up, the same
+transition is `POST /api/v1/command` with `{"name": "system.pause"}` (admin API key).
+
+If the state file is corrupt, the app reads it as paused and keeps the UI up; Start writes a
+fresh file. Deleting the file has the same effect as the first boot: paused.
+
+---
+
 ## Resolve a mux recovery marker
 
 **Problem:** the merge pass reports `recovery pending` for an episode and will not touch it.

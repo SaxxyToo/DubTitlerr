@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 
 from dubtitlerr.core import adjudication_journal, common
-from dubtitlerr.core.common import llm_chat, stop_requested
+from dubtitlerr.core.common import llm_chat, stop_requested, wait_while_paused
 
 
 def log(*a):
@@ -1632,6 +1632,11 @@ def _verify(gloss_path: str, override: str | None = None, force: bool = False) -
 
     def _one(t):
         if stop_requested():
+            return _STOPPED
+        # Pause boundary: the term in flight finishes its call, then this worker holds before
+        # starting the next one. A soft stop that arrives while holding stops the verification
+        # exactly as it always has (the term stays pending for the next sweep).
+        if not wait_while_paused():
             return _STOPPED
         return adjudicate_journaled(t, candidates(t, titles), show, journal)
 
