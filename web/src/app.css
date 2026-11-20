@@ -1,24 +1,24 @@
 @font-face {
   font-family: Archivo;
-  src: url('/review/fonts/archivo-var.woff2') format('woff2');
+  src: url('/review/assets/archivo-var.woff2') format('woff2');
   font-weight: 100 900;
   font-display: swap;
 }
 @font-face {
   font-family: Gurajada;
-  src: url('/review/fonts/gurajada-400.woff2') format('woff2');
+  src: url('/review/assets/gurajada-400.woff2') format('woff2');
   font-weight: 400;
   font-display: swap;
 }
 @font-face {
   font-family: 'JetBrains Mono';
-  src: url('/review/fonts/jetbrains-mono-400.woff2') format('woff2');
+  src: url('/review/assets/jetbrains-mono-400.woff2') format('woff2');
   font-weight: 400;
   font-display: swap;
 }
 @font-face {
   font-family: 'JetBrains Mono';
-  src: url('/review/fonts/jetbrains-mono-500.woff2') format('woff2');
+  src: url('/review/assets/jetbrains-mono-500.woff2') format('woff2');
   font-weight: 500;
   font-display: swap;
 }
@@ -1564,4 +1564,203 @@ textarea {
   font-size: 13px;
   text-decoration: underline;
   cursor: pointer;
+}
+
+
+/* ===== Audio Deck editor (accepted first-viewport composition, fluid) ===== */
+.audio-band {
+  position: relative;
+  aspect-ratio: 925 / 260;
+  max-height: 240px;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 64px), #171617;
+  border-radius: 6px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+.band-wave {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  top: 6%;
+  height: 74%;
+  width: 92%;
+}
+.band-wave path {
+  stroke: #a5f6f5;
+  stroke-width: 1.15;
+  fill: none;
+  opacity: 0.95;
+}
+.band-playhead {
+  position: absolute;
+  top: 6%;
+  bottom: 18%;
+  width: 2px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.band-line {
+  position: absolute;
+  inset: 0;
+  background: #e8a33d;
+  width: 2px;
+}
+.band-handle {
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  border-radius: 50%;
+  background: #f7f7f4;
+  border: 2.5px solid #e8a33d;
+  box-sizing: border-box;
+}
+.band-timechip {
+  position: absolute;
+  left: 14px;
+  bottom: 34px;
+  font: 500 13px 'JetBrains Mono', monospace;
+  color: #ffffff;
+  background: rgba(8, 8, 8, 0.72);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+.band-ruler {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: 16px;
+  height: 5px;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.2) 0 1px,
+    transparent 1px 28.6px
+  );
+}
+.audio-band .listen-pill {
+  position: absolute;
+  right: 14px;
+  bottom: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(10, 10, 10, 0.8);
+  color: #f2f2f2;
+  font-size: 13px;
+  font-weight: 500;
+}
+.audio-band .listen-pill kbd {
+  color: rgba(255, 255, 255, 0.65);
+}
+.listen-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 10px 0 2px;
+}
+.listen-row audio {
+  max-width: 320px;
+  height: 34px;
+}
+.listen-row .timecode {
+  font: 500 13px 'JetBrains Mono', monospace;
+  color: var(--muted);
+}
+.listen-row small {
+  color: var(--muted);
+}
+.deck-card {
+  margin: 12px 0 4px;
+  padding: 16px 22px;
+  background: rgba(46, 52, 51, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+.deck-orig p {
+  margin: 4px 0 0;
+  font-size: 23px;
+  line-height: 1.25;
+  color: #9b9a99;
+}
+.deck-orig del,
+.deck-repair del {
+  text-decoration-color: #b9543f;
+  text-decoration-thickness: 2px;
+}
+.deck-repair p {
+  margin: 4px 0 0;
+  font-family: Gurajada, Archivo, sans-serif;
+  font-weight: 700;
+  font-size: 27px;
+  line-height: 1.2;
+  color: #f7f7f7;
+}
+.deck-repair ins,
+.deck-orig ins {
+  color: #d9fbfa;
+  text-decoration: none;
+}
+.deck-rule {
+  display: block;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 12px 0;
+}
+.transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.transport .deck-nav {
+  font-size: 13px;
+}
+.transport .verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid #3d3f44;
+  border-radius: 5px;
+  background: #3a3c40;
+  color: #f2f2f0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.transport .verdict:hover:not(:disabled) {
+  background: #44464b;
+}
+.transport .verdict.accept {
+  background: #e99b2f;
+  border-color: #e99b2f;
+  color: #1c1a17;
+  font-weight: 600;
+}
+.transport .verdict.accept:hover:not(:disabled) {
+  background: #f0a53c;
+}
+.transport .verdict.chosen {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.transport .verdict kbd {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+}
+.transport .verdict.accept kbd {
+  color: rgba(28, 26, 23, 0.7);
+}
+.transport-remaining {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
 }
