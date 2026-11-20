@@ -230,6 +230,24 @@ TRACK_NAME = "Dubtitles"
 # Adoption is 4/11, NOT 11/11. The 576 stamps live at v4 were produced by the current
 # decoder, so they are transcribe-fresh and only text-stale: they migrate at
 # watch-gated pace instead of burning ~2 GPU-days to record a bookkeeping change.
+#
+# THE MODEL IS NOT A VERSION (P12, 2026-11-20). The tiers record what the CODE did to the
+# output; neither can see which weights decoded the audio, and the weights change without a
+# code change: the library was moved onto whisper-large-v3-subs and every earlier episode
+# kept reading transcribe-fresh (measured on FMA:B's 34 episodes, stamped 4/11 by a
+# turbo-class decoder). So each stamp now records the decoder identity it was produced with
+# (decoder_stamp_identity: backend + model) and stale_tiers compares it against TODAY's, in
+# exactly the shape of a transcribe_version bump -- transcribe AND text, because new words
+# invalidate everything derived from them.
+#
+# STILL NO BUMP, and for the same reason as the 4/11 note above: a model change is not a
+# code release, and bumping TRANSCRIBE_VERSION for one would mark every episode stale at
+# once. Instead a model-aware stamp ages on its own, and the only consumer that acts on it
+# is gen_loop.sh, which walks the WATCH QUEUE. A library-wide model change therefore
+# migrates a watched show at a time, never as a burst. A stamp with NO model field (every
+# stamp written before this) is STALE, not "unknown so assume fine": that population IS the
+# gap being fixed. Budget it as a one-off redo of episodes transcribed by a previous model,
+# in watch-gated order.
 TRANSCRIBE_VERSION = 4
 TEXT_VERSION = 11
 # GRANDFATHER_VERSION: fixed constant, never changes. The version assumed for a stamp
@@ -378,10 +396,42 @@ def wait_while_paused():
     return False
 
 
+def decoder_stamp_identity() -> dict:
+    """The decoder identity a stamp records: ``{"asr_backend", "asr_model"}``.
+
+    Two fields, not one. The endpoint backend decodes with ``ASR_MODEL`` and the local one
+    with ``WHISPER_MODEL`` -- different variables, whose defaults are not even in the same
+    namespace (``openai/whisper-1`` is a name the hosted API routes, ``large-v3-turbo`` is a
+    file in the image) -- so the backend decides which variable to read. Recording the
+    backend as well also keeps a local <-> endpoint switch visible when the model name is
+    spelled identically on both sides, which is a real configuration (a llama-swap server
+    fronting the same weights).
+
+    The defaults duplicate generate.py's, because common is the stdlib-only shared surface
+    and cannot import the pipeline. test_common_and_generate_agree_on_the_decoder_identity
+    pins the two together on an empty environment.
+
+    Read at CALL time, not import time, so a sweep with a per-show or per-request override
+    stamps what that run actually decoded with."""
+    backend = (os.environ.get("ASR_BACKEND") or "local").strip().lower()
+    if backend == "endpoint":
+        model = (os.environ.get("ASR_MODEL") or "openai/whisper-1").strip()
+    else:
+        model = (os.environ.get("WHISPER_MODEL") or "large-v3-turbo").strip()
+    return {"asr_backend": backend, "asr_model": model}
+
+
 def write_stamp(path: str, video: str, stages: dict | None = None, mode: str | None = None) -> None:
     """Write the .dubtitles.done idempotency stamp recording the delivered file's size+mtime
     and the tier versions that produced it (stamp_valid rejects a stamp behind either
     tier, so a version bump marks every prior-version file stale).
+
+    It also records the DECODER IDENTITY (``asr_backend`` + ``asr_model``, see
+    decoder_stamp_identity), because the tier versions cannot see a model change: the
+    library moved onto whisper-large-v3-subs with no code change and left every earlier
+    episode reading transcribe-fresh. Unlike ``stages``, this key is LOAD-BEARING --
+    stale_tiers compares it -- and a stamp WITHOUT it reads stale, which is the intended
+    one-off migration for the pre-model population.
 
     ``mode`` records HOW the subtitle was delivered: "mux" (embedded track) or "sidecar"
     (external file beside the video, video untouched). Omitted entirely when the caller
@@ -413,6 +463,9 @@ def write_stamp(path: str, video: str, stages: dict | None = None, mode: str | N
         "version": TEXT_VERSION,
         "transcribe_version": TRANSCRIBE_VERSION,
         "text_version": TEXT_VERSION,
+        # Which decoder produced this output. Compared by stale_tiers, and additive for
+        # every reader that predates it -- neither a version nor a stages-style hint.
+        **decoder_stamp_identity(),
     }
     if mode:
         doc["mode"] = mode
@@ -447,7 +500,9 @@ def stale_tiers(stamp: dict | None, video: str) -> set[str]:
 
     A missing stamp, an unmuxed one, or one describing a DIFFERENT file (size+mtime)
     is stale in both tiers: there is nothing to reuse. Otherwise each tier is compared
-    independently, so a TEXT_VERSION bump costs CPU minutes instead of GPU hours.
+    independently, so a TEXT_VERSION bump costs CPU minutes instead of GPU hours, and the
+    recorded DECODER IDENTITY is compared against today's (see the P12 note above
+    TRANSCRIBE_VERSION) -- a different model, or none recorded, is stale in both tiers.
 
     Assumes size+mtime is a reliable proxy for content: a same-size, same-mtime
     replacement of the source video is treated as the unchanged file it appears to be.
@@ -460,6 +515,20 @@ def stale_tiers(stamp: dict | None, video: str) -> set[str]:
     if tv is None or tv < TRANSCRIBE_VERSION:
         stale.add("transcribe")
         stale.add("text")  # new words invalidate everything derived from them
+    # The decoder itself, which no tier version can express (see the P12 note above
+    # TRANSCRIBE_VERSION). A recorded identity that DIFFERS from today's -- or one this
+    # stamp does not carry at all -- is a transcribe-tier change: the words came from other
+    # weights, so the text on top of them is stale too.
+    #
+    # Missing means STALE, deliberately. Every stamp written before P12 lacks both keys,
+    # and treating that as "unknown, assume fine" would leave exactly the gap this exists to
+    # close (200 episodes decoded by a previous model, reading fresh). The cost is a one-off
+    # redo of that population, and it is bounded by gen_loop.sh walking the watch queue --
+    # not by a library walk -- so it arrives a watched show at a time.
+    cur = decoder_stamp_identity()
+    if (stamp.get("asr_backend"), stamp.get("asr_model")) != (cur["asr_backend"], cur["asr_model"]):
+        stale.add("transcribe")
+        stale.add("text")
     xv = _tier_version(stamp, "text_version")
     if xv is None or xv < TEXT_VERSION:
         stale.add("text")
@@ -477,8 +546,9 @@ def _stamp_matches_file(stamp: dict, video: str) -> bool:
 
 def stamp_valid(stamp: dict | None, video: str) -> bool:
     """True if the stamp matches the current file (size+mtime) AND is current in BOTH
-    tiers — i.e. still delivered, not replaced, and not stale output. Unchanged in meaning
-    and signature, so no caller had to move when the single version became two."""
+    tiers AND was produced by today's decoder — i.e. still delivered, not replaced, and not
+    stale output. Unchanged in meaning and signature, so no caller had to move when the
+    single version became two."""
     return not stale_tiers(stamp, video)
 
 

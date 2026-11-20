@@ -216,6 +216,7 @@ def test_stamp_state_current_then_stale(tmp_path):
             "mtime": st.st_mtime,
             "transcribe_version": common.TRANSCRIBE_VERSION,
             "text_version": common.TEXT_VERSION - 1,
+            **common.decoder_stamp_identity(),
         }),
         encoding="utf-8",
     )
