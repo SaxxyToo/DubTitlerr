@@ -19,7 +19,8 @@
     for (let i = 0; i <= n; i++) {
       const t = i / n;
       const x = t * w;
-      const env = 0.16 + 0.74 * Math.abs(Math.sin(t * 8.3 + 0.4)) * (0.5 + 0.5 * Math.abs(Math.sin(t * 1.9 + 0.8)));
+      const env =
+        0.16 + 0.74 * Math.abs(Math.sin(t * 8.3 + 0.4)) * (0.5 + 0.5 * Math.abs(Math.sin(t * 1.9 + 0.8)));
       const j1 = 0.42 + 0.58 * Math.abs(Math.sin(i * 12.9898 + 4.1));
       const j2 = 0.42 + 0.58 * Math.abs(Math.sin(i * 7.233 + 1.7));
       const top = mid - env * j1 * mid * 0.98;
@@ -97,12 +98,19 @@
       <p class="r-repair-text repair" data-region="repair-text">The compass is ours.</p>
     </section>
 
-    <div class="r-transport-deck transport" data-region="transport-deck" role="group" aria-label="Review decisions">
+    <div
+      class="r-transport-deck transport"
+      data-region="transport-deck"
+      role="group"
+      aria-label="Review decisions"
+    >
       <button class="r-btn-prev btn" data-region="btn-prev">Previous <kbd>(K)</kbd></button>
       <button class="r-btn-keep-repair btn primary" data-region="btn-keep-repair">
         Keep repair <kbd>(A)</kbd>
       </button>
-      <button class="r-btn-keep-original btn" data-region="btn-keep-original">Keep original <kbd>(R)</kbd></button>
+      <button class="r-btn-keep-original btn" data-region="btn-keep-original"
+        >Keep original <kbd>(R)</kbd></button
+      >
       <button class="r-btn-write btn" data-region="btn-write">Write correction <kbd>(C)</kbd></button>
       <button class="r-btn-next btn" data-region="btn-next">Next line <kbd>(J)</kbd></button>
     </div>
@@ -134,7 +142,9 @@
     outline-offset: 2px;
   }
   kbd {
-    font: 500 12.5px Archivo, sans-serif;
+    font:
+      500 12.5px Archivo,
+      sans-serif;
     color: rgba(255, 255, 255, 0.9);
     margin-left: 4px;
   }
@@ -238,7 +248,9 @@
     border-radius: 3px;
     background: #e68a19;
     color: #ffffff;
-    font: 600 10px/14px Archivo, sans-serif;
+    font:
+      600 10px/14px Archivo,
+      sans-serif;
     text-align: center;
   }
   .r-healthy {
@@ -330,7 +342,9 @@
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    font: 400 9px 'JetBrains Mono', monospace;
+    font:
+      400 9px 'JetBrains Mono',
+      monospace;
     color: #4f4f52;
   }
   .r-waveform-trace {
@@ -383,7 +397,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font: 700 20px 'JetBrains Mono', monospace;
+    font:
+      700 20px 'JetBrains Mono',
+      monospace;
     color: #ffffff;
     background: rgba(8, 8, 8, 0.72);
     border-radius: 6px;
@@ -399,11 +415,7 @@
     position: absolute;
     inset: 0 0 auto 0;
     height: 5px;
-    background: repeating-linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.2) 0 1px,
-      transparent 1px 28.6px
-    );
+    background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.2) 0 1px, transparent 1px 28.6px);
   }
   .tick-labels {
     position: absolute;
@@ -412,7 +424,9 @@
     right: 0;
     display: flex;
     justify-content: space-between;
-    font: 400 10px 'JetBrains Mono', monospace;
+    font:
+      400 10px 'JetBrains Mono',
+      monospace;
     color: #8a8a8c;
   }
   .r-listen-hint {
@@ -570,9 +584,24 @@
   .primary:hover {
     background: #f0a53c;
   }
-  .r-btn-prev { left: 16.2px; width: 98px; }
-  .r-btn-keep-repair { left: 119.2px; width: 118px; }
-  .r-btn-keep-original { left: 242.2px; width: 120px; }
-  .r-btn-write { left: 367.2px; width: 128px; }
-  .r-btn-next { left: 500.2px; width: 98px; }
+  .r-btn-prev {
+    left: 16.2px;
+    width: 98px;
+  }
+  .r-btn-keep-repair {
+    left: 119.2px;
+    width: 118px;
+  }
+  .r-btn-keep-original {
+    left: 242.2px;
+    width: 120px;
+  }
+  .r-btn-write {
+    left: 367.2px;
+    width: 128px;
+  }
+  .r-btn-next {
+    left: 500.2px;
+    width: 98px;
+  }
 </style>

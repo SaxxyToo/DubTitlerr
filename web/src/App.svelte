@@ -940,8 +940,11 @@
                   {#if 'starts' in current && current.starts.length}
                     <section class="audio-band" aria-label="Dub audio for the active line">
                       <div class="band-grid" aria-hidden="true"></div>
-                      <svg class="band-wave" viewBox="0 0 925 290" preserveAspectRatio="none" aria-hidden="true"
-                        ><path d={bandWave} /></svg
+                      <svg
+                        class="band-wave"
+                        viewBox="0 0 925 290"
+                        preserveAspectRatio="none"
+                        aria-hidden="true"><path d={bandWave} /></svg
                       >
                       <div class="band-playhead" aria-hidden="true" style="left: {audioProgress}%">
                         <i class="band-line"></i><i class="band-handle"></i>
