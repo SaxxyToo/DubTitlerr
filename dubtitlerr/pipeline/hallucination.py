@@ -36,6 +36,15 @@ RUN_COLLAPSE = 4  # collapse a run of >= this many near-identical consecutive ca
 # a run of >= LOOP_MIN_CARDS consecutive cards that are each only one token, >= LOOP_MIN_TOKENS tokens in all
 LOOP_MIN_CARDS = 5
 LOOP_MIN_TOKENS = 6
+# Arm #4: ONE token that repeats a short pattern inside itself, so no card/count-based rule
+# can see it. Measured on Chainsaw Man S01E07: a 1.32 s cackle Whisper wrote as a single
+# 446-character token, which the publish gate refuses on line length and no other arm can
+# repair. reflow._collapse_repeats catches the clean word-level shape; this catches the
+# card-level survivor (a token carrying punctuation, or a segment-level fallback "word").
+TOKEN_RUN_MAX_PERIOD = 4  # the repeated unit is at most this many characters
+TOKEN_RUN_MIN_REPEATS = 15  # ...and repeats at least this many times
+TOKEN_RUN_KEEP_REPEATS = 6  # reduce to this many repeats + an ellipsis
+TOKEN_RUN_MIN_LEN = 30  # below this length a repeated unit is a scream or a stutter, not a loop
 
 # Known whisper hallucination phrases (music/credits/UGC boilerplate). Conservative —
 # only phrases that are never real dub dialogue. V2 C8: sourced from
@@ -246,3 +255,98 @@ def _restore_end(text: str, cut: str) -> str:
     tail = text[len(cut) :]
     m = re.match(r"[^\w\s]+", tail)
     return cut + (m.group(0) if m else "")
+
+
+_NONSPACE = re.compile(r"\S+")
+_TOKEN_EDGE = re.compile(r"^([^\w]*)(\w+)([^\w]*)$")
+
+
+def _token_run(core: str) -> tuple[int, int] | None:
+    """(period, repeats) when ``core`` is one short unit repeated many times, else None.
+
+    The SMALLEST period wins: 'AAAAAA' is 'A' x 6, not 'AAA' x 2, and the kept prefix has to
+    be whole units of the thing whisper actually looped. The comparison is case-insensitive
+    so 'Ke' + 'ke' x N is one run, exactly as whisper emits a cackle's first syllable
+    capitalised.
+    """
+    n = len(core)
+    if n < TOKEN_RUN_MIN_LEN:
+        return None
+    low = core.lower()
+    for period in range(1, TOKEN_RUN_MAX_PERIOD + 1):
+        if n % period:
+            continue
+        repeats = n // period
+        if repeats >= TOKEN_RUN_MIN_REPEATS and low == low[:period] * repeats:
+            return period, repeats
+    return None
+
+
+def _reduced_token(token: str, names: set[str]) -> tuple[str, int, int] | None:
+    """Reduce one whitespace token, or None when it is not a run / must be exempted.
+
+    Only the alphanumeric core is examined; surrounding punctuation and quotes are kept
+    verbatim so a reduced '!'-terminated or quoted token still reads as the same card.
+    A core (or its repeated unit) matching a glossary name is real however often whisper
+    repeats it -- the same exemption repeat_loops applies per card.
+    """
+    edge = _TOKEN_EDGE.fullmatch(token)
+    if edge is None:
+        return None
+    prefix, core, suffix = edge.groups()
+    run = _token_run(core)
+    if run is None:
+        return None
+    period, repeats = run
+    if core.lower() in names or core[:period].lower() in names:
+        return None
+    return f"{prefix}{core[: period * TOKEN_RUN_KEEP_REPEATS]}\u2026{suffix}", period, repeats
+
+
+def reduce_token_runs(cards: list[dict], known=()) -> tuple[list[dict], list[dict]]:
+    """Arm #4: reduce a token that repeats a short pattern inside itself ('Kekekekeke x223',
+    446 chars in 1.32 s) to a readable ~6 repeats plus an ellipsis.
+
+    The three existing arms all need something this shape does not have: collapse_runs needs
+    a run of identical CARDS, repeat_loops a run of single-token CARDS, is_repetition many
+    TOKENS per card. Here there is one card, one token, and the loop is inside the token --
+    so the gate refuses the card on line length and gate_fix correctly finds no boundary.
+
+    Text only: start/end are untouched (the cackle still occupies its 1.3 s). T in ``known``
+    (the glossary's names and phrases) is exempt, matched per token like repeat_loops.
+    Returns (cards, reductions) where each reduction records the audit trail
+    {index, start, end, before, after, period, repeats}. Cards are copied, never mutated.
+    """
+    names = {t for k in known for t in re.findall(r"[a-z0-9']+", str(k).lower())}
+    out: list[dict] = []
+    reductions: list[dict] = []
+    for index, c in enumerate(cards):
+        text = c.get("text", "")
+        seen: list[tuple[int, int]] = []
+
+        def repl(m, seen=seen):
+            hit = _reduced_token(m.group(0), names)
+            if hit is None:
+                return m.group(0)
+            replacement, period, repeats = hit
+            seen.append((period, repeats))
+            return replacement
+
+        reduced = _NONSPACE.sub(repl, text)
+        if reduced == text:
+            out.append(c)
+            continue
+        out.append({**c, "text": reduced})
+        period, repeats = seen[0]
+        reductions.append(
+            {
+                "index": index,
+                "start": c.get("start"),
+                "end": c.get("end"),
+                "before": text,
+                "after": reduced,
+                "period": period,
+                "repeats": repeats,
+            }
+        )
+    return out, reductions
