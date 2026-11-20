@@ -41,7 +41,19 @@ def _show(tmp_path, n=3, delivered=True):
         v = tmp_path / f"Show - S01E{i:02d}.mkv"
         v.write_text("video")
         if delivered:
-            common.write_stamp(str(v)[:-4] + common.STAMP_SUFFIX, str(v), mode="sidecar")
+            # The request in _run() executes on the endpoint backend, so a delivered episode
+            # is stamped with THAT decoder identity. Stamping it with the host's default
+            # (local) one would read model-stale under P12 and the episode would be neither
+            # delivered nor untouched -- a different test than this one.
+            saved = os.environ.get("ASR_BACKEND")
+            os.environ["ASR_BACKEND"] = "endpoint"
+            try:
+                common.write_stamp(str(v)[:-4] + common.STAMP_SUFFIX, str(v), mode="sidecar")
+            finally:
+                if saved is None:
+                    os.environ.pop("ASR_BACKEND", None)
+                else:
+                    os.environ["ASR_BACKEND"] = saved
             (tmp_path / f"Show - S01E{i:02d}.dub.en.ass").write_text("old")
             conf = tmp_path / f"Show - S01E{i:02d}.dubtitles.conf.json"
             conf.write_text("[]")

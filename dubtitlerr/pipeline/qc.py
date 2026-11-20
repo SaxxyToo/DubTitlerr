@@ -13,7 +13,9 @@ import json
 import os
 import tempfile
 
-SCHEMA_VERSION = 5  # v5: duration_flags added (null when detector did not run). v4: rule_*_evaluated /
+SCHEMA_VERSION = 6  # v6: token_runs_reduced added (arm #4, intra-token reduction; zero in a v5
+# sidecar means "not counted", not "no run was reduced"). v5: duration_flags added (null when detector did not run).
+# v4: rule_*_evaluated /
 # rule_*_activated liveness counters. v3: the restore_* counters added (punctuation restoration). Zero
 # in a v2 sidecar means "not counted", not "no run was restored".
 # v2: over_chars counter added; cards_before,
@@ -56,6 +58,7 @@ COUNTERS = (
     "unfixable_runts",
     "cascade_infeasible",
     "layout_exceptions",
+    "token_runs_reduced",  # arm #4: intra-token repetitions reduced before writing
     "flagged",
     "low_conf",
     # punctuation restoration (runs on the words, before reflow -- see punctuation.py)

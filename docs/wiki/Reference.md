@@ -92,6 +92,44 @@ annotated (`vX.Y.Z`) and points at the merge commit on `main`.
 
 ---
 
+## Staleness
+
+An episode is **done** only when its `.dubtitles.done` stamp matches the file on disk (size and
+mtime), is current in both output tiers, and was produced by the decoder running today. Everything
+else is stale and is regenerated the next time the pipeline reaches it.
+
+| Signal in the stamp | Current value comes from | Stale when |
+| --- | --- | --- |
+| `transcribe_version` | `common.TRANSCRIBE_VERSION` | behind — audio → words changed |
+| `text_version` | `common.TEXT_VERSION` | behind — anything after the word list changed |
+| `asr_backend` + `asr_model` | `common.decoder_stamp_identity()` (`ASR_BACKEND`, then `ASR_MODEL` for the endpoint backend or `WHISPER_MODEL` for the local one) | different from today's, **or absent** |
+
+A **model change is not a version bump.** Switching `WHISPER_MODEL` or `ASR_MODEL` changes the
+transcript without changing the code, and the tier numbers cannot see it, so the decoder identity is
+recorded in every new stamp and compared directly. A different model marks the episode stale in
+**both** tiers — new words invalidate everything derived from them — which is the same shape as a
+`TRANSCRIBE_VERSION` bump. Neither constant is raised for this: a bump would mark the whole library
+stale at once, and a model change is an operator action, not a release.
+
+**Grandfathering.** A stamp with no `asr_model`/`asr_backend` was written before the model was
+recorded, i.e. by a decoder that is very likely not the one running now. It reads **stale**, not
+"unknown, so assume fine" — that population is the gap this check exists to close (~200 episodes at
+introduction). Moving back to a model an episode already recorded makes it current again: the
+comparison is against the recorded identity, not a one-way ratchet.
+
+**No bursts.** Staleness only marks the episode; nothing rebuilds it here. The generate loop walks
+the watch-queue order file, so a library-wide model change re-transcribes the shows actually being
+watched, one sweep at a time. A watched show does regenerate in full, because a subtitle track's
+value is in the episodes ahead of the viewer. To rebuild a single episode or show on demand, use a
+review request (`generate` scope) — a full-library rebuild is never automatic.
+
+`stamp_valid()` is still exactly "nothing stale", so every existing caller keeps its meaning:
+generate skips a stamped episode, mux treats it as delivered, `tools/export_subtitles.py` exports it.
+The one behaviour worth knowing: on an install that predates the model field, those callers will see
+the whole library as stale until each episode is regenerated once.
+
+---
+
 ## Processing state and controls
 
 The app can be **up without touching the library**. That is the boot default: starting the
@@ -159,8 +197,8 @@ All are written beside the video, sharing its basename. The merged `.ass` keeps 
 | `.eng.dubtitles.srt`             | `generate.py`, `repair.py`, `review_apply.py`                | `dub_signs_merge.py`, `mux.py`               | The dialogue transcript from the dub audio                                                                          |
 | `.eng.dubtitles.ass`             | `dub_signs_merge.py`, `review_apply.py`                      | `mux.py`                                     | Dialogue plus signs, songs and credits                                                                              |
 | `.dubtitles.conf.json`           | `generate.py`, `repair.py`                                   | `repair.py`, `glossary_acquire.py`, `mux.py` | Per-cue `avg_logprob` and `no_speech_prob`                                                                          |
-| `.dubtitles.words.json`          | `generate.py`                                                | `generate.py`                                | Per-word confidences and audio duration, plus the decoder identity it was produced under; lets a text-tier re-run skip the GPU |
-| `.dubtitles.done`                | `common.py`, `mux.py`                                        | `generate.py`, `mux.py`                      | Completion stamp: muxed size, mtime, tier versions                                                                  |
+| `.dubtitles.words.json`          | `generate.py`                                                | `generate.py`                                | Per-word confidences and audio duration, plus the decoder identity (`backend`, `model`) it was produced under; lets a text-tier re-run skip the GPU |
+| `.dubtitles.done`                | `common.py`, `mux.py`                                        | `generate.py`, `mux.py`                      | Completion stamp: muxed size, mtime, tier versions, decoder identity (`asr_backend`, `asr_model`)                    |
 | `.dubtitles.fail`                | `generate.py`                                                | `generate.py`                                | Poison marker after a hard crash. Delete it to retry. Stopping the container no longer leaves one (0.2.2 and later) |
 | `.dubtitles.stages.json`         | `repair.py`, `dub_signs_merge.py`, `mux.py`, `merge_pass.sh` | `merge_pass.sh`, `mux.py`                    | One outcome per stage (repair, signs, mux). See [Stage outcomes](#stage-outcomes)                                   |
 | `.dubtitles.mux-recovery`        | `mux.py`                                                     | `mux.py`, the `deploy/` close unit           | Written when a failed cross-device copy may have damaged the episode. While it exists, mux refuses that episode     |
@@ -247,9 +285,21 @@ the episode is parked exactly as before (mux stage `refused`, a `skip mux:` line
 `MERGE PASS INCOMPLETE`) and an `episode.refused` notification names the finding, once per distinct
 refusal. The attempt is recorded in `<stem>.dubtitles.gate-fix.json` (cards touched, before/after
 duration and length, outcome) and as the `gate_fix` stage record; an episode that already passes is
-not touched at all. `GATE_FIX=0` disables just the attempt. Faults a repair may not fix without
-changing words or the transcript — coverage, punctuation, a cold open, a known mishear, a single
-unbroken token — are reported as unsupported rather than attempted.
+not touched at all. `GATE_FIX=0` disables just the attempt.
+
+A line the ASR emitted as one run of a single letter — a real 57-character `'A' + 'H'×56`
+scream, a long laugh — has no word boundary to wrap or split at, so it gets a **line break**
+(`\N` in `.ass`, a newline in `.srt`) instead, at an even split inside the 46-character budget.
+A couple of stray characters in the token (the scream's leading `A`, two closing letters) do not
+disqualify it: the break inserts layout only. That is pure layout: strip the breaks and the card's
+text is byte-identical, and its timing does not move. The audit records it as
+`action: "wrap-run"`. The break cannot rescue a card whose **total** is over 88 characters (a
+446-character run is over even wrapped), and a token that *alternates* rather than repeats
+(`Kekekekeke…`, whose minority is half the token) is not a run — both of those refusals stand.
+
+Faults a repair may not fix without changing words or the transcript — coverage, punctuation, a
+cold open, a known mishear, a single unbroken token that is not a run — are
+reported as unsupported rather than attempted.
 
 `llm-empty` is a name in the code's outcome list, but repair never writes it. When a model
 answers a target with nothing, repair counts it as `llm_empty` in the repair summary, queues the

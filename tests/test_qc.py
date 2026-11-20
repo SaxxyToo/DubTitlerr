@@ -266,8 +266,8 @@ def test_generate_record_qc_wires_duration_flags():
     ]
 
 
-def test_qc_schema_version_is_5():
-    assert qc.SCHEMA_VERSION == 5
+def test_qc_schema_version_is_6():
+    assert qc.SCHEMA_VERSION == 6
 
 
 def test_qc_sidecar_duration_flags_is_null_when_detector_did_not_run():

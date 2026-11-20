@@ -113,20 +113,24 @@ def test_apply_writes_a_grandfather_version_stamp(monkeypatch, tmp_path):
     assert stamp["version"] == common.GRANDFATHER_VERSION
 
 
-def test_written_stamp_makes_the_file_read_as_done(monkeypatch, tmp_path):
-    """The whole point: after migration, generate/mux skip the file instead of
-    regenerating it.
+def test_written_stamp_accounts_for_the_file_but_does_not_claim_it_is_current(monkeypatch, tmp_path):
+    """What migration can and cannot honestly claim.
 
-    Pinned to the migration-era pipeline version. The migration ran while
-    both tiers sat at GRANDFATHER_VERSION, which is what made its stamps current; a
-    later deliberate bump is *supposed* to make them read as stale again, and the next
-    test covers exactly that."""
+    It records what actually produced the file -- pre-versioning output (v1) by an unknown
+    decoder -- so an existing stamp is accounted for and no longer looks like a lost stamp.
+    It is NOT current: the tier versions here are pinned to GRANDFATHER_VERSION and the
+    decoder identity is absent, which P12 reads as stale on purpose. Recording today's model
+    instead would be a lie that skipped exactly the files a model change needs to redo."""
     v = _video(tmp_path)
     _stub_ffprobe(monkeypatch, [common.TRACK_NAME])
     monkeypatch.setattr(common, "TRANSCRIBE_VERSION", common.GRANDFATHER_VERSION)
     monkeypatch.setattr(common, "TEXT_VERSION", common.GRANDFATHER_VERSION)
     mig.process(v, apply=True)
-    assert common.stamp_valid(common.read_stamp(_stamp_path(v)), v)
+    stamp = common.read_stamp(_stamp_path(v))
+    assert stamp is not None
+    assert stamp["version"] == common.GRANDFATHER_VERSION
+    assert "asr_model" not in stamp
+    assert not common.stamp_valid(stamp, v)
 
 
 def test_stamp_is_grandfather_version_even_after_a_pipeline_version_bump(monkeypatch, tmp_path):

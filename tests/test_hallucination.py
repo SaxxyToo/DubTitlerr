@@ -1,5 +1,7 @@
 """Unit tests for hallucination.py (B1). Pure functions; plain card dicts."""
 
+import pytest
+
 from dubtitlerr.pipeline import hallucination as h
 
 
@@ -388,3 +390,78 @@ def test_repeat_loop_a_real_card_breaks_the_run():
 def test_repeat_loop_does_not_trim_a_card_beside_no_run():
     cards = [card("Go Xanamon!", start=0, end=1), card("Xanamon!", start=2, end=3)]
     assert h.repeat_loops(cards) == (set(), {})
+
+
+# --- T5: intra-token repetition (the CSM cackle) -----------------------------
+#
+# One card holding ONE token that repeats a short pattern inside itself. None of the
+# three existing arms can see it: collapse_runs needs a run of identical CARDS,
+# repeat_loops needs a run of single-token CARDS, is_repetition needs
+# >= REPEAT_MIN_TOKENS per card. reflow._collapse_repeats covers the same shape at the
+# WORD level, but only when the whole word is the repeat -- a trailing '.' or '!' after
+# punctuation.restore() defeats its anchored pattern, which is how the 446-character
+# cackle reached the publish gate.
+
+CSM_CACKLE = "Ke" + "ke" * 222  # 446 chars in 1.32 s on Chainsaw Man S01E07
+
+
+def test_token_run_reduces_the_csm_cackle():
+    assert len(CSM_CACKLE) == 446
+    cards, reductions = h.reduce_token_runs([card(CSM_CACKLE, start=1434.0, end=1435.32)])
+    assert cards[0]["text"] == "Kekekekekeke…"
+    assert (cards[0]["start"], cards[0]["end"]) == (1434.0, 1435.32)  # timing untouched
+    assert len(reductions) == 1
+    r = reductions[0]
+    assert r["before"] == CSM_CACKLE and r["after"] == "Kekekekekeke…"
+    assert (r["period"], r["repeats"]) == (2, 223)
+
+
+def test_token_run_reduces_the_e41_scream():
+    cards, reductions = h.reduce_token_runs([card("A" * 57)])
+    assert cards[0]["text"] == "AAAAAA…"
+    assert len(reductions) == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "hahaha",
+        "HAHAHAHAHAHA",
+        "Bwa ha ha!",
+        "Yamete yamete! Yamete yamete!",
+        "AAAA",
+        "A" * 20,  # < TOKEN_RUN_MIN_LEN: a scream, not a loop
+        "A" * 29,  # one char below the egregious-length floor
+        "abcde" * 15,  # period 5 > TOKEN_RUN_MAX_PERIOD
+        "abc" * 14,  # 14 repeats < TOKEN_RUN_MIN_REPEATS
+    ],
+)
+def test_token_run_leaves_normal_text_alone(text):
+    cards, reductions = h.reduce_token_runs([card(text)])
+    assert cards[0]["text"] == text
+    assert reductions == []
+
+
+def test_token_run_keeps_the_original_casing_of_the_prefix():
+    cards, _ = h.reduce_token_runs([card("AbC" * 15)])
+    assert cards[0]["text"] == "AbCAbCAbCAbCAbCAbC…"
+
+
+def test_token_run_keeps_a_looped_glossary_name():
+    name_run = "Aang" * 20  # 80 chars: period 4, 20 repeats -- reduced without the glossary
+    cards, reductions = h.reduce_token_runs([card(name_run)], known=["Aang"])
+    assert cards[0]["text"] == name_run and reductions == []
+    _, without_glossary = h.reduce_token_runs([card(name_run)])
+    assert len(without_glossary) == 1
+
+
+def test_token_run_reduces_only_the_offending_token_and_keeps_the_layout():
+    text = "Line one\nHa " + CSM_CACKLE + " no."
+    cards, reductions = h.reduce_token_runs([card(text)])
+    assert cards[0]["text"] == "Line one\nHa Kekekekekeke… no."
+    assert len(reductions) == 1
+
+
+def test_token_run_preserves_quotes_around_the_reduced_token():
+    cards, _ = h.reduce_token_runs([card('"' + "A" * 57 + '"')])
+    assert cards[0]["text"] == '"AAAAAA…"'

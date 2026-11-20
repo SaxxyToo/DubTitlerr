@@ -16,6 +16,14 @@ recording what actually produced the file (pre-versioning output = v1). So runni
 AFTER a deliberate version bump correctly leaves those files stale rather than falsely
 marking last version's output as current.
 
+That is true of the DECODER too, since model-aware staleness (P12): the stamp carries no
+``asr_model``/``asr_backend``, because nobody knows which weights produced a file this old,
+and a missing identity reads stale on purpose. The practical effect changed with it: the
+stamp now says "this file is accounted for" rather than "this file is done", and such an
+episode is re-transcribed once at watch-gated pace. Do NOT teach this tool to write today's
+model -- that would assert a decoder the file was never run through and silently skip the
+files a model change exists to redo.
+
 DRY-RUN by default (prints the plan); pass --apply to write stamps. Never touches media
 — it only creates sidecar ``.dubtitles.done`` files, so it is safe to re-run (an
 existing stamp of any version is left exactly as it is).
