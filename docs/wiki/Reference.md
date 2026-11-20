@@ -9,11 +9,17 @@ default differs between modules, that is stated rather than smoothed over.
 
 ## Container
 
-**Image:** built from this repository (`Dockerfile.builder` for the full build, `Dockerfile.lite`
-for the endpoint-only image)
+**Image:** pulled from GHCR, built by the release workflow from this repository
+(`ghcr.io/saxxytoo/dubtitlerr:<vX.Y.Z>` for the full build omarchy runs; `:<vX.Y.Z>-lite` for the
+endpoint-only image)
 
-**Tags:** the git tag of a release (for example `v0.2.2`), plus `latest` pointing at the most recent
-release. `latest` never tracks `main`.
+**Tags:** the release's git tag (`v0.4.0`), annotated, on the merge commit in `main`. Pushing it
+runs `.github/workflows/release.yml`: the full CI gate re-runs, then both images publish in
+parallel — `ghcr.io/saxxytoo/dubtitlerr:v0.4.0` and `:latest` (builder),
+`:v0.4.0-lite` and `:latest-lite` (lite). Hosts pull instead of building; the moving `:latest`
+follows the newest release, never `main`. A locally date-suffixed tag
+(`dubtitlerr:rollback-2026-11-19`) is the rollback slot for a same-version rebuild — see
+[Cut a release](How-To-Guides.md#cut-a-release).
 
 **Entrypoint:** `container_run.sh`, which starts three loops in one container:
 
@@ -54,6 +60,35 @@ escalation pairs. Releases up to 0.2.2 check it only before a glossary step star
 acquire step runs to its end or to `ACQUIRE_TIMEOUT`.
 
 The container runs as **root**, so `generate.py` can chown into the media tree. `Dockerfile` builds a merge-only image (signs and dub merge, no transcribe or repair) and is deprecated. `Dockerfile.builder` is the recommended image.
+
+---
+
+## Version
+
+**Source of truth:** `dubtitlerr/__init__.py`, `__version__ = "0.4.0"`. One string, one file.
+`pyproject.toml` declares `dynamic = ["version"]` and reads that attribute; `uv.lock` stores no
+version for the project; `tests/test_version.py` fails if any surface below stops agreeing with it.
+
+| Surface | What it shows |
+| --- | --- |
+| `python3 -m dubtitlerr --version` | `dubtitlerr 0.4.0` — on the host, in the image, no network |
+| Container boot log (`docker logs`) | `==== dubtitle-builder up dubtitlerr 0.4.0 …` and `#### gen_loop up dubtitlerr 0.4.0 …` |
+| `GET /api/v1/system/status` → `version.app` | `"0.4.0"` (always a string; the field is no longer null) |
+| Review page sidebar footer | `DubTitlerr 0.4.0`, fetched from that route after sign-in |
+| `docker inspect <image>` | `org.opencontainers.image.version`, `…revision` (git sha), `…title`, `…source` |
+
+`version.transcribe_version` and `version.text_version` are a different thing: the pipeline's
+output-contract stamps from `dubtitlerr/core/common.py`, which decide whether a change re-processes
+already-processed episodes. A release that bumps either of them says so in its notes.
+
+**Docker build arguments:** `DUBTITLERR_VERSION` (default `dev`) and `VCS_REF` (default `unknown`).
+Both images take them; no image hardcodes the version, because a literal in a Dockerfile would
+survive a bump and label the wrong release. The release workflow passes both from the tag and the
+checkout (`version` = the tag minus its `v`, `revision` = the short sha), so a published image
+labels itself correctly with no build command to remember.
+
+**Cutting a release:** semver per [Cut a release](How-To-Guides.md#cut-a-release); the tag is
+annotated (`vX.Y.Z`) and points at the merge commit on `main`.
 
 ---
 

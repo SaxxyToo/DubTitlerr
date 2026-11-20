@@ -121,6 +121,21 @@ docker run -d --name dubtitlerr --network host \
 
 Both images need `mkvtoolnix` — the merge stage shells out to `mkvmerge` to read the video's subtitle streams and attachments. A lite build without it fails at the first merge pass with `FATAL: mkvmerge not found — image is misbuilt`.
 
+**Run the published release, or build your own.** Releases are published to GHCR by the release
+workflow: `ghcr.io/saxxytoo/dubtitlerr:v0.4.0` (and `:latest`) for the full image,
+`ghcr.io/saxxytoo/dubtitlerr:v0.4.0-lite` (and `:latest-lite`) for the lite image. Pull what you
+deploy:
+
+```sh
+docker pull ghcr.io/saxxytoo/dubtitlerr:v0.4.0
+```
+
+Both images carry OCI labels (`org.opencontainers.image.version`, `…revision`), so `docker inspect`
+answers which release an image is without starting it. Building locally (the quickstart above) is the
+development path; pass `--build-arg DUBTITLERR_VERSION=$(python3 -m dubtitlerr --version | cut -d' ' -f2)
+--build-arg VCS_REF=$(git rev-parse --short HEAD)` when you do, so the labels stay true. The tag
+convention and the full release procedure are in [Cut a release](docs/wiki/How-To-Guides.md#cut-a-release).
+
 The two images install the same runtime packages, serve the same review UI and share one health check; `tests/test_dockerfile_copy.py` fails when they drift. Both entrypoints are the supervisor and ignore arguments, so run a one-off command with `docker run --rm --entrypoint sh dubtitlerr:lite -c '...'`.
 
 ## Requirements

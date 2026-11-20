@@ -953,6 +953,70 @@ so send the key and a JSON body and nothing else. Secret-bearing values are neve
 
 ---
 
+## Cut a release
+
+**Problem:** you want to ship a numbered release, and "which build is this?" answerable six months
+later without reading a commit log.
+
+A release is six steps. The version is written in exactly one place — `dubtitlerr/__init__.py`'s
+`__version__` — and every other copy of it is either derived from that file or checked against it
+by `tests/test_version.py`, which fails on drift.
+
+**What the number means here.** Major, minor, patch, judged against what an operator or a library
+user can observe:
+
+| Bump | When |
+| --- | --- |
+| **major** (`1.0.0`) | a change that breaks a contract: a CLI flag or stage name removed or renamed, an environment variable or glossary/config key dropped, an output file name or `.ass` shape that existing consumers would break on, or a `TRANSCRIBE_VERSION`/`TEXT_VERSION` bump that re-processes existing episodes without warning |
+| **minor** (`0.5.0`) | a new feature that existing configs, libraries and outputs survive: a new output mode, a new endpoint, a new review-page capability |
+| **patch** (`0.4.1`) | fixes only: a crash, a wrong line, a doc correction, a bug in a stage that changes nothing about the contract |
+
+**Do it.**
+
+1. **Bump the version** in `dubtitlerr/__init__.py`. Nothing else: `pyproject.toml` reads it
+   (`dynamic = ["version"]`), `uv.lock` carries no copy, and the image labels take it from the
+   build command.
+2. **Run the suite**: `scripts/check.sh` (and `--dash` if you touched a shell loop). The version
+   tests in `tests/test_version.py` are part of it.
+3. **Open the version-bump PR** and get it reviewed like any other change.
+4. **Merge it to `main`.** The tag goes on the merge commit of `main`, never on a feature branch —
+   a tag is what people fetch, so it has to name a commit that contains nothing unmerged.
+5. **Tag it, annotated:** `git tag -a vX.Y.Z -m "dubtitlerr X.Y.Z" && git push origin vX.Y.Z`.
+   An annotated tag records who released it and when; a lightweight tag is a bare pointer. Pushing
+   the tag starts the release workflow (below) — images publish from the tag, never from `main`.
+6. **Create the release notes (after the images publish):**
+   `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file notes.md`
+   with what changed, what an operator must do (a `TRANSCRIBE_VERSION` bump, a glossary or config
+   change), and any known regression.
+
+**The tag publishes the images; hosts pull.** Pushing `vX.Y.Z` runs the release workflow
+(`.github/workflows/release.yml`): the full CI gate re-runs first, then both images build and
+publish to GHCR in parallel, labelled from the tag and the checkout:
+
+- `ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z` — the builder image (the full CUDA build) — the release.
+- `ghcr.io/saxxytoo/dubtitlerr:latest` — the moving tag. Follows the newest release, never `main`.
+- `ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z-lite` — the lite image — the release.
+- `ghcr.io/saxxytoo/dubtitlerr:latest-lite` — the moving lite tag.
+
+Hosts pull instead of building: one built artifact, the same bytes everywhere. Both images carry
+OCI labels (`org.opencontainers.image.version`, `…revision`) fed by the build args, so
+`docker inspect` answers the release question without a running container. If a same-version
+rebuild was not byte-identical, keep a locally date-suffixed rollback tag
+(`docker tag ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z dubtitlerr:rollback-2026-11-19`).
+
+**Check it landed.** `python3 -m dubtitlerr --version` on the host, `docker logs <container> | head`
+for the `dubtitlerr <version>` boot banner, `GET /api/v1/system/status` → `version.app`, and the
+review page's sidebar footer. All four read the same constant; if one disagrees, the image was built
+from a different tree.
+
+**What runs on a tag.** Pushing `vX.Y.Z` triggers the release workflow: the full CI gate re-runs
+first, then the builder (~40 min; CUDA base plus baked model weights) and the lite image publish in
+parallel. Watch it with `gh run list --workflow release` / `gh run watch`. If a job fails, fix the
+cause and re-run that run (`gh run rerun <id> --failed`) rather than deleting the tag — the tag
+names the release; the images it failed to produce are the thing that is missing, not the tag.
+
+---
+
 ## Report a problem
 
 Include:

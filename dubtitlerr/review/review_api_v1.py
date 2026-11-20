@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote
 
+from dubtitlerr import __version__
 from dubtitlerr.core import common, processing_state
 from dubtitlerr.review import review_auth, review_requests
 from dubtitlerr.settings import settings_api, settings_notifications, settings_store
@@ -96,15 +97,13 @@ def _split(stem):
 
 
 def _app_version():
-    """The installed distribution's version, or None. pyproject's 0.3.0 is packaging metadata; when
-    nothing is installed there IS no runtime application version and null says so rather than
-    inventing one an agent cannot check."""
-    try:
-        from importlib.metadata import version as _version
+    """This fork's release, from the package constant.
 
-        return _version("dubtitlerr")
-    except Exception:  # noqa: BLE001 -- metadata lookups fail in several benign ways
-        return None
+    Not the installed distribution's metadata: the container runs the source tree on
+    PYTHONPATH and installs nothing, so every metadata lookup there returned null -- a
+    status route whose version field is always null cannot tell two builds apart.
+    """
+    return __version__
 
 
 def _int_param(raw, default, low, high, name):

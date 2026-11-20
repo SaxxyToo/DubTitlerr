@@ -66,6 +66,19 @@ RUN python3 -c "import os; from faster_whisper import WhisperModel; WhisperModel
 # [S-7] the review page. EXPOSE documents it; publishing still needs -p on docker run,
 # which the README's example now carries.
 EXPOSE 8842
+# OCI labels: what a `docker inspect` answers without starting the container. The version is NOT
+# hardcoded here -- a literal copy of dubtitlerr/__init__.py's __version__ in an image would
+# survive a bump and label the wrong release. Pass it at build time, from the one source:
+#   docker build -f Dockerfile.builder \
+#     --build-arg DUBTITLERR_VERSION=$(python3 -m dubtitlerr --version | cut -d' ' -f2) \
+#     --build-arg VCS_REF=$(git rev-parse --short HEAD) \
+#     -t dubtitlerr:sidecar-fork-v$(python3 -m dubtitlerr --version | cut -d' ' -f2) .
+ARG DUBTITLERR_VERSION=dev
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="dubtitlerr" \
+      org.opencontainers.image.version="${DUBTITLERR_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/SaxxyToo/DubTitlerr"
 HEALTHCHECK --interval=5m --timeout=10s --start-period=10m --retries=3 CMD python3 -c "import os,urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('REVIEW_PORT', '8842'), timeout=5).status==200 else 1)"
 
 WORKDIR /app

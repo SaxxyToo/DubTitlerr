@@ -37,6 +37,17 @@ RUN apt-get update \
 RUN pip install --no-cache-dir pysubs2 jellyfish
 
 EXPOSE 8842
+# Same labels as Dockerfile.builder, under the same rule: the version is passed in, never written
+# into the image. Build it named for the release it carries:
+#   V=$(python3 -m dubtitlerr --version | cut -d' ' -f2)
+#   docker build -f Dockerfile.lite --build-arg DUBTITLERR_VERSION="$V" \
+#     --build-arg VCS_REF=$(git rev-parse --short HEAD) -t "dubtitlerr:lite-$V" .
+ARG DUBTITLERR_VERSION=dev
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="dubtitlerr" \
+      org.opencontainers.image.version="${DUBTITLERR_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/SaxxyToo/DubTitlerr"
 HEALTHCHECK --interval=5m --timeout=10s --start-period=10m --retries=3 CMD python3 -c "import os,urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('REVIEW_PORT', '8842'), timeout=5).status==200 else 1)"
 
 WORKDIR /app

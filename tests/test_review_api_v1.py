@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+import dubtitlerr
 from dubtitlerr.core import common
 from dubtitlerr.review import review_api_v1, review_auth, review_requests
 from dubtitlerr.review import review_server as rs
@@ -207,6 +208,7 @@ def test_system_status_reports_version_loop_state_and_queue_depth(env):
     status, payload = read(env, "/api/v1/system/status", headers={"X-Api-Key": KEY})
     assert status == 200
     assert payload["version"]["api"] == "v1"
+    assert payload["version"]["app"] == dubtitlerr.__version__
     assert payload["version"]["transcribe_version"] == common.TRANSCRIBE_VERSION
     assert payload["version"]["text_version"] == common.TEXT_VERSION
     assert payload["boot_id"] == common.boot_id()

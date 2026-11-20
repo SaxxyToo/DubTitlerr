@@ -153,3 +153,11 @@ test('no page scrolls sideways on a phone, even with a populated queue', async (
   await expect(page.getByRole('region', { name: 'Request queue' })).toHaveAttribute('tabindex', '0');
   await expectNoAxeViolations(page);
 });
+
+test('the sidebar footer names the release the server is running', async ({ page }) => {
+  await openSignedIn(page, '');
+  // One string, end to end: dubtitlerr/__init__.py -> GET /api/v1/system/status -> this footer.
+  // A bug report can quote it, and it is not a hand-written label that goes stale (the footer used
+  // to read "Review workspace v0.1" regardless of what was running).
+  await expect(page.locator('.version-line')).toHaveText(/^DubTitlerr \d+\.\d+\.\d+$/);
+});

@@ -69,6 +69,14 @@ else # lib missing (misbuilt image): never stop, plain sleeps
 	hold_while_paused() { return 0; }
 fi
 
+# Which release this loop belongs to. container_run.sh exports DT_VERSION before starting this
+# script; a standalone run (debugging on the host) resolves it here so the boot line is never a lie.
+if [ -z "${DT_VERSION:-}" ]; then
+	DT_VERSION=$(python3 -c 'import dubtitlerr; print(dubtitlerr.__version__)' 2>/dev/null) || DT_VERSION=unknown
+	export DT_VERSION
+fi
+echo "#### gen_loop up dubtitlerr ${DT_VERSION} $(date) — order=$ORDER root=$ANIME"
+
 check_window_open() {
 	_win_err_file="${CONFIG_DIR:-/config}/.window.err"
 	is_open=$(python3 -m dubtitlerr.review.review_requests window-open "$SCHEDULE_FILE" 2>"$_win_err_file") && rc=0 || rc=$?

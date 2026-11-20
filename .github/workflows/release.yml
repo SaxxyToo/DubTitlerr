@@ -1,7 +1,10 @@
 name: release
-# Tag-triggered ONLY. `:latest` follows the tag, never `main` -- main is the working branch
-# and every commit landing there is not a release. A beta user pinning a tag is what makes
-# "I'm on v0.1.0-beta" a reproducible sentence in a bug report.
+# Tag-triggered: pushing a vX.Y.Z tag publishes the images this fork deploys, with the full CI
+# gate re-run as the first stage. ghcr.io/<owner>/<repo>:vX.Y.Z plus :latest is the builder
+# image omarchy runs; :vX.Y.Z-lite plus :latest-lite is the lite image minisax runs. The hosts
+# pull from GHCR instead of building: one built artifact, the same bytes everywhere, labelled
+# with the release. `:latest` follows the tag, never `main` -- main is the working branch and
+# every commit landing there is not a release.
 on:
   push:
     tags: ["v*"]
@@ -18,7 +21,7 @@ jobs:
   ci-gate:
     uses: ./.github/workflows/ci.yml
 
-  image:
+  builder:
     needs: ci-gate
     runs-on: ubuntu-latest
     # The build downloads a CUDA base plus a whisper model. 40 minutes is generous; it is
@@ -51,10 +54,44 @@ jobs:
           # github.repository is Owner/Name; GHCR requires the path lowercased.
           repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          sha=$(git rev-parse --short HEAD)
+          # The version and revision labels come from the tag and the checkout, so the published
+          # image answers `docker inspect` without a rebuild: same values the source constant and
+          # the boot banner carry.
           docker build -f Dockerfile.builder \
+            --build-arg DUBTITLERR_VERSION="$version" \
+            --build-arg VCS_REF="$sha" \
             -t "ghcr.io/$repo:$tag" \
             -t "ghcr.io/$repo:latest" \
             .
           docker push "ghcr.io/$repo:$tag"
           docker push "ghcr.io/$repo:latest"
           echo "published ghcr.io/$repo:$tag and :latest"
+
+  lite:
+    needs: ci-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          sha=$(git rev-parse --short HEAD)
+          docker build -f Dockerfile.lite \
+            --build-arg DUBTITLERR_VERSION="$version" \
+            --build-arg VCS_REF="$sha" \
+            -t "ghcr.io/$repo:$tag-lite" \
+            -t "ghcr.io/$repo:latest-lite" \
+            .
+          docker push "ghcr.io/$repo:$tag-lite"
+          docker push "ghcr.io/$repo:latest-lite"
+          echo "published ghcr.io/$repo:$tag-lite and :latest-lite"
