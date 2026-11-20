@@ -39,6 +39,11 @@ _preflight="dubtitlerr/pipeline/repair.py dubtitlerr/pipeline/dub_signs_merge.py
 # the pass carried on and printed "MERGE PASS COMPLETE" without delivering a single episode.
 if [ "${PUBLISH_GATE:-1}" != "0" ]; then
 	_preflight="$_preflight dubtitlerr/pipeline/publish_gate.py"
+	# gate_fix.py is the bounded deterministic remediation a refusal now triggers before
+	# the episode is parked, so a missing one must fail the pass up front (same reason).
+	if [ "${GATE_FIX:-1}" != "0" ]; then
+		_preflight="$_preflight dubtitlerr/pipeline/gate_fix.py"
+	fi
 fi
 for _f in $_preflight; do
 	if [ ! -f "$APP/$_f" ]; then
@@ -61,6 +66,14 @@ python3 -m dubtitlerr.core.notify subscribed --event episode.delivered >/dev/nul
 # environment. (The exporter's stderr is kept: it names anything it ignored, which would otherwise be invisible.)
 if [ -f "$APP/dubtitlerr/review/review_settings_write.py" ]; then
 	eval "$(python3 -m dubtitlerr.review.review_settings_write export --scope merge)" || true
+fi
+# Same once-per-pass question for the refusal event, asked after the settings export so an install
+# that turned PUBLISH_GATE off does not pay for a probe that can never fire. A parked episode is
+# exactly the thing a human must see -- silently parked is the failure this pass used to have --
+# but only an install with a subscriber pays the per-episode CLI call.
+_notify_refused=0
+if [ "${PUBLISH_GATE:-1}" != "0" ]; then
+	python3 -m dubtitlerr.core.notify subscribed --event episode.refused >/dev/null 2>&1 && _notify_refused=1
 fi
 # Report what THIS pass runs with, to its own file: the generate loop writes effective.env from an environment that never
 # applies the repair profile, so sharing one file would make the Settings page's "pending" flip as the two take turns.
@@ -251,13 +264,47 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 	# punctuation, cards that run off the screen, a known mishear name, or a file that stops
 	# halfway through the episode. Inspects the subtitle text and the container duration;
 	# never touches the video. PUBLISH_GATE=0 is the escape hatch.
+	#
+	# A refusal is no longer a dead end: ONE bounded, deterministic remediation attempt
+	# (gate_fix -- no model, no word changes) runs before the episode is parked, and the
+	# gate is re-run on the file it wrote. Fixed -> delivery continues exactly as normal.
+	# Still refused -> park as before AND surface it (episode.refused) so an un-normalizable
+	# episode is never left silently. GATE_FIX=0 disables just the attempt.
 	if [ "${PUBLISH_GATE:-1}" != "0" ]; then
+		# A previous pass's remediation verdict must not stand in for this pass's (same rule
+		# the repair/signs records follow): clear it before the gate runs.
+		python3 -c "import sys; from dubtitlerr.core import common; common.clear_stage(sys.argv[1], 'gate_fix')" "$stem" </dev/null >/dev/null 2>&1 || true
 		if ! python3 -m dubtitlerr.pipeline.publish_gate "$stem" </dev/null; then
-			# Record the refusal on the mux stage: without it the census counts this stem as
-			# neither done nor failed and prints COMPLETE while an episode was refused.
-			python3 -c "import sys; from dubtitlerr.core import common; common.write_stage(sys.argv[1],'mux','refused','publish-gate')" "$stem" </dev/null >/dev/null 2>&1 || true
-			echo "skip mux: publish gate failed"
-			continue
+			# 3 = a new refusal worth escalating. gate_fix overwrites this with its own verdict
+			# (0 fixed, 1 already escalated, 3 new); with GATE_FIX=0 nothing has deduplicated it,
+			# so every pass parks loudly rather than entering the silent path this pass removed.
+			gf_rc=3
+			gf_note=""
+			if [ "${GATE_FIX:-1}" != "0" ]; then
+				# Exit 0 = the file now passes; 3 = still refused, escalate now; 1 = still
+				# refused and already escalated with this exact signature; 2 = cannot evaluate.
+				gf_note=$(python3 -m dubtitlerr.pipeline.gate_fix "$stem" </dev/null 2>&1)
+				gf_rc=$?
+				gf_note=$(printf '%s\n' "$gf_note" | tail -n 1)
+				[ -n "$gf_note" ] && echo "$gf_note"
+			fi
+			# Re-gate the file itself, not the fixer's own opinion of it.
+			if [ "$gf_rc" -eq 0 ] && python3 -m dubtitlerr.pipeline.publish_gate "$stem" </dev/null; then
+				echo "gate: fail -> gate_fix normalized $(basename "$stem"), re-gate passed"
+			else
+				# Record the refusal on the mux stage: without it the census counts this stem as
+				# neither done nor failed and prints COMPLETE while an episode was refused.
+				python3 -c "import sys; from dubtitlerr.core import common; common.write_stage(sys.argv[1],'mux','refused','publish-gate')" "$stem" </dev/null >/dev/null 2>&1 || true
+				echo "skip mux: publish gate failed${gf_note:+ after gate_fix: $gf_note}"
+				# gf_rc 1 means this exact refusal was already escalated: keep the log line,
+				# skip the repeat notification. Anything else is new and goes out now.
+				if [ "$_notify_refused" -eq 1 ] && [ "$gf_rc" -ne 1 ]; then
+					[ -n "$gf_note" ] || gf_note="publish gate refused the file and gate_fix did not run"
+					notify_send --event episode.refused --summary "parked $(basename "$stem") — $gf_note" \
+						--loop merge --detail '{"stage":"publish-gate"}'
+				fi
+				continue
+			fi
 		fi
 	fi
 	for ext in mkv mp4 m4v; do # mux the video (root); embeds + stamps

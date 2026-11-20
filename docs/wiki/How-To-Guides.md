@@ -862,6 +862,7 @@ watching the log.
 | Pass failed         | a loop or stage fails: a stalled generate pass, a merge pass that cannot start, the generate loop exiting |
 | Review pending      | a sweep ends with unresolved review items |
 | Episode delivered   | every episode a merge pass delivers — one message each, so it starts unticked |
+| Episode refused     | every episode a merge pass parks after the publish gate refused it — one message per distinct finding |
 
 **4. Save, then Test.** Save the list and click **Test** on the provider. A saved provider answers
 with one test message (`DubTitlerr test notification`); an error names the failure without ever

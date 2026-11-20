@@ -65,6 +65,7 @@ EVENTS = (
     "pass.failed",
     "review.pending",
     "episode.delivered",
+    "episode.refused",
 )
 KINDS = ("discord", "ntfy", "webhook")
 TEST_EVENT = "notification.test"

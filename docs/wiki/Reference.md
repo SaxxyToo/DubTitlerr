@@ -235,6 +235,22 @@ A failed outcome blocks mux for that episode. The merge pass prints a `skip mux:
 episode it holds back and reports `MERGE PASS INCOMPLETE` at the end. That includes an episode
 repair stopped for a soft stop: the next pass clears the `stopped` record and repairs it again.
 
+**The publish gate, and what happens after it refuses.** Before mux the merge pass runs
+`dubtitlerr.pipeline.publish_gate` on the assembled sidecar. It refuses a file that does not cover
+the episode, is not punctuated as text, does not fit the screen (more than 46 characters on a line,
+more than 88 characters a card, or more than 7.5 seconds per card), or still contains a name the
+show's glossary calls a mishear. A refusal is not a dead end: `dubtitlerr.pipeline.gate_fix` makes one
+deterministic, model-free repair attempt — re-wrap an over-long line, split a card at a word,
+sentence or clause boundary, or end an over-duration card where its own spoken words end — then
+the gate is re-run on the file it wrote. If it passes, delivery continues normally. If it does not,
+the episode is parked exactly as before (mux stage `refused`, a `skip mux:` line, counted in
+`MERGE PASS INCOMPLETE`) and an `episode.refused` notification names the finding, once per distinct
+refusal. The attempt is recorded in `<stem>.dubtitles.gate-fix.json` (cards touched, before/after
+duration and length, outcome) and as the `gate_fix` stage record; an episode that already passes is
+not touched at all. `GATE_FIX=0` disables just the attempt. Faults a repair may not fix without
+changing words or the transcript — coverage, punctuation, a cold open, a known mishear, a single
+unbroken token — are reported as unsupported rather than attempted.
+
 `llm-empty` is a name in the code's outcome list, but repair never writes it. When a model
 answers a target with nothing, repair counts it as `llm_empty` in the repair summary, queues the
 line for review, and the stage still records `ok`.
@@ -700,8 +716,13 @@ The webhook envelope is `{"event", "at", "host", "loop", "summary", "counts", "d
 | `pass.failed`       | a loop or stage failure fence: a stalled generate pass, a merge pass that cannot start (missing `ffmpeg`, `mkvmerge`, `pysubs2` or library root), or the generate loop exiting | `detail`: `{"stage", "reason"}` |
 | `review.pending`    | a generation sweep ends with unresolved review items (count > 0) | `pending` |
 | `episode.delivered` | a merge pass delivers an episode. Off by default in the panel, because it is one message per episode | `detail`: `{"mode": "mux"}` or `"sidecar"` |
+| `episode.refused` | a merge pass parks an episode its publish gate refused, after the one deterministic repair attempt. Opt in per provider in the panel: a parked episode is a thing a human has to see | `detail`: `{"stage": "publish-gate"}` |
 
-A provider receives only the events its `triggers` list names. For `episode.delivered` the merge pass asks once per pass whether any enabled provider subscribes (`python3 -m dubtitlerr.core.notify subscribed`), so an unsubscribed install pays no per-episode subprocess.
+A provider receives only the events its `triggers` list names. For `episode.delivered` and
+`episode.refused` the merge pass asks once per pass whether any enabled provider subscribes
+(`python3 -m dubtitlerr.core.notify subscribed`), so an unsubscribed install pays no per-episode
+subprocess. A refusal is escalated once per distinct finding: re-attempting the same un-normalizable
+file on the next pass keeps the merge log line but does not repeat the message.
 
 **Delivery semantics.**
 
