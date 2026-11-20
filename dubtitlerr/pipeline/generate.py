@@ -491,6 +491,32 @@ STALE_SUFFIX = ".stale"  # parked, not deleted -- see park_stale_sidecars
 SIDECAR_SUFFIXES = (".eng.dubtitles.ass", ".eng.dubtitles.srt", ".dubtitles.conf.json", QC_SUFFIX, WORDS_SUFFIX)
 
 
+def _words_decoder_identity(initial_prompt: str) -> dict:
+    """The decoder fields a words.json RECORDS, from the same definition read_words compares.
+
+    Sourcing them from decoder_identity() is what makes a sidecar reusable by the process
+    that wrote it. Recording MODEL directly stored WHISPER_MODEL on EVERY backend, while an
+    endpoint install compares ASR_MODEL: every endpoint sidecar therefore failed its own
+    reuse check (words_config_mismatch), the text tier never replayed, and each TEXT_VERSION
+    bump cost GPU on exactly the installs the tier split exists to keep off it.
+
+    ``initial_prompt`` comes from the argument, not the identity: it is the prompt actually
+    handed to the decoder for this run, which is the value a replay must reproduce.
+
+    ``backend`` is recorded on BOTH backends even though the local identity dict carries
+    only model/initial_prompt/compute_type/beam_size. The local dict itself stays frozen --
+    adding a key there would count every one of the library's existing sidecars as
+    words_config_unknown -- but a sidecar that says which backend wrote it lets a later
+    endpoint-configured process reject a local transcript instead of reusing it because the
+    two model names happen to collide. It is not compared under the local identity, so no
+    existing sidecar changes status.
+    """
+    ident = dict(decoder_identity())
+    ident.setdefault("backend", ASR_BACKEND)
+    ident["initial_prompt"] = initial_prompt
+    return ident
+
+
 def write_words(stem, words, segments, audio_duration, initial_prompt=""):
     """Persist the word list so a TEXT-tier change can re-run without the GPU.
 
@@ -509,6 +535,11 @@ def write_words(stem, words, segments, audio_duration, initial_prompt=""):
     prompt is the only glossary-derived input the decoder ever sees, so comparing it is
     what distinguishes a glossary edit that needs the GPU from one that does not.
 
+    The decoder fields (model, and on the endpoint backend backend/url) come from
+    _words_decoder_identity(), i.e. from the SAME decoder_identity() read_words compares.
+    They used to be written from MODEL unconditionally, which made every endpoint sidecar
+    fail its own reuse check -- see _words_decoder_identity's docstring.
+
     The words are stored as generate holds them -- pre-reflow-transform. reflow's
     _normalize/_clamp_to_segments/_dejitter are pure and cost microseconds, and
     _card_word_probs() joins against this same untransformed list, so storing the
@@ -516,10 +547,7 @@ def write_words(stem, words, segments, audio_duration, initial_prompt=""):
     doc = {
         "schema_version": WORDS_SCHEMA_VERSION,
         "transcribe_version": TRANSCRIBE_VERSION,
-        "model": MODEL,
-        "initial_prompt": initial_prompt,
-        "compute_type": COMPUTE,
-        "beam_size": int(os.environ.get("WHISPER_BEAM_SIZE", "7")),
+        **_words_decoder_identity(initial_prompt),
         "audio_duration": audio_duration,
         "segments": segments,
         "words": words,

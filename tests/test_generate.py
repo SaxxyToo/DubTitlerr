@@ -2179,13 +2179,95 @@ def test_decoder_identity_reports_the_active_decoder_settings(monkeypatch):
     }
 
 
+def _endpoint_decoder(monkeypatch, model="whisper-large-v3-subs", prompt="Endpoint prompt"):
+    monkeypatch.setattr(generate, "ASR_BACKEND", "endpoint")
+    monkeypatch.setattr(generate, "ASR_MODEL", model)
+    monkeypatch.setattr(generate, "ASR_URL", "https://asr.example.test/v1/audio/transcriptions")
+    monkeypatch.setattr(generate, "INITIAL_PROMPT", prompt)
+
+
+def test_an_endpoint_sidecar_round_trips_against_the_endpoint_identity(tmp_path, monkeypatch):
+    """The live install runs ASR_BACKEND=endpoint, where decoder_identity() names ASR_MODEL.
+    write_words() recorded WHISPER_MODEL on every backend, so every sidecar the pipeline
+    wrote failed its own reuse check (model differs -> words_config_mismatch -> None) and
+    the text tier could never replay. Reproduced before the fix: read_words returned None
+    here and partition_todo sent every endpoint episode back to the GPU."""
+    from dubtitlerr.pipeline import qc
+
+    _endpoint_decoder(monkeypatch)
+    words, segments = _clamped_fixture()
+    stem = str(tmp_path / "ep")
+    generate.write_words(stem, words, segments, 7.0, initial_prompt=generate.INITIAL_PROMPT)
+
+    expect = generate.decoder_identity()
+    rec = qc.Recorder()
+    doc = common.read_words(stem, rec=rec, expect=expect)
+    assert doc is not None, "an endpoint install cannot reuse the sidecar it just wrote"
+    assert rec.counters.get("words_config_mismatch", 0) == 0
+    assert rec.counters.get("words_config_unknown", 0) == 0, "the sidecar must record every field the reader compares"
+    assert doc["model"] == "whisper-large-v3-subs"
+    assert doc["backend"] == "endpoint"
+
+
+def test_a_local_sidecar_round_trips_and_keeps_its_frozen_field_set(tmp_path, monkeypatch):
+    """The local identity is deliberately frozen: 366 live sidecars were written against
+    this exact four-field dict, and adding or renaming a field in it would invalidate every
+    one of them and force a full re-transcription of the library. The sidecar may record
+    the backend on top (not compared under the local identity), but the four compared
+    fields must not move."""
+    from dubtitlerr.pipeline import qc
+
+    stem, expect = _write_words_matching_identity(tmp_path, monkeypatch)
+    doc = json.load(open(stem + generate.WORDS_SUFFIX))
+    assert {k for k in doc if k in ("model", "initial_prompt", "compute_type", "beam_size", "backend")} == {
+        "model",
+        "initial_prompt",
+        "compute_type",
+        "beam_size",
+        "backend",
+    }
+    assert doc["backend"] == "local"
+    assert set(expect) == {"model", "initial_prompt", "compute_type", "beam_size"}
+    rec = qc.Recorder()
+    assert common.read_words(stem, rec=rec, expect=expect) is not None
+    assert rec.counters.get("words_config_mismatch", 0) == 0
+
+
+def test_a_backend_switch_invalidates_the_sidecar_written_by_the_other_backend(tmp_path, monkeypatch):
+    """Both backends read different model variables. Without a recorded backend, an
+    endpoint sidecar read under the local identity could look current (same prompt,
+    compute type and beam size) while its transcript came from a different service."""
+    from dubtitlerr.pipeline import qc
+
+    # endpoint -> local
+    _endpoint_decoder(monkeypatch)
+    words, segments = _clamped_fixture()
+    stem = str(tmp_path / "ep")
+    generate.write_words(stem, words, segments, 7.0, initial_prompt=generate.INITIAL_PROMPT)
+    monkeypatch.setattr(generate, "ASR_BACKEND", "local")
+    rec = qc.Recorder()
+    assert common.read_words(stem, rec=rec, expect=generate.decoder_identity()) is None
+    assert rec.counters["words_config_mismatch"] == 1
+
+    # local -> endpoint, on a model name that happens to collide with the endpoint's
+    monkeypatch.setattr(generate, "ASR_BACKEND", "local")
+    monkeypatch.setattr(generate, "INITIAL_PROMPT", "same prompt")
+    stem2 = str(tmp_path / "ep2")
+    generate.write_words(stem2, words, segments, 7.0, initial_prompt="same prompt")
+    _endpoint_decoder(monkeypatch, prompt="same prompt")
+    monkeypatch.setattr(generate, "ASR_MODEL", generate.MODEL)
+    rec = qc.Recorder()
+    assert common.read_words(stem2, rec=rec, expect=generate.decoder_identity()) is None
+    assert rec.counters["words_config_mismatch"] == 1
+
+
 def test_write_words_persists_compute_type_and_beam_size(tmp_path, monkeypatch):
     monkeypatch.setenv("WHISPER_BEAM_SIZE", "7")
     words, segments = _clamped_fixture()
     stem = str(tmp_path / "ep")
     generate.write_words(stem, words, segments, 7.0, initial_prompt="x")
     doc = json.load(open(stem + generate.WORDS_SUFFIX))
-    assert doc["schema_version"] == 2
+    assert doc["schema_version"] == common.WORDS_SCHEMA_VERSION
     assert doc["model"] == generate.MODEL
     assert doc["compute_type"] == generate.COMPUTE
     assert doc["beam_size"] == 7
