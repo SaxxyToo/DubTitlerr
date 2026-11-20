@@ -52,7 +52,7 @@
   --focus: #9ff5f5;
   --on-accent: #1c1a17;
   /* Derived steps: hover states and 12% status tints on a panel, opaque so contrast stays measurable. */
-  --accent-hover: color-mix(in srgb, var(--accent) 85%, black);
+  --accent-hover: color-mix(in srgb, var(--accent) 89%, white);
   --surface-hover: color-mix(in srgb, var(--surface) 85%, var(--text));
   --accent-tint: color-mix(in srgb, var(--accent) 22%, var(--panel));
   --ok-tint: color-mix(in srgb, var(--ok) 12%, var(--panel));
