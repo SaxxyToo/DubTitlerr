@@ -205,10 +205,12 @@ def load_glossary():
 def decoder_identity() -> dict:
     """What today's process would use to transcribe."""
     if ASR_BACKEND == "endpoint":
+        # backend + model only: the URL is transport, not identity -- repointing ASR_URL
+        # (same model, different address) must not invalidate sidecars (owner decision,
+        # 2026-11-20: keep the semantic name, drop the address).
         return {
             "backend": "endpoint",
             "model": ASR_MODEL,
-            "url": ASR_URL,
             "initial_prompt": INITIAL_PROMPT,
         }
     # Deliberately unchanged from before the endpoint backend existed: this dict is the
@@ -535,7 +537,7 @@ def write_words(stem, words, segments, audio_duration, initial_prompt=""):
     prompt is the only glossary-derived input the decoder ever sees, so comparing it is
     what distinguishes a glossary edit that needs the GPU from one that does not.
 
-    The decoder fields (model, and on the endpoint backend backend/url) come from
+    The decoder fields (model, plus the backend marker on the endpoint backend) come from
     _words_decoder_identity(), i.e. from the SAME decoder_identity() read_words compares.
     They used to be written from MODEL unconditionally, which made every endpoint sidecar
     fail its own reuse check -- see _words_decoder_identity's docstring.
@@ -1764,7 +1766,7 @@ def build_lastrun(show, elapsed_s, episodes_total, transcribed, totals, census, 
         "words_version_mismatch": words_totals.get("words_version_mismatch", 0),
         "words_reused": words_totals.get("words_reused", 0),
         "no_glossary": no_glossary,
-        "model": MODEL,
+        "model": decoder_identity()["model"],  # the ACTUAL decoder (ASR_MODEL on endpoint), not the local default
         "model_version": _model_version(),
         "glossary_version": _glossary_version(),
     }

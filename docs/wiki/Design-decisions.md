@@ -76,7 +76,7 @@ A `words.json` records the decoder identity it was produced under — the same `
 dict the reader compares against, so a sidecar is always reusable by the process that wrote it. The
 local backend's four fields (model, initial_prompt, compute_type, beam_size) are frozen: the existing
 sidecars were written against exactly those and a new key there would count them all as unknown. The
-endpoint backend records backend/model/url/initial_prompt instead. Writing the *local* model name on
+endpoint backend records backend/model/initial_prompt instead. Writing the *local* model name on
 every backend — which is what the first schema-2 sidecars did — made every endpoint sidecar fail its
 own reuse check, so each TEXT_VERSION bump re-transcribed on the GPU on precisely the installations
 the tier split exists to keep off it.

@@ -283,7 +283,7 @@ def ts_srt(t):
 
 WORDS_SUFFIX = ".dubtitles.words.json"
 WORDS_SCHEMA_VERSION = 3  # schema 3: the decoder fields are decoder_identity()'s, so an
-# endpoint sidecar records backend/model/url instead of the local model/compute/beam set.
+# endpoint sidecar records backend/model instead of the local model/compute/beam set.
 # read_words does not gate on this number; it exists so a sidecar says what shape it has.
 
 

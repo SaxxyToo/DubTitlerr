@@ -2263,6 +2263,18 @@ def test_decoder_identity_reports_the_active_decoder_settings(monkeypatch):
     }
 
 
+def test_lastrun_reports_the_active_decoder_not_the_local_default(monkeypatch):
+    """lastrun.json's `model` field must name the decoder that ACTUALLY ran. An endpoint
+    install once recorded WHISPER_MODEL (the local default) while the transcript came
+    from ASR_MODEL -- a report naming the wrong decoder (owner decision 2026-11-20)."""
+    _endpoint_decoder(monkeypatch)
+    totals = {"cards_written": 0, "dropped_hallucination": 0, "collapsed_runs": 0,
+              "token_runs_reduced": 0, "flagged": 0}
+    census = {"transcribe_stale": 0, "text_stale": 0}
+    doc = generate.build_lastrun("Chainsaw Man", 1.0, 1, 1, totals, census)
+    assert doc["model"] == "whisper-large-v3-subs"
+
+
 def _endpoint_decoder(monkeypatch, model="whisper-large-v3-subs", prompt="Endpoint prompt"):
     monkeypatch.setattr(generate, "ASR_BACKEND", "endpoint")
     monkeypatch.setattr(generate, "ASR_MODEL", model)
@@ -2291,6 +2303,9 @@ def test_an_endpoint_sidecar_round_trips_against_the_endpoint_identity(tmp_path,
     assert rec.counters.get("words_config_unknown", 0) == 0, "the sidecar must record every field the reader compares"
     assert doc["model"] == "whisper-large-v3-subs"
     assert doc["backend"] == "endpoint"
+    # The recorded identity is backend + model: the address is transport, not identity
+    # (owner decision 2026-11-20) -- a sidecar must not invalidate on an ASR_URL move.
+    assert "url" not in doc and "url" not in expect
 
 
 def test_a_local_sidecar_round_trips_and_keeps_its_frozen_field_set(tmp_path, monkeypatch):
