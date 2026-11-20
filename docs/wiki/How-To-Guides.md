@@ -982,44 +982,38 @@ user can observe:
 4. **Merge it to `main`.** The tag goes on the merge commit of `main`, never on a feature branch —
    a tag is what people fetch, so it has to name a commit that contains nothing unmerged.
 5. **Tag it, annotated:** `git tag -a vX.Y.Z -m "dubtitlerr X.Y.Z" && git push origin vX.Y.Z`.
-   An annotated tag records who released it and when; a lightweight tag is a bare pointer.
-6. **Create the release notes:** `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file notes.md`
+   An annotated tag records who released it and when; a lightweight tag is a bare pointer. Pushing
+   the tag starts the release workflow (below) — images publish from the tag, never from `main`.
+6. **Create the release notes (after the images publish):**
+   `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file notes.md`
    with what changed, what an operator must do (a `TRANSCRIBE_VERSION` bump, a glossary or config
    change), and any known regression.
 
-**Tag the image with the release it carries.** Two tags, two jobs:
+**The tag publishes the images; hosts pull.** Pushing `vX.Y.Z` runs the release workflow
+(`.github/workflows/release.yml`): the full CI gate re-runs first, then both images build and
+publish to GHCR in parallel, labelled from the tag and the checkout:
 
-```sh
-V=$(python3 -m dubtitlerr --version | cut -d' ' -f2)
-docker build -f Dockerfile.builder \
-  --build-arg DUBTITLERR_VERSION="$V" --build-arg VCS_REF=$(git rev-parse --short HEAD) \
-  -t "dubtitlerr:sidecar-fork-v$V" -t dubtitlerr:sidecar-fork .
-```
+- `ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z` — the builder image (the full CUDA build) — the release.
+- `ghcr.io/saxxytoo/dubtitlerr:latest` — the moving tag. Follows the newest release, never `main`.
+- `ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z-lite` — the lite image — the release.
+- `ghcr.io/saxxytoo/dubtitlerr:latest-lite` — the moving lite tag.
 
-- `dubtitlerr:sidecar-fork` — the moving tag. What the host runs.
-- `dubtitlerr:sidecar-fork-v0.4.0` — the release. What you roll back to.
-- `dubtitlerr:sidecar-fork-2026-11-19` — the date-suffixed rollback slot. Keep it when a same-version
-  rebuild is not guaranteed byte-identical, so "the one that worked on Tuesday" still exists.
-
-The same rule for `Dockerfile.lite`: `dubtitlerr:lite-v0.4.0` beside `dubtitlerr:lite`. Both images
-carry OCI labels (`org.opencontainers.image.version`, `…revision`), so `docker inspect` answers the
-same question without a running container.
+Hosts pull instead of building: one built artifact, the same bytes everywhere. Both images carry
+OCI labels (`org.opencontainers.image.version`, `…revision`) fed by the build args, so
+`docker inspect` answers the release question without a running container. If a same-version
+rebuild was not byte-identical, keep a locally date-suffixed rollback tag
+(`docker tag ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z dubtitlerr:rollback-2026-11-19`).
 
 **Check it landed.** `python3 -m dubtitlerr --version` on the host, `docker logs <container> | head`
 for the `dubtitlerr <version>` boot banner, `GET /api/v1/system/status` → `version.app`, and the
 review page's sidebar footer. All four read the same constant; if one disagrees, the image was built
 from a different tree.
 
-**What runs on a tag today: nothing that publishes this fork.** `.github/workflows/release.yml` is
-tag-triggered (`v*`) and builds **`Dockerfile.builder`** on a hosted runner, pushing
-`ghcr.io/<owner>/<repo>:<tag>` and `:latest` — a ~13 GB CUDA image on a public registry. It is
-upstream's workflow, it has never run for this fork, and it does not fit this fork's story: the fork
-does not publish images (they are built on the host that runs them), and it says nothing about the
-lite image or the version-tagged host images above. It is **dormant, not part of the procedure**. Be
-aware it is still wired: if GitHub Actions is enabled on the fork, pushing `v*` starts a 40-minute
-builder-image build. Decide before tagging — either leave Actions off, add a
-`if: github.repository == '<owner>/<repo>'` guard, or adopt GHCR deliberately and document the image
-name here.
+**What runs on a tag.** Pushing `vX.Y.Z` triggers the release workflow: the full CI gate re-runs
+first, then the builder (~40 min; CUDA base plus baked model weights) and the lite image publish in
+parallel. Watch it with `gh run list --workflow release` / `gh run watch`. If a job fails, fix the
+cause and re-run that run (`gh run rerun <id> --failed`) rather than deleting the tag — the tag
+names the release; the images it failed to produce are the thing that is missing, not the tag.
 
 ---
 

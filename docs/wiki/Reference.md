@@ -9,16 +9,17 @@ default differs between modules, that is stated rather than smoothed over.
 
 ## Container
 
-**Image:** built from this repository (`Dockerfile.builder` for the full build, `Dockerfile.lite`
-for the endpoint-only image)
+**Image:** pulled from GHCR, built by the release workflow from this repository
+(`ghcr.io/saxxytoo/dubtitlerr:<vX.Y.Z>` for the full build omarchy runs; `:<vX.Y.Z>-lite` for the
+endpoint-only image)
 
-**Tags:** the release's git tag (`v0.4.0`), annotated, on the merge commit in `main`. This fork
-does not publish images: both are built on the host that runs them, and the image tag names the
-release it carries (`dubtitlerr:sidecar-fork-v0.4.0` beside the moving
-`dubtitlerr:sidecar-fork`; `dubtitlerr:lite-v0.4.0` beside `dubtitlerr:lite`). A date-suffixed tag
-(`…-2026-11-19`) is the rollback slot for a same-version rebuild. `.github/workflows/release.yml`
-still builds and pushes the builder image to GHCR on a `v*` tag, but it is upstream's workflow and
-dormant for this fork — see [Cut a release](How-To-Guides.md#cut-a-release).
+**Tags:** the release's git tag (`v0.4.0`), annotated, on the merge commit in `main`. Pushing it
+runs `.github/workflows/release.yml`: the full CI gate re-runs, then both images publish in
+parallel — `ghcr.io/saxxytoo/dubtitlerr:v0.4.0` and `:latest` (builder),
+`:v0.4.0-lite` and `:latest-lite` (lite). Hosts pull instead of building; the moving `:latest`
+follows the newest release, never `main`. A locally date-suffixed tag
+(`dubtitlerr:rollback-2026-11-19`) is the rollback slot for a same-version rebuild — see
+[Cut a release](How-To-Guides.md#cut-a-release).
 
 **Entrypoint:** `container_run.sh`, which starts three loops in one container:
 
@@ -82,7 +83,9 @@ already-processed episodes. A release that bumps either of them says so in its n
 
 **Docker build arguments:** `DUBTITLERR_VERSION` (default `dev`) and `VCS_REF` (default `unknown`).
 Both images take them; no image hardcodes the version, because a literal in a Dockerfile would
-survive a bump and label the wrong release.
+survive a bump and label the wrong release. The release workflow passes both from the tag and the
+checkout (`version` = the tag minus its `v`, `revision` = the short sha), so a published image
+labels itself correctly with no build command to remember.
 
 **Cutting a release:** semver per [Cut a release](How-To-Guides.md#cut-a-release); the tag is
 annotated (`vX.Y.Z`) and points at the merge commit on `main`.
