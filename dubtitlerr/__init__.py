@@ -13,4 +13,4 @@ a bare literal (no import, no computation) both for the import-free rule above a
 setuptools reads it statically.
 """
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"

@@ -877,11 +877,24 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
     except reflow.CascadeInfeasible as e:
         return _cascade_infeasible(stem, fail, e)
     kept, fixes, dropped = [], 0, 0
+    known = [*GLOSS["names"], *GLOSS.get("phrases", [])]
     # a word looped across many short cards is invisible to the per-card rules; glossary names and phrases are exempt
-    loops, trims = hallucination.repeat_loops(cards, known=[*GLOSS["names"], *GLOSS.get("phrases", [])])
+    loops, trims = hallucination.repeat_loops(cards, known=known)
+    # a real sentence that ends in the loop word keeps its real words
+    if trims:
+        cards = [{**c, "text": trims[idx]} if idx in trims else c for idx, c in enumerate(cards)]
+    # arm #4: ONE token looping inside itself (the 446-char CSM cackle) -- reduce it to a
+    # readable ~6 repeats before anything else reads the text: the gate refuses the raw
+    # token on line length, and wrapping has no boundary to break it on. Text only; the
+    # card keeps its timing.
+    cards, token_runs = hallucination.reduce_token_runs(cards, known=known)
+    for r in token_runs:
+        log(
+            f"  token-run reduced at {float(r['start'] or 0.0):.3f}s: "
+            f"{r['repeats']}x{r['period']}-char run -> {r['after']!r} ({len(r['before'])} chars)"
+        )
+    rec.count("token_runs_reduced", len(token_runs))
     for idx, c in enumerate(cards):
-        if idx in trims:
-            c = {**c, "text": trims[idx]}  # a real sentence that ends in the loop word keeps its real words
         if idx in loops or hallucination.drop_reason(c, rec=rec):  # repeat-loop / blocklist / repetition -> drop
             dropped += 1
             continue
@@ -963,13 +976,19 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
     collapsed_n = len(kept) - len(collapsed)
     log(
         f"  cards={len(rows)} name-fixes={fixes} dropped-hallucination={dropped} "
-        f"collapsed={collapsed_n} flagged={flagged} low-conf={low} "
+        f"collapsed={collapsed_n} token-runs={len(token_runs)} flagged={flagged} low-conf={low} "
         f"max_dur={max_dur:.1f}s over_cps={over_cps} violations={bad} "
         f"meanlp={sum(c['avg_logprob'] for c in conf) / max(1, len(conf)):.2f}"
     )
     _LAST_STATS.clear()  # V2 C1: this episode's contribution to the show's lastrun.json
     _LAST_STATS.update(
-        {"cards_written": len(rows), "dropped_hallucination": dropped, "collapsed_runs": collapsed_n, "flagged": flagged}
+        {
+            "cards_written": len(rows),
+            "dropped_hallucination": dropped,
+            "collapsed_runs": collapsed_n,
+            "token_runs_reduced": len(token_runs),
+            "flagged": flagged,
+        }
     )
     return "ok"
 
@@ -1708,6 +1727,7 @@ def build_lastrun(show, elapsed_s, episodes_total, transcribed, totals, census, 
         "cards_written": totals["cards_written"],
         "dropped_hallucination": totals["dropped_hallucination"],
         "collapsed_runs": totals["collapsed_runs"],
+        "token_runs_reduced": totals["token_runs_reduced"],
         "flagged": totals["flagged"],
         # GPU-hours vs CPU-minutes: reported separately or the split means nothing.
         "transcribe_stale": census["transcribe_stale"],
@@ -1852,7 +1872,7 @@ def main():
     t0 = time.monotonic()  # V2 C1: per-show run summary
     transcribed = 0
     no_glossary = 0  # episodes generated with no glossary at all (see _no_glossary_warning)
-    totals = {"cards_written": 0, "dropped_hallucination": 0, "collapsed_runs": 0, "flagged": 0}
+    totals = {"cards_written": 0, "dropped_hallucination": 0, "collapsed_runs": 0, "token_runs_reduced": 0, "flagged": 0}
     # Text tier first: it is CPU-minutes per episode, so the cheap wins land before the
     # GPU queue starts consuming the night.
     for v in text_todo:

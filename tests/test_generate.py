@@ -240,6 +240,34 @@ def test_word_probs_written_to_conf_json(monkeypatch, tmp_path):
     assert len(conf[0]["word_probs"]) == len(conf[0]["text"].split())
 
 
+def test_a_cackle_token_is_reduced_before_the_srt_is_written(monkeypatch, tmp_path):
+    """End-to-end through process(): the 446-character CSM cackle becomes six repeats and
+    an ellipsis, the card is still written, and the QC counter records the reduction.
+
+    A trailing '!' is deliberate: reflow._collapse_repeats only matches a word that is
+    ENTIRELY one unit repeated, so punctuation on the token is how a real cackle survives
+    to the publish gate. This arm runs on the CARD, where that punctuation no longer hides
+    the repeat.
+    """
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 1000)
+    monkeypatch.setattr(generate, "eng_audio_index", lambda video: 1)
+    monkeypatch.setattr(generate, "extract_wav", lambda video, idx, wav: True)
+    monkeypatch.setenv("SKIP_IF_SRT", "0")
+
+    cackle = "Ke" + "ke" * 222
+    words = [_FakeWord(" " + cackle + "!", 1434.0, 1435.32, 0.9)]
+    seg = _FakeSegment(1434.0, 1435.32, 0.05, words)
+    monkeypatch.setattr(generate, "WMODEL", _FakeModel([seg]))
+
+    assert generate.process(str(v)) == "ok"
+    srt = (tmp_path / ("ep" + generate.SUFFIX)).read_text()
+    assert "Kekekekekeke…" in srt
+    assert cackle not in srt
+    sidecar = json.loads((tmp_path / ("ep" + generate.QC_SUFFIX)).read_text())
+    assert sidecar["counters"]["token_runs_reduced"] == 1
+
+
 def test_word_probs_stay_with_their_own_card_across_a_forward_steal(monkeypatch, tmp_path):
     """End-to-end: a runt steals time from its successor, so the successor's DISPLAY
     window no longer contains its own audio. Each card's word_probs must still describe
@@ -1758,12 +1786,21 @@ def test_the_census_is_reported_per_tier_in_lastrun():
     generate already writes per show and something already reads, rather than becoming a
     new artifact nobody opens. Asserted against the builder the writer itself uses, so
     the file and this test cannot disagree."""
-    totals = {"cards_written": 3, "dropped_hallucination": 0, "collapsed_runs": 0, "flagged": 1}
+    totals = {"cards_written": 3, "dropped_hallucination": 0, "collapsed_runs": 0, "token_runs_reduced": 0, "flagged": 1}
     census = {"transcribe_stale": 7, "text_stale": 12}
     doc = generate.build_lastrun("One Pace", 1.5, 20, 4, totals, census)
     assert doc["transcribe_stale"] == 7
     assert doc["text_stale"] == 12
     assert doc["episodes_transcribed"] == 4
+
+
+def test_lastrun_reports_the_token_run_reductions():
+    """The fourth arm's counter rides the same run report as collapsed_runs: a reduction
+    the operator cannot see afterwards is one nobody can tune."""
+    totals = {"cards_written": 3, "dropped_hallucination": 0, "collapsed_runs": 0, "token_runs_reduced": 2, "flagged": 0}
+    census = {"transcribe_stale": 0, "text_stale": 0}
+    doc = generate.build_lastrun("Chainsaw Man", 1.0, 12, 12, totals, census)
+    assert doc["token_runs_reduced"] == 2
 
 
 def test_card_word_probs_returns_nothing_for_an_implausible_window():
@@ -2197,7 +2234,7 @@ def test_partition_todo_and_process_text_request_the_decoder_identity():
 
 
 def test_build_lastrun_reports_the_words_counters():
-    totals = {"cards_written": 0, "dropped_hallucination": 0, "collapsed_runs": 0, "flagged": 0}
+    totals = {"cards_written": 0, "dropped_hallucination": 0, "collapsed_runs": 0, "token_runs_reduced": 0, "flagged": 0}
     census = {"transcribe_stale": 0, "text_stale": 0}
     words_totals = {"words_missing": 2, "words_version_mismatch": 1, "words_reused": 5}
     doc = generate.build_lastrun("One Pace", 1.0, 8, 8, totals, census, words_totals)
@@ -2207,7 +2244,7 @@ def test_build_lastrun_reports_the_words_counters():
 
 
 def test_build_lastrun_defaults_the_words_counters_to_zero_for_the_old_call_shape():
-    totals = {"cards_written": 0, "dropped_hallucination": 0, "collapsed_runs": 0, "flagged": 0}
+    totals = {"cards_written": 0, "dropped_hallucination": 0, "collapsed_runs": 0, "token_runs_reduced": 0, "flagged": 0}
     census = {"transcribe_stale": 0, "text_stale": 0}
     doc = generate.build_lastrun("One Pace", 1.0, 8, 8, totals, census)
     assert doc["words_missing"] == 0
