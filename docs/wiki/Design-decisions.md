@@ -72,6 +72,15 @@ must now be kept honest by hand where one was before, and getting a classificati
 episode is quietly never re-transcribed. The `words_missing` and per-tier counters exist so that
 failure is visible within one sweep rather than one month.
 
+A `words.json` records the decoder identity it was produced under — the same `decoder_identity()`
+dict the reader compares against, so a sidecar is always reusable by the process that wrote it. The
+local backend's four fields (model, initial_prompt, compute_type, beam_size) are frozen: the existing
+sidecars were written against exactly those and a new key there would count them all as unknown. The
+endpoint backend records backend/model/initial_prompt instead. Writing the *local* model name on
+every backend — which is what the first schema-2 sidecars did — made every endpoint sidecar fail its
+own reuse check, so each TEXT_VERSION bump re-transcribed on the GPU on precisely the installations
+the tier split exists to keep off it.
+
 This does not converge the library to a uniform state. `watch_queue.py` deliberately never queues
 unwatched shows, so the honest invariant is that the library converges **ahead of the viewer**, with
 the residual readable as a number.

@@ -282,7 +282,9 @@ def ts_srt(t):
 
 
 WORDS_SUFFIX = ".dubtitles.words.json"
-WORDS_SCHEMA_VERSION = 2  # schema 2: add decoder identity (model, initial_prompt, compute_type, beam_size)
+WORDS_SCHEMA_VERSION = 3  # schema 3: the decoder fields are decoder_identity()'s, so an
+# endpoint sidecar records backend/model instead of the local model/compute/beam set.
+# read_words does not gate on this number; it exists so a sidecar says what shape it has.
 
 
 def read_words(stem, rec=None, expect: dict | None = None):
@@ -295,7 +297,9 @@ def read_words(stem, rec=None, expect: dict | None = None):
     the other on read is precisely that silent miss.
 
     "expect"", when given, is generate.decoder_identity() -- what today's process would
-    use to transcribe. A stored field that IS RECORDED and DIFFERS invalidates the whole
+    use to transcribe, and exactly what generate.write_words records (see
+    generate._words_decoder_identity: the two sides must come from one definition, or a
+    sidecar can fail the check of the process that wrote it). A stored field that IS RECORDED and DIFFERS invalidates the whole
     doc (words_config_mismatch): replaying it would serve a transcript decoded under
     different settings. A field the sidecar does not carry at all -- every schema-1
     file, or "model" written from an unset WHISPER_MODEL env as "" -- is UNKNOWN, not a
