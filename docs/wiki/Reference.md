@@ -285,9 +285,19 @@ the episode is parked exactly as before (mux stage `refused`, a `skip mux:` line
 `MERGE PASS INCOMPLETE`) and an `episode.refused` notification names the finding, once per distinct
 refusal. The attempt is recorded in `<stem>.dubtitles.gate-fix.json` (cards touched, before/after
 duration and length, outcome) and as the `gate_fix` stage record; an episode that already passes is
-not touched at all. `GATE_FIX=0` disables just the attempt. Faults a repair may not fix without
-changing words or the transcript — coverage, punctuation, a cold open, a known mishear, a single
-unbroken token — are reported as unsupported rather than attempted.
+not touched at all. `GATE_FIX=0` disables just the attempt.
+
+A line the ASR emitted as one run of the same character repeated — a real 57-character `AHHH…`
+scream, a long laugh — has no word boundary to wrap or split at, so it gets a **line break**
+(`\N` in `.ass`, a newline in `.srt`) instead, at an even split inside the 46-character budget.
+That is pure layout: strip the breaks and the card's text is byte-identical, and its timing does
+not move. The audit records it as `action: "wrap-run"`. The break cannot rescue a card whose
+**total** is over 88 characters (the 446-character `Kekeke…` run is over even wrapped), so that
+refusal stands.
+
+Faults a repair may not fix without changing words or the transcript — coverage, punctuation, a
+cold open, a known mishear, a single unbroken token that is not one repeated character — are
+reported as unsupported rather than attempted.
 
 `llm-empty` is a name in the code's outcome list, but repair never writes it. When a model
 answers a target with nothing, repair counts it as `llm_empty` in the repair summary, queues the
