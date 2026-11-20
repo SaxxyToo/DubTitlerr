@@ -190,8 +190,8 @@ def _job_needs(job):
     return needs
 
 
-def test_release_image_job_is_gated_by_reusable_ci():
-    """The release image may publish only after the same reusable CI contract passes."""
+def test_release_publish_jobs_are_gated_by_reusable_ci():
+    """The release images (builder + lite) may publish only after the same reusable CI contract passes."""
     root = Path(__file__).resolve().parents[1]
 
     ci_text = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -212,11 +212,20 @@ def test_release_image_job_is_gated_by_reusable_ci():
     release_jobs = _workflow_jobs(release_text)
     ci_callers = {name for name, job in release_jobs.items() if _job_field(job, "uses")[1] == "./.github/workflows/ci.yml"}
     assert ci_callers, "release.yml must define a reusable CI caller job with uses: ./.github/workflows/ci.yml"
-    assert "image" in release_jobs, "release.yml must define the image job"
-    image_needs = _job_needs(release_jobs["image"])
-    assert ci_callers <= image_needs, (
-        f"release image job must need reusable CI caller(s) {sorted(ci_callers)}; found {sorted(image_needs)}"
-    )
+    # Two publish jobs (2026-11-19): the CUDA builder image and the lite image. Both publish
+    # only after the reusable CI gate, and each builds its own Dockerfile.
+    publish_jobs = {"builder": "Dockerfile.builder", "lite": "Dockerfile.lite"}
+    missing = sorted(set(publish_jobs) - set(release_jobs))
+    assert not missing, f"release.yml must define the publish jobs {sorted(publish_jobs)}; missing {missing}"
+    for name, dockerfile in publish_jobs.items():
+        job = release_jobs[name]
+        needs = _job_needs(job)
+        assert ci_callers <= needs, (
+            f"release {name} job must need reusable CI caller(s) {sorted(ci_callers)}; found {sorted(needs)}"
+        )
+        assert any(dockerfile in line for line in job), (
+            f"release {name} job must build {dockerfile}"
+        )
 
 
 def test_reusable_ci_concurrency_isolated_from_direct_trigger():
