@@ -101,6 +101,9 @@
   let showHelp = $state(false);
   let mobileNav = $state(false);
   let health = $state('Unknown');
+  // The release the server is running, shown in the sidebar footer so a bug report can name it.
+  // Read from /api/v1/system/status once a session exists; '' until then (and if the call fails).
+  let appVersion = $state('');
   let audioUrl = $state('');
   let audioLoading = $state(false);
   let audioError = $state('');
@@ -229,6 +232,12 @@
         health = data.ok ? 'Healthy' : 'Needs attention';
       } catch {
         health = 'Unknown';
+      }
+      try {
+        const status = await api<{ version?: { app?: string } }>('/api/v1/system/status');
+        appVersion = status.version?.app ?? '';
+      } catch {
+        appVersion = '';
       }
       if (view === 'shared') shared = (await api<{ pairs: Shared[] }>('/api/shared')).pairs;
       else if (selected) await loadEpisode(selected);
@@ -673,6 +682,7 @@
     {settingsCategory}
     onnavigate={navigate}
     onpick={() => closeDrawer(false)}
+    version={appVersion}
   />
 
   <div class="main-shell" inert={mobileNav && narrow}>

@@ -121,6 +121,17 @@ docker run -d --name dubtitlerr --network host \
 
 Both images need `mkvtoolnix` — the merge stage shells out to `mkvmerge` to read the video's subtitle streams and attachments. A lite build without it fails at the first merge pass with `FATAL: mkvmerge not found — image is misbuilt`.
 
+**Tag every image with the release it carries.** `python3 -m dubtitlerr --version` prints it (`dubtitlerr 0.4.0`); pass that and the commit into the build so `docker inspect` can answer too:
+
+```sh
+V=$(python3 -m dubtitlerr --version | cut -d' ' -f2)
+docker build -f Dockerfile.builder \
+  --build-arg DUBTITLERR_VERSION="$V" --build-arg VCS_REF=$(git rev-parse --short HEAD) \
+  -t "dubtitlerr:sidecar-fork-v$V" -t dubtitlerr:sidecar-fork .
+```
+
+Keep the moving tag (`sidecar-fork`, `lite`) for "the build I am running" and a version tag (`sidecar-fork-v0.4.0`) for "the build I can go back to" — a date-suffixed tag is the rollback slot when a rebuild of the same version is not identical. The full convention, and how a release is cut, is in [Cut a release](docs/wiki/How-To-Guides.md#cut-a-release).
+
 The two images install the same runtime packages, serve the same review UI and share one health check; `tests/test_dockerfile_copy.py` fails when they drift. Both entrypoints are the supervisor and ignore arguments, so run a one-off command with `docker run --rm --entrypoint sh dubtitlerr:lite -c '...'`.
 
 ## Requirements

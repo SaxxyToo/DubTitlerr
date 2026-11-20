@@ -24,6 +24,7 @@
     settingsCategory = '',
     onnavigate,
     onpick,
+    version = '',
   }: {
     view: View;
     authenticated: boolean;
@@ -37,6 +38,8 @@
     narrow?: boolean;
     /** The settings category page that is open ('' for the card grid); the sidebar lists the categories under Settings. */
     settingsCategory?: string;
+    /** The release the server is running (from /api/v1/system/status); '' before it is known. */
+    version?: string;
     onnavigate: (next: View) => void;
     /** A settings category link was followed; App closes the mobile drawer. */
     onpick?: () => void;
@@ -94,7 +97,7 @@
   </nav>
   <div class="sidebar-bottom">
     <a href="/" class="classic-link"><ExternalLink size={15} aria-hidden="true" />Classic review</a>
-    <div class="version-line">Review workspace v0.1</div>
+    <div class="version-line">{version ? `DubTitlerr ${version}` : 'DubTitlerr'}</div>
   </div>
 </aside>
 

@@ -1,6 +1,9 @@
 [project]
 name = "dubtitlerr"
-version = "0.3.0"
+# The version is NOT repeated here: it is read from dubtitlerr/__init__.py's __version__, the one
+# place it is written (that file stays import-free, so setuptools can read the literal without
+# importing the package). tests/test_version.py fails if this resolution or the lockfile drifts.
+dynamic = ["version"]
 requires-python = ">=3.11"
 dependencies = ["pysubs2>=1.7", "faster-whisper>=1.2", "jellyfish>=1.0"]
 [project.optional-dependencies]
@@ -16,6 +19,11 @@ analysis = ["webrtcvad>=2.0"]
 # Name it explicitly so setuptools never auto-discovers glossaries/, tests/, tools/ or
 # data/ as spurious top-level packages; `pip install -e ".[dev]"` (used purely to pull
 # in the runtime + dev dependencies) must keep working.
+[tool.setuptools.dynamic]
+# Read the literal from dubtitlerr/__init__.py (AST, not import): the package docstring forbids
+# imports there, and setuptools only needs the assignment.
+version = { attr = "dubtitlerr.__version__" }
+
 [tool.setuptools.packages.find]
 include = ["dubtitlerr*"]
 

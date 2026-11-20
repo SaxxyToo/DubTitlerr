@@ -953,6 +953,76 @@ so send the key and a JSON body and nothing else. Secret-bearing values are neve
 
 ---
 
+## Cut a release
+
+**Problem:** you want to ship a numbered release, and "which build is this?" answerable six months
+later without reading a commit log.
+
+A release is six steps. The version is written in exactly one place — `dubtitlerr/__init__.py`'s
+`__version__` — and every other copy of it is either derived from that file or checked against it
+by `tests/test_version.py`, which fails on drift.
+
+**What the number means here.** Major, minor, patch, judged against what an operator or a library
+user can observe:
+
+| Bump | When |
+| --- | --- |
+| **major** (`1.0.0`) | a change that breaks a contract: a CLI flag or stage name removed or renamed, an environment variable or glossary/config key dropped, an output file name or `.ass` shape that existing consumers would break on, or a `TRANSCRIBE_VERSION`/`TEXT_VERSION` bump that re-processes existing episodes without warning |
+| **minor** (`0.5.0`) | a new feature that existing configs, libraries and outputs survive: a new output mode, a new endpoint, a new review-page capability |
+| **patch** (`0.4.1`) | fixes only: a crash, a wrong line, a doc correction, a bug in a stage that changes nothing about the contract |
+
+**Do it.**
+
+1. **Bump the version** in `dubtitlerr/__init__.py`. Nothing else: `pyproject.toml` reads it
+   (`dynamic = ["version"]`), `uv.lock` carries no copy, and the image labels take it from the
+   build command.
+2. **Run the suite**: `scripts/check.sh` (and `--dash` if you touched a shell loop). The version
+   tests in `tests/test_version.py` are part of it.
+3. **Open the version-bump PR** and get it reviewed like any other change.
+4. **Merge it to `main`.** The tag goes on the merge commit of `main`, never on a feature branch —
+   a tag is what people fetch, so it has to name a commit that contains nothing unmerged.
+5. **Tag it, annotated:** `git tag -a vX.Y.Z -m "dubtitlerr X.Y.Z" && git push origin vX.Y.Z`.
+   An annotated tag records who released it and when; a lightweight tag is a bare pointer.
+6. **Create the release notes:** `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file notes.md`
+   with what changed, what an operator must do (a `TRANSCRIBE_VERSION` bump, a glossary or config
+   change), and any known regression.
+
+**Tag the image with the release it carries.** Two tags, two jobs:
+
+```sh
+V=$(python3 -m dubtitlerr --version | cut -d' ' -f2)
+docker build -f Dockerfile.builder \
+  --build-arg DUBTITLERR_VERSION="$V" --build-arg VCS_REF=$(git rev-parse --short HEAD) \
+  -t "dubtitlerr:sidecar-fork-v$V" -t dubtitlerr:sidecar-fork .
+```
+
+- `dubtitlerr:sidecar-fork` — the moving tag. What the host runs.
+- `dubtitlerr:sidecar-fork-v0.4.0` — the release. What you roll back to.
+- `dubtitlerr:sidecar-fork-2026-11-19` — the date-suffixed rollback slot. Keep it when a same-version
+  rebuild is not guaranteed byte-identical, so "the one that worked on Tuesday" still exists.
+
+The same rule for `Dockerfile.lite`: `dubtitlerr:lite-v0.4.0` beside `dubtitlerr:lite`. Both images
+carry OCI labels (`org.opencontainers.image.version`, `…revision`), so `docker inspect` answers the
+same question without a running container.
+
+**Check it landed.** `python3 -m dubtitlerr --version` on the host, `docker logs <container> | head`
+for the `dubtitlerr <version>` boot banner, `GET /api/v1/system/status` → `version.app`, and the
+review page's sidebar footer. All four read the same constant; if one disagrees, the image was built
+from a different tree.
+
+**What runs on a tag today: nothing that publishes this fork.** `.github/workflows/release.yml` is
+tag-triggered (`v*`) and builds **`Dockerfile.builder`** on a hosted runner, pushing
+`ghcr.io/<owner>/<repo>:<tag>` and `:latest` — a ~13 GB CUDA image on a public registry. It is
+upstream's workflow, it has never run for this fork, and it does not fit this fork's story: the fork
+does not publish images (they are built on the host that runs them), and it says nothing about the
+lite image or the version-tagged host images above. It is **dormant, not part of the procedure**. Be
+aware it is still wired: if GitHub Actions is enabled on the fork, pushing `v*` starts a 40-minute
+builder-image build. Decide before tagging — either leave Actions off, add a
+`if: github.repository == '<owner>/<repo>'` guard, or adopt GHCR deliberately and document the image
+name here.
+
+---
+
 ## Report a problem
 
 Include:

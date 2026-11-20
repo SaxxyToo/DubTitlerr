@@ -115,7 +115,6 @@ wheels = [
 
 [[package]]
 name = "dubtitlerr"
-version = "0.3.0"
 source = { virtual = "." }
 dependencies = [
     { name = "faster-whisper" },

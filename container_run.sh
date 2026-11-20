@@ -53,6 +53,13 @@ fi
 # that prefix belongs to the exporter's per-key copies.)
 DT_CONTAINER_BOOT_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || date +%s)
 export DT_CONTAINER_BOOT_ID
+# >>> version
+# The release this image carries, from the one place it is written (dubtitlerr/__init__.py). Printed
+# in the boot banner below, so `docker logs` answers "which build is this?" without an API call or a
+# login. The fallback keeps a misbuilt image booting: an unknown version is not a reason to stop.
+DT_VERSION=$(python3 -c 'import dubtitlerr; print(dubtitlerr.__version__)' 2>/dev/null) || DT_VERSION=unknown
+export DT_VERSION
+# <<< version
 : "${MERGE_INTERVAL:=600}"    # seconds between merge sweeps
 : "${RESCAN_INTERVAL:=21600}" # seconds to idle after a full generate sweep (default 6h)
 : "${REVIEW_RESTART:=15}"     # seconds before restarting the review server after an exit
@@ -89,7 +96,7 @@ if [ -z "$boot_state" ]; then
 	fi
 	boot_state=$(processing_state)
 fi
-echo "==== dubtitle-builder up $(date) — processing=${boot_state} merge_interval=${MERGE_INTERVAL}s rescan=${RESCAN_INTERVAL}s ===="
+echo "==== dubtitle-builder up dubtitlerr ${DT_VERSION} $(date) — processing=${boot_state} merge_interval=${MERGE_INTERVAL}s rescan=${RESCAN_INTERVAL}s ===="
 
 # Notifications are REPORTING ONLY: failures are swallowed, so a broken notify can never change this
 # supervisor's exit code or the fate of a loop. merge_pass.sh reports its own preflight failures and

@@ -851,8 +851,7 @@
               },
               "app": {
                 "type": "string",
-                "nullable": true,
-                "description": "Installed distribution version, or null when nothing is installed."
+                "description": "The release this server is running, from dubtitlerr/__init__.py's __version__ (for example \"0.4.0\"). Read from the package constant, never from installed-distribution metadata: the container installs nothing, so that lookup always returned null."
               },
               "transcribe_version": {
                 "type": "integer"
