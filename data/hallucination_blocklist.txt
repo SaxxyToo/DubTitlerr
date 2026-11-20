@@ -4,9 +4,13 @@
 # this file must reproduce the original inline pattern EXACTLY. # comments allowed.
 # Falls back to the inline pattern if missing.
 amara\.org
-thank you for watching
-thanks for watching
-thanks for your support
+# "watching"/"support" are END-ANCHORED as of arm #5 (2026-11-20): the delivered library
+# contains a trailing dialogue cue "Thanks for watching him." (Demon Slayer S04E01 cue 292)
+# and "thanks for watching" as a bare substring deleted it. Boilerplate is the whole card;
+# a card that keeps talking after those words is dialogue.
+thank you for watching[.!]*\s*$
+thanks for watching[.!]*\s*$
+thanks for your support[.!]*\s*$
 please subscribe
 subscribe to (the|our|my) channel
 like and subscribe

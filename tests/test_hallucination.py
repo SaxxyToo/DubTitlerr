@@ -41,6 +41,16 @@ def test_drop_reason_blocklist():
     assert h.drop_reason(card("Thanks for watching, see you next time")) == "blocklist"
 
 
+def test_blocklist_watching_phrase_only_drops_the_whole_card():
+    """The delivered library has a trailing dialogue cue "Thanks for watching him."
+    (Demon Slayer S04E01 cue 292). As a bare substring, "thanks for watching" deleted it;
+    anchored to the end of the card it does not. The boilerplate card still drops."""
+    assert h.drop_reason(card("Thanks for watching him.")) is None
+    assert h.drop_reason(card("Others support us silently.")) is None
+    assert h.drop_reason(card("Thanks for watching!")) == "blocklist"
+    assert h.drop_reason(card("Thank you for watching.")) == "blocklist"
+
+
 def test_drop_reason_repetition():
     assert h.drop_reason(card("la la la la la la")) == "repetition"
 
