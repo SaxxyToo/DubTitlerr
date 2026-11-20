@@ -197,8 +197,9 @@ def handle_library(anime_root=None):
 def _loop_state(heartbeat, now):
     """unknown | stopping | running | stalled | idle, from the heartbeat the builders write.
 
-    Staleness uses the same 3x RESCAN_INTERVAL threshold /healthz uses, so the two routes can
-    never disagree about a sweep that stopped reporting."""
+    Staleness uses the same STALE_SWEEP_MULTIPLIER x RESCAN_INTERVAL threshold /healthz uses, so
+    the two routes can never disagree about a sweep that stopped reporting (one constant, in
+    dubtitlerr.core.heartbeat)."""
     rescan = int(os.environ.get("RESCAN_INTERVAL", "21600"))
     if heartbeat is None:
         return "unknown"
@@ -209,7 +210,7 @@ def _loop_state(heartbeat, now):
         return "running"
     if end is None:
         return "stalled"
-    return "stalled" if (now - end) > 3 * rescan else "idle"
+    return "stalled" if (now - end) > common.STALE_SWEEP_MULTIPLIER * rescan else "idle"
 
 
 def handle_system_status(snapshot=None, health=None, now=None):

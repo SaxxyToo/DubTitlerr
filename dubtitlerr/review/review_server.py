@@ -1577,14 +1577,20 @@ def handle_healthz() -> tuple:
         return 503, {"ok": False, "reasons": ["no heartbeat yet"]}
 
     now = time.time()
-    last_sweep_end = hb.get("last_sweep_end")
+    try:
+        last_sweep_end = None if hb.get("last_sweep_end") is None else float(hb["last_sweep_end"])
+    except (TypeError, ValueError):
+        # A document we wrote is numeric; a hand-edited or corrupt one must fail closed as
+        # "no sweep has completed yet", never raise out of a probe.
+        last_sweep_end = None
     rescan_interval = int(os.environ.get("RESCAN_INTERVAL", "21600"))
+    stale_after = common.STALE_SWEEP_MULTIPLIER * rescan_interval
     reasons = []
 
     if last_sweep_end is None:
         reasons.append("stale: no sweep has completed yet")
-    elif (now - float(last_sweep_end)) > 3 * rescan_interval:
-        reasons.append(f"stale: last sweep ended {now - float(last_sweep_end):.0f}s ago (threshold {3 * rescan_interval}s)")
+    elif (now - last_sweep_end) > stale_after:
+        reasons.append(f"stale: last sweep ended {now - last_sweep_end:.0f}s ago (threshold {stale_after}s)")
 
     if not hb.get("roots_readable", True):
         reasons.append("roots_readable is false")

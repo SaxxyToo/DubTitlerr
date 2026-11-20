@@ -49,6 +49,7 @@ if [ "${1:-}" = "--dash" ]; then
 		cp -r /src /w && cd /w &&
 		pip install -q --root-user-action=ignore "pytest=='"$PYTEST_VERSION"'" "pysubs2=='"$PYSUBS2_VERSION"'" "jellyfish=='"$JELLYFISH_VERSION"'" >/dev/null 2>&1 &&
 		python -m pytest -o addopts="" -q -p no:cacheprovider tests/test_merge_pass.py tests/test_merge_pass_app_dir.py \
-			tests/test_soft_stop.py tests/test_gen_loop_requests.py tests/test_gen_loop_runtime_env.py'
+			tests/test_soft_stop.py tests/test_gen_loop_requests.py tests/test_gen_loop_runtime_env.py \
+			tests/test_heartbeat_shell.py tests/test_heartbeat_http.py'
 fi
 echo "== all checks passed"
