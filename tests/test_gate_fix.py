@@ -289,6 +289,161 @@ def test_an_over_chars_srt_card_is_split(tmp_path):
     assert words_of(stem) == [w for _, _, t in cards for w in t.split()]
 
 
+# --- repeated-character runs: a scream has no word boundary to wrap at ---------------
+
+SCREAM = "A" * 57  # the live FMA:B S01E41 event: one token, 7.1 s, 57 chars
+
+
+def dialogue_lines(stem):
+    return [ln for ln in read(stem + ".eng.dubtitles.ass").splitlines()
+            if ln.startswith("Dialogue:")]
+
+
+def test_a_repeated_character_run_is_wrapped_without_touching_a_character(tmp_path):
+    """A 57-char scream is one token with no boundary: insert a line break, change no char."""
+    cues = padded(100.0, 107.1, SCREAM)
+    stem = write_episode(tmp_path, cues)
+    assert "line of 57 chars (max 46)" in gate_fails(stem), gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert result["fixes"][0]["action"] == "wrap-run", result["fixes"]
+    assert gate_fails(stem) == []
+    # the invariant: strip the break and the card's content is byte-identical
+    line = next(ln for ln in dialogue_lines(stem) if "A" * 10 in ln)
+    body = line.rsplit(",", 1)[-1]
+    assert body.replace("\\N", "") == SCREAM
+    # and every rendered line now fits the gate's own budget
+    assert len(body.split("\\N")) == 2
+    assert all(len(ln) <= publish_gate.MAX_LINE for ln in body.split("\\N"))
+
+
+def test_the_run_is_split_evenly_and_re_running_is_a_no_op(tmp_path):
+    cues = padded(100.0, 107.1, SCREAM)
+    stem = write_episode(tmp_path, cues)
+
+    gate_fix.attempt(stem)
+    line = next(ln for ln in dialogue_lines(stem) if "A" * 10 in ln)
+    first, second = line.rsplit(",", 1)[-1].split("\\N")
+    assert abs(len(first) - len(second)) <= 1, (first, second)
+    fixed_bytes = read(stem + ".eng.dubtitles.ass")
+
+    second_run = gate_fix.attempt(stem)
+
+    assert second_run["outcome"] == gate_fix.OUTCOME_NOOP
+    assert read(stem + ".eng.dubtitles.ass") == fixed_bytes
+
+
+def test_a_wrapped_run_keeps_the_card_timing(tmp_path):
+    """A layout break moves no speech: start and end are the card's originals."""
+    cues = padded(100.0, 107.1, SCREAM)
+    stem = write_episode(tmp_path, cues)
+    _, before = publish_gate.load_cues(stem)
+    idx = next(i for i, (_, _, t) in enumerate(before) if t == SCREAM)
+
+    gate_fix.attempt(stem)
+
+    _, after = publish_gate.load_cues(stem)
+    assert after[idx][0] == before[idx][0]
+    assert after[idx][1] == before[idx][1]
+    assert after[idx][2].replace("\n", "") == SCREAM
+
+
+def test_a_normal_multi_word_line_still_takes_the_word_boundary_path(tmp_path):
+    """The run wrap must never reach ordinary prose: words stay whole."""
+    cues = padded(100.0, 107.0, LONG_LINE)
+    stem = write_episode(tmp_path, cues)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert result["fixes"][0]["action"] == "split", result["fixes"]
+    _, after = publish_gate.load_cues(stem)
+    for _, _, t in after:
+        for ln in t.split("\n"):
+            assert ln == ln.strip()
+    # every word of the original still appears, in order, unbroken
+    assert words_of(stem) == [w for _, _, t in cues for w in t.split()]
+
+
+def test_a_run_longer_than_the_card_budget_still_refuses(tmp_path):
+    """446 chars: wrap-able, but the TOTAL is over MAX_CHARS, so the card stays refused."""
+    blob = "A" * 446
+    cues = padded(100.0, 101.32, blob)
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert "446 identical chars" in result["summary"], result["summary"]
+    assert "over the gate's 88-char budget" in result["summary"], result["summary"]
+    assert result["code"] == 1 or result["code"] == 3
+    assert read(stem + ".eng.dubtitles.ass") == before
+    assert not os.path.exists(stem + ".eng.dubtitles.ass.pre-gate-fix.bak")
+
+
+def test_a_run_at_the_char_boundary_still_refuses(tmp_path):
+    """88 chars fits the card budget alone, but the break makes it 89: fail closed."""
+    blob = "A" * 88
+    cues = padded(100.0, 101.32, blob)
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert "89 with the break" in result["summary"], result["summary"]
+    assert read(stem + ".eng.dubtitles.ass") == before
+
+
+def test_a_run_that_also_runs_too_long_says_so_rather_than_blaming_the_break(tmp_path):
+    """57 A's over 9 s: the break fits, the duration does not — and it must say that."""
+    cues = padded(100.0, 109.0, SCREAM)
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert "7.5s budget" in result["summary"], result["summary"]
+    assert read(stem + ".eng.dubtitles.ass") == before
+
+
+def test_an_srt_scream_is_wrapped_with_a_real_line_break(tmp_path):
+    """The mp4 delivery path: same repair, the break is an SRT newline inside the block."""
+    d = tmp_path / "Show"
+    d.mkdir(parents=True)
+    stem = str(d / "ep01")
+    cards = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
+    cards.append((100.0, 107.1, SCREAM))
+    body = "".join(
+        f"{i}\n00:{int(s) // 60:02d}:{int(s) % 60:02d},000 --> "
+        f"00:{int(e) // 60:02d}:{int(e) % 60:02d},000\n{t}\n\n"
+        for i, (s, e, t) in enumerate(cards, 1))
+    (d / "ep01.eng.dubtitles.srt").write_text(body)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert gate_fails(stem) == []
+    text = read(stem + ".eng.dubtitles.srt")
+    block = next(b for b in text.split("\n\n") if "AAAA" in b)
+    wrapped = block.split("\n", 2)[2]
+    assert wrapped.replace("\n", "") == SCREAM
+    assert all(len(ln) <= publish_gate.MAX_LINE for ln in wrapped.split("\n"))
+
+
+def test_wrap_run_declines_everything_but_one_identical_token():
+    assert gate_fix._wrap_run("A" * 57) == "A" * 29 + "\n" + "A" * 28
+    assert gate_fix._wrap_run("a" * 57) == "a" * 29 + "\n" + "a" * 28
+    assert gate_fix._wrap_run("A" * 46) is None, "a line that already fits is left alone"
+    assert gate_fix._wrap_run("Kek" * 30) is None, "not one repeated character"
+    assert gate_fix._wrap_run("AHHH no") is None, "more than one token"
+    assert gate_fix._wrap_run(SCREAM + "\n" + SCREAM) is None, "already two lines"
+
+
 # --- fault classification -----------------------------------------------------------
 
 

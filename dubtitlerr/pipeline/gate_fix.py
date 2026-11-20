@@ -30,7 +30,10 @@ Fault classes it can repair, all under the gate's own budget
 (``publish_gate.MAX_DUR`` / ``MAX_CHARS`` / ``MAX_LINE``):
 
   * ``line of N chars`` and ``N card(s) over 88 chars`` -- re-wrap within the card, or
-    split into two cards when no single word boundary fits the line budget.
+    split into two cards when no single word boundary fits the line budget. A line the
+    ASR emitted as ONE run of the same character repeated (a 57-character ``AHHH...``
+    scream) has no boundary at all: it gets an even line break instead, which changes no
+    character -- and still refuses if the card's TOTAL is over ``MAX_CHARS``.
   * ``N card(s) over 7.5s`` -- split the card, recursively, until each piece is inside
     the duration budget (a 16.9 s card needs three pieces, not two).
 
@@ -127,8 +130,40 @@ def cue_faults(text, dur, max_line=GATE_MAX_LINE):
 
 
 def _wrap(text):
-    """Balanced wrap of a card's words. The word sequence is unchanged."""
-    return reflow.wrap_balance(_flat(text))
+    """Lay a card's text out inside the line budget. Not one character changes.
+
+    A line the ASR emitted as ONE token of the same character repeated -- a 57-character
+    ``AHHHH...`` scream (FMA:B S01E41), a long laugh -- has no word boundary to wrap at,
+    so :func:`reflow.wrap_balance` hands it straight back and the card is unshippable.
+    A break inserted into a uniform run is pure layout: strip the breaks and the string
+    is byte-identical to what came in, which is the same invariant every other re-wrap
+    here honours. See :func:`_wrap_run` for the conditions.
+    """
+    flat = _flat(text)
+    run = _wrap_run(flat)
+    return run if run is not None else reflow.wrap_balance(flat)
+
+
+def _wrap_run(text, max_line=GATE_MAX_LINE):
+    """Break a single run of one repeated character into equal lines, or None.
+
+    Only for the case no word-boundary wrap can reach: ONE token (no whitespace), every
+    character identical when case-folded, and longer than the line budget. The split is
+    even (the two lines differ by at most one character), so a scream reads as two
+    balanced lines rather than a full line and a stub.
+
+    It deliberately does not consider the card's total length: a 446-character run is
+    wrap-able by this function and STILL refused by the gate on ``MAX_CHARS``, so making
+    it the caller's (``cue_faults``) finding keeps this a pure layout helper.
+    """
+    text = _flat(text)
+    if len(text) <= max_line or " " in text:
+        return None
+    if len({c.casefold() for c in text}) != 1:
+        return None
+    parts = -(-len(text) // max_line)  # ceil: how many lines the run needs
+    size = -(-len(text) // parts)  # ceil: even lines, every one inside the budget
+    return "\n".join(text[i:i + size] for i in range(0, len(text), size))
 
 
 def _own_speech(words, text):
@@ -195,7 +230,11 @@ def _pieces(text, start, end, words, next_start=None, is_last=False, depth=0):
     dur = end - start
     faults = cue_faults(wrapped, dur)
     if not faults:
-        return [{"start": start, "end": end, "text": wrapped}]
+        piece = {"start": start, "end": end, "text": wrapped}
+        if _wrap_run(_flat(text)) is not None:
+            # The break inside this card came from the run wrap, not from a word boundary.
+            piece["run_wrap"] = True
+        return [piece]
     if depth > 8:  # a legal cut that leaves an illegal card, eight times over: stop
         return None
 
@@ -227,6 +266,19 @@ def _pieces(text, start, end, words, next_start=None, is_last=False, depth=0):
 def _why_unsplittable(text):
     flat = _flat(text)
     if " " not in flat:
+        run = _wrap_run(flat)
+        if run is not None:
+            wrapped = " ".join(run.split("\n"))
+            if len(wrapped) > GATE_MAX_CHARS:
+                return (f"single run of {len(flat)} identical chars: a line break fits the "
+                        f"{GATE_MAX_LINE}-char line, but the card's total "
+                        f"({len(wrapped)} with the break) is over the gate's "
+                        f"{GATE_MAX_CHARS}-char budget, so it cannot be made displayable "
+                        f"without changing words")
+            return (f"single run of {len(flat)} identical chars: the line break fits, but "
+                    f"the card is still over the {GATE_MAX_DUR:.1f}s budget and a repair "
+                    f"may not change words (splitting a single run across cards is not a "
+                    f"layout repair)")
         return (f"single unbroken token of {len(flat)} chars: there is no word boundary to "
                 f"wrap or split at, and a repair may not change words")
     return (f"no word/sentence/clause boundary leaves two cards inside the gate's budget "
@@ -264,6 +316,8 @@ def fix_cues(cues, words_doc=None, max_line=GATE_MAX_LINE):
             action = "trim-end"
         elif len(pieces) > 1:
             action = "split"
+        elif pieces[0].get("run_wrap"):
+            action = "wrap-run"
         else:
             action = "rewrap"
         actions.append({
@@ -275,6 +329,7 @@ def fix_cues(cues, words_doc=None, max_line=GATE_MAX_LINE):
             "after": [{"start": round(p["start"], 3), "end": round(p["end"], 3),
                        "dur": round(p["end"] - p["start"], 3),
                        "chars": len(_flat(p["text"])),
+                       "lines": len(p["text"].split("\n")),
                        "longest": _line_len(p["text"])} for p in pieces],
         })
         new_cues.extend((p["start"], p["end"], p["text"]) for p in pieces)
@@ -457,6 +512,10 @@ def _fixed_summary(actions):
         elif a["action"] == "split":
             parts.append(f"card #{a['index']} split into {len(a['after'])} "
                          f"(longest {max(x['dur'] for x in a['after']):.2f}s)")
+        elif a["action"] == "wrap-run":
+            parts.append(f"card #{a['index']} repeated-character run wrapped onto "
+                         f"{a['after'][0]['lines']} lines "
+                         f"(longest {a['after'][0]['longest']} chars)")
         else:
             parts.append(f"card #{a['index']} re-wrapped")
     return "; ".join(parts)
