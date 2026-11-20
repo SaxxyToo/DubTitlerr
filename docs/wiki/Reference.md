@@ -92,6 +92,44 @@ annotated (`vX.Y.Z`) and points at the merge commit on `main`.
 
 ---
 
+## Staleness
+
+An episode is **done** only when its `.dubtitles.done` stamp matches the file on disk (size and
+mtime), is current in both output tiers, and was produced by the decoder running today. Everything
+else is stale and is regenerated the next time the pipeline reaches it.
+
+| Signal in the stamp | Current value comes from | Stale when |
+| --- | --- | --- |
+| `transcribe_version` | `common.TRANSCRIBE_VERSION` | behind — audio → words changed |
+| `text_version` | `common.TEXT_VERSION` | behind — anything after the word list changed |
+| `asr_backend` + `asr_model` | `common.decoder_stamp_identity()` (`ASR_BACKEND`, then `ASR_MODEL` for the endpoint backend or `WHISPER_MODEL` for the local one) | different from today's, **or absent** |
+
+A **model change is not a version bump.** Switching `WHISPER_MODEL` or `ASR_MODEL` changes the
+transcript without changing the code, and the tier numbers cannot see it, so the decoder identity is
+recorded in every new stamp and compared directly. A different model marks the episode stale in
+**both** tiers — new words invalidate everything derived from them — which is the same shape as a
+`TRANSCRIBE_VERSION` bump. Neither constant is raised for this: a bump would mark the whole library
+stale at once, and a model change is an operator action, not a release.
+
+**Grandfathering.** A stamp with no `asr_model`/`asr_backend` was written before the model was
+recorded, i.e. by a decoder that is very likely not the one running now. It reads **stale**, not
+"unknown, so assume fine" — that population is the gap this check exists to close (~200 episodes at
+introduction). Moving back to a model an episode already recorded makes it current again: the
+comparison is against the recorded identity, not a one-way ratchet.
+
+**No bursts.** Staleness only marks the episode; nothing rebuilds it here. The generate loop walks
+the watch-queue order file, so a library-wide model change re-transcribes the shows actually being
+watched, one sweep at a time. A watched show does regenerate in full, because a subtitle track's
+value is in the episodes ahead of the viewer. To rebuild a single episode or show on demand, use a
+review request (`generate` scope) — a full-library rebuild is never automatic.
+
+`stamp_valid()` is still exactly "nothing stale", so every existing caller keeps its meaning:
+generate skips a stamped episode, mux treats it as delivered, `tools/export_subtitles.py` exports it.
+The one behaviour worth knowing: on an install that predates the model field, those callers will see
+the whole library as stale until each episode is regenerated once.
+
+---
+
 ## Processing state and controls
 
 The app can be **up without touching the library**. That is the boot default: starting the
@@ -160,7 +198,7 @@ All are written beside the video, sharing its basename. The merged `.ass` keeps 
 | `.eng.dubtitles.ass`             | `dub_signs_merge.py`, `review_apply.py`                      | `mux.py`                                     | Dialogue plus signs, songs and credits                                                                              |
 | `.dubtitles.conf.json`           | `generate.py`, `repair.py`                                   | `repair.py`, `glossary_acquire.py`, `mux.py` | Per-cue `avg_logprob` and `no_speech_prob`                                                                          |
 | `.dubtitles.words.json`          | `generate.py`                                                | `generate.py`                                | Per-word confidences and audio duration; lets a text-tier re-run skip the GPU                                       |
-| `.dubtitles.done`                | `common.py`, `mux.py`                                        | `generate.py`, `mux.py`                      | Completion stamp: muxed size, mtime, tier versions                                                                  |
+| `.dubtitles.done`                | `common.py`, `mux.py`                                        | `generate.py`, `mux.py`                      | Completion stamp: muxed size, mtime, tier versions, decoder identity (`asr_backend`, `asr_model`)                    |
 | `.dubtitles.fail`                | `generate.py`                                                | `generate.py`                                | Poison marker after a hard crash. Delete it to retry. Stopping the container no longer leaves one (0.2.2 and later) |
 | `.dubtitles.stages.json`         | `repair.py`, `dub_signs_merge.py`, `mux.py`, `merge_pass.sh` | `merge_pass.sh`, `mux.py`                    | One outcome per stage (repair, signs, mux). See [Stage outcomes](#stage-outcomes)                                   |
 | `.dubtitles.mux-recovery`        | `mux.py`                                                     | `mux.py`, the `deploy/` close unit           | Written when a failed cross-device copy may have damaged the episode. While it exists, mux refuses that episode     |

@@ -560,7 +560,14 @@ def test_stamp_valid_tolerates_a_string_version(tmp_path):
     v.write_bytes(b"x" * 100)
     st = v.stat()
     assert common.stamp_valid(
-        {"size": st.st_size, "mtime": st.st_mtime, "muxed": True, "version": str(common.TEXT_VERSION)}, str(v)
+        {
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            "muxed": True,
+            "version": str(common.TEXT_VERSION),
+            **common.decoder_stamp_identity(),
+        },
+        str(v),
     )
 
 
@@ -577,7 +584,13 @@ def test_stamp_valid_rejects_an_uninterpretable_version(tmp_path):
 
 def _stamp_for(video, version):
     st = os.stat(video)
-    return {"size": st.st_size, "mtime": st.st_mtime, "muxed": True, "version": version}
+    return {
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "muxed": True,
+        "version": version,
+        **common.decoder_stamp_identity(),
+    }
 
 
 def test_stale_version_stamp_true_for_our_own_older_output(tmp_path, monkeypatch):
@@ -804,13 +817,20 @@ def test_llm_chat_can_return_the_full_multi_line_reply(monkeypatch):
 
 
 def test_old_stamp_without_stages_is_still_valid(tmp_path):
-    """THE constraint on this change. A stamp written before `stages` existed must stay
-    valid: if stamp_valid rejected it, every episode in the library would read as unprocessed
-    and be fully re-transcribed -- ~12 GPU-hours to add a bookkeeping field."""
+    """A stamp written before `stages` existed must stay valid: if stamp_valid rejected it,
+    every episode in the library would read as unprocessed and be fully re-transcribed.
+    (The model identity is a DIFFERENT key with the opposite rule -- see the P12 section:
+    a stamp that cannot say which decoder produced it is stale on purpose.)"""
     v = tmp_path / "ep.mkv"
     v.write_bytes(b"x" * 10)
     st = os.stat(v)
-    old = {"size": st.st_size, "mtime": st.st_mtime, "muxed": True, "version": common.TEXT_VERSION}
+    old = {
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "muxed": True,
+        "version": common.TEXT_VERSION,
+        **common.decoder_stamp_identity(),
+    }
     assert common.stamp_valid(old, str(v)) is True
 
 
@@ -844,11 +864,14 @@ def test_stages_is_optional_and_omitted_when_absent(tmp_path):
 
 
 def _tier_stamp(tmp_path, **extra):
-    """A stamp that matches its video exactly, so the tier read is what's under test."""
+    """A stamp that matches its video exactly, so the tier read is what's under test.
+
+    Carries TODAY's decoder identity: these tests are about the version tiers, and a stamp
+    without one is stale for a different reason (see the P12 section below)."""
     v = tmp_path / "ep.mkv"
     v.write_bytes(b"x" * 100)
     st = v.stat()
-    stamp = {"size": st.st_size, "mtime": st.st_mtime, "muxed": True}
+    stamp = {"size": st.st_size, "mtime": st.st_mtime, "muxed": True, **common.decoder_stamp_identity()}
     stamp.update(extra)
     return stamp, str(v)
 
@@ -947,3 +970,158 @@ def test_heartbeat_write_is_atomic_no_tmp_file_left_behind(tmp_path, monkeypatch
 
     assert path.exists()
     assert list(tmp_path.glob("*.tmp")) == [], "the mkstemp temp file must be replaced, not left behind"
+
+
+# --- model-aware staleness (P12) ------------------------------------------------
+#
+# The stamp recorded the CODE tiers only. The ASR model is a decoder input those tiers
+# cannot see: FMA:B's 34 episodes (Nov-10, turbo-class) stamp 4/11 transcribe-fresh while
+# the library's model was switched to whisper-large-v3-subs, so nothing would ever redo
+# them. These tests pin the record, the comparison, and the grandfather decision.
+
+
+def _clear_decoder_env(monkeypatch):
+    """No decoder variable inherited from the test host -- every test states its own."""
+    for name in ("ASR_BACKEND", "ASR_MODEL", "WHISPER_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_write_stamp_records_the_asr_model_and_backend(tmp_path, monkeypatch):
+    """The stamp must say WHICH decoder produced it, in the same vocabulary the reader
+    compares against: the endpoint backend decodes with ASR_MODEL, the local one with
+    WHISPER_MODEL -- two different variables, so the backend has to be recorded too."""
+    _clear_decoder_env(monkeypatch)
+    monkeypatch.setenv("ASR_BACKEND", "endpoint")
+    monkeypatch.setenv("ASR_MODEL", "whisper-large-v3-subs")
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 100)
+    sp = str(tmp_path / ("ep" + common.STAMP_SUFFIX))
+
+    common.write_stamp(sp, str(v))
+
+    doc = common.read_stamp(sp)
+    assert doc["asr_backend"] == "endpoint"
+    assert doc["asr_model"] == "whisper-large-v3-subs"
+
+
+def test_a_stamp_from_the_current_model_stays_fresh(tmp_path, monkeypatch):
+    """Guardrail: an episode transcribed by the model running today must never be redone."""
+    _clear_decoder_env(monkeypatch)
+    monkeypatch.setenv("ASR_BACKEND", "local")
+    monkeypatch.setenv("WHISPER_MODEL", "large-v3-turbo")
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 100)
+    sp = str(tmp_path / ("ep" + common.STAMP_SUFFIX))
+    common.write_stamp(sp, str(v))
+
+    assert common.stamp_valid(common.read_stamp(sp), str(v))
+    assert common.stale_tiers(common.read_stamp(sp), str(v)) == set()
+
+
+def test_a_model_change_marks_both_tiers_stale(tmp_path, monkeypatch):
+    """A different decoder invalidates the words AND everything derived from them -- the
+    same shape as a TRANSCRIBE_VERSION bump, without bumping it."""
+    _clear_decoder_env(monkeypatch)
+    monkeypatch.setenv("ASR_BACKEND", "local")
+    monkeypatch.setenv("WHISPER_MODEL", "large-v3-turbo")
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 100)
+    sp = str(tmp_path / ("ep" + common.STAMP_SUFFIX))
+    common.write_stamp(sp, str(v))
+    stamp = common.read_stamp(sp)
+
+    monkeypatch.setenv("WHISPER_MODEL", "whisper-large-v3-subs")
+
+    assert common.stale_tiers(stamp, str(v)) == {"transcribe", "text"}
+    assert not common.stamp_valid(stamp, str(v))
+
+
+def test_and_back_again_is_fresh_again(tmp_path, monkeypatch):
+    """The comparison is against the RECORDED identity, not a one-way ratchet: an operator
+    who reverts the model finds the episodes that model produced already done."""
+    _clear_decoder_env(monkeypatch)
+    monkeypatch.setenv("ASR_BACKEND", "local")
+    monkeypatch.setenv("WHISPER_MODEL", "large-v3-turbo")
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 100)
+    sp = str(tmp_path / ("ep" + common.STAMP_SUFFIX))
+    common.write_stamp(sp, str(v))
+    stamp = common.read_stamp(sp)
+    monkeypatch.setenv("WHISPER_MODEL", "whisper-large-v3-subs")
+    assert not common.stamp_valid(stamp, str(v))
+
+    monkeypatch.setenv("WHISPER_MODEL", "large-v3-turbo")
+
+    assert common.stamp_valid(stamp, str(v))
+
+
+def test_a_stamp_with_no_model_field_is_stale_in_both_tiers(tmp_path, monkeypatch):
+    """GRANDFATHER DECISION: a stamp with no `asr_model` is the pre-large-v3 population --
+    exactly the gap this change exists to close -- so it reads STALE, never "unknown, so
+    assume fine". It is not a burst: gen_loop only walks the watch queue, so these migrate
+    at watch-gated pace like the v4/4 text-stale stamps."""
+    _clear_decoder_env(monkeypatch)
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 100)
+    st = v.stat()
+    old = {
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "muxed": True,
+        "version": common.TEXT_VERSION,
+        "transcribe_version": common.TRANSCRIBE_VERSION,
+        "text_version": common.TEXT_VERSION,
+    }
+    assert common.stale_tiers(old, str(v)) == {"transcribe", "text"}
+
+
+def test_a_stamp_with_a_model_but_no_backend_is_stale(tmp_path, monkeypatch):
+    """A half-recorded identity is not evidence: both halves are compared, and a missing
+    one cannot match."""
+    _clear_decoder_env(monkeypatch)
+    monkeypatch.setenv("ASR_BACKEND", "local")
+    monkeypatch.setenv("WHISPER_MODEL", "large-v3-turbo")
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 100)
+    st = v.stat()
+    stamp = {
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "muxed": True,
+        "transcribe_version": common.TRANSCRIBE_VERSION,
+        "text_version": common.TEXT_VERSION,
+        "asr_model": "large-v3-turbo",
+    }
+    assert "transcribe" in common.stale_tiers(stamp, str(v))
+
+
+def test_a_backend_switch_with_the_same_model_name_is_stale(tmp_path, monkeypatch):
+    """local and endpoint are different decoders even when the model name is spelled the
+    same (a llama-swap server can serve the very same weights), so the backend is part of
+    the identity."""
+    _clear_decoder_env(monkeypatch)
+    monkeypatch.setenv("ASR_BACKEND", "local")
+    monkeypatch.setenv("WHISPER_MODEL", "large-v3-turbo")
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 100)
+    sp = str(tmp_path / ("ep" + common.STAMP_SUFFIX))
+    common.write_stamp(sp, str(v))
+    stamp = common.read_stamp(sp)
+
+    monkeypatch.setenv("ASR_BACKEND", "endpoint")
+    monkeypatch.setenv("ASR_MODEL", "large-v3-turbo")
+
+    assert common.stale_tiers(stamp, str(v)) == {"transcribe", "text"}
+
+
+def test_decoder_stamp_identity_reads_the_variable_the_active_backend_uses(monkeypatch):
+    """Endpoint installs decode with ASR_MODEL; local installs with WHISPER_MODEL. Reading
+    the wrong one would compare a model name the stamp never records."""
+    _clear_decoder_env(monkeypatch)
+    monkeypatch.setenv("ASR_BACKEND", "endpoint")
+    monkeypatch.setenv("ASR_MODEL", "openai/whisper-1")
+    monkeypatch.setenv("WHISPER_MODEL", "large-v3-turbo")
+    assert common.decoder_stamp_identity() == {"asr_backend": "endpoint", "asr_model": "openai/whisper-1"}
+
+    monkeypatch.setenv("ASR_BACKEND", "local")
+    assert common.decoder_stamp_identity() == {"asr_backend": "local", "asr_model": "large-v3-turbo"}

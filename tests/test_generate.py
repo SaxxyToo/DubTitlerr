@@ -1705,11 +1705,14 @@ def test_write_words_propagates_so_the_caller_must_handle_it(tmp_path):
 
 
 def _stamped(tmp_path, name, **stamp_extra):
+    """A stamp matching its video. The decoder identity defaults to TODAY'S, so a test
+    about the version tiers is not accidentally also about a model mismatch; pass
+    asr_model=/asr_backend= to state a different decoder."""
     v = tmp_path / name
     v.write_bytes(b"x" * (100 + len(name)))
     st = v.stat()
     if stamp_extra:
-        doc = {"size": st.st_size, "mtime": st.st_mtime, "muxed": True}
+        doc = {"size": st.st_size, "mtime": st.st_mtime, "muxed": True, **common.decoder_stamp_identity()}
         doc.update(stamp_extra)
         with open(str(v.with_suffix("")) + common.STAMP_SUFFIX, "w") as f:
             json.dump(doc, f)
@@ -1832,6 +1835,50 @@ def test_a_current_episode_is_in_neither_queue(tmp_path):
         text_version=common.TEXT_VERSION,
     )
     assert generate.partition_todo([v]) == ([], [])
+
+
+def test_a_model_stale_episode_goes_to_the_transcribe_queue(tmp_path, monkeypatch):
+    """P12: the 34 FMA:B episodes stamped 4/11 by a turbo-class decoder. They read
+    transcribe-fresh today because the stamp never recorded the model; once it does, a
+    model change has to reach the same queue a TRANSCRIBE_VERSION bump reaches -- and the
+    text tier with it, because the words are new."""
+    monkeypatch.setenv("ASR_BACKEND", "local")
+    monkeypatch.setenv("WHISPER_MODEL", "whisper-large-v3-subs")
+    v = _stamped(
+        tmp_path,
+        "ep.mkv",
+        transcribe_version=common.TRANSCRIBE_VERSION,
+        text_version=common.TEXT_VERSION,
+        asr_model="large-v3-turbo",  # what the Nov-10 run actually used
+    )
+
+    transcribe_todo, text_todo = generate.partition_todo([v])
+
+    assert transcribe_todo == [v]
+    assert text_todo == []
+
+
+def test_a_current_model_episode_is_in_neither_queue(tmp_path):
+    """Guardrail: a stamp recording today's model must never be queued. Written by the real
+    write_stamp, so the reader and the writer are proven to agree."""
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 100)
+    stem = os.path.splitext(str(v))[0]
+    common.write_stamp(stem + common.STAMP_SUFFIX, str(v))
+
+    assert generate.partition_todo([str(v)]) == ([], [])
+
+
+def test_common_and_generate_agree_on_the_decoder_identity(monkeypatch):
+    """Two derivations exist for two purposes -- generate.decoder_identity() is the frozen
+    words.json identity, common.decoder_stamp_identity() is the stamp's. A drift in the
+    model name or backend between them would make every stamp read stale on the run that
+    wrote it, i.e. a permanent re-transcribe loop. Pinned on defaults (no env set)."""
+    for name in ("ASR_BACKEND", "ASR_MODEL", "WHISPER_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    ident = common.decoder_stamp_identity()
+    assert ident["asr_backend"] == generate.ASR_BACKEND
+    assert ident["asr_model"] == generate.MODEL
 
 
 def test_a_poison_marked_episode_is_in_neither_queue(tmp_path):
