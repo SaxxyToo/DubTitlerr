@@ -79,13 +79,13 @@
     border: 1px solid currentColor;
   }
   .state-running {
-    color: #067a3e;
+    color: var(--ok);
   }
   .state-paused {
-    color: #8a5a00;
+    color: var(--warn);
   }
   .state-stopped {
-    color: #a01818;
+    color: var(--bad);
   }
   .processing-actions {
     display: flex;
