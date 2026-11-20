@@ -52,7 +52,7 @@ TOKEN_RUN_MIN_LEN = 30  # below this length a repeated unit is a scream or a stu
 # so it can be tuned without a code change; falls back to this exact inline pattern if
 # the file is missing/unreadable (backward-compatible, e.g. a dev checkout without data/).
 _BLOCKLIST_PATTERN_FALLBACK = (
-    r"amara\.org|thank you for watching|thanks for watching|thanks for your support|"
+    r"amara\.org|thank you for watching[.!]*\s*$|thanks for watching[.!]*\s*$|thanks for your support[.!]*\s*$|"
     r"please subscribe|subscribe to (the|our|my) channel|like and subscribe|"
     r"see you (in the )?next (video|time)|subtitles by|captions? by|transcri(bed|ption) by|"
     r"translated by|copyright|www\.|http|to be continued|we.?ll be right back"

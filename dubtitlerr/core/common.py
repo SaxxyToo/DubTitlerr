@@ -231,6 +231,14 @@ TRACK_NAME = "Dubtitles"
 # decoder, so they are transcribe-fresh and only text-stale: they migrate at
 # watch-gated pace instead of burning ~2 GPU-days to record a bookkeeping change.
 #
+# NO TEXT BUMP FOR ARM #5 (P16, 2026-11-20), deliberately. The boilerplate/credit filter
+# changes text output, but the delivered population it would repair is handled two other
+# ways: the running campaign regenerates most of the 135 known sidecars, and
+# tools/artifact_sweep.py is the deterministic pass for the rest (it reproduces the hand
+# fix on Afro Samurai S01E01 byte-for-byte). A v12 would re-derive the text tier for the
+# whole library to reach the same files the sweep reaches in minutes. Revisit only if a
+# future arm #5 template change finds artefacts the sweep did not.
+#
 # THE MODEL IS NOT A VERSION (P12, 2026-11-20). The tiers record what the CODE did to the
 # output; neither can see which weights decoded the audio, and the weights change without a
 # code change: the library was moved onto whisper-large-v3-subs and every earlier episode

@@ -268,6 +268,62 @@ def test_a_cackle_token_is_reduced_before_the_srt_is_written(monkeypatch, tmp_pa
     assert sidecar["counters"]["token_runs_reduced"] == 1
 
 
+def test_boilerplate_head_block_is_dropped_before_the_srt_is_written(monkeypatch, tmp_path):
+    """End-to-end through process(): arm #5 removes the leading non-dialogue block.
+
+    The lines are the real Afro Samurai S01E01 block, chosen because the blocklist does NOT
+    catch them -- "derivative work of the Touhou Project" has no blocklist alternative, and
+    the text is unique, so no repetition arm sees it either. Only position + the arm #5
+    template can explain the drop.
+    """
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 1000)
+    monkeypatch.setattr(generate, "eng_audio_index", lambda video: 1)
+    monkeypatch.setattr(generate, "extract_wav", lambda video, idx, wav: True)
+    monkeypatch.setenv("SKIP_IF_SRT", "0")
+
+    segs = [
+        _FakeSegment(0.0, 1.5, 0.05, [_FakeWord(" This video is a derivative work of the Touhou Project.", 0.0, 1.5, 0.9)]),
+        _FakeSegment(2.0, 3.5, 0.05, [_FakeWord(" I'm sorry for the poor quality.", 2.0, 3.5, 0.9)]),
+        _FakeSegment(20.0, 21.5, 0.05, [_FakeWord(" Wait here,", 20.0, 21.5, 0.9)]),
+    ]
+    monkeypatch.setattr(generate, "WMODEL", _FakeModel(segs))
+
+    assert generate.process(str(v)) == "ok"
+    srt = (tmp_path / ("ep" + generate.SUFFIX)).read_text()
+    assert "Touhou" not in srt and "poor quality" not in srt
+    assert "Wait here," in srt
+    sidecar = json.loads((tmp_path / ("ep" + generate.QC_SUFFIX)).read_text())
+    assert sidecar["counters"]["dropped_boilerplate"] == 2
+    events = [e for e in sidecar["events"] if e["reason"] == "boilerplate"]
+    assert [e["text"] for e in events] == [
+        "This video is a derivative work of the Touhou Project.",
+        "I'm sorry for the poor quality.",
+    ]
+    assert {e["run"] for e in events} == {"leading"}
+
+
+def test_a_trailing_dialogue_line_beginning_with_thanks_is_not_boilerplate(monkeypatch, tmp_path):
+    """The Demon Slayer S04E01 last line, as the pipeline sees it: kept, not flagged."""
+    v = tmp_path / "ep.mkv"
+    v.write_bytes(b"x" * 1000)
+    monkeypatch.setattr(generate, "eng_audio_index", lambda video: 1)
+    monkeypatch.setattr(generate, "extract_wav", lambda video, idx, wav: True)
+    monkeypatch.setenv("SKIP_IF_SRT", "0")
+
+    segs = [
+        _FakeSegment(0.0, 1.5, 0.05, [_FakeWord(" He's sound asleep.", 0.0, 1.5, 0.9)]),
+        _FakeSegment(3.0, 4.5, 0.05, [_FakeWord(" Thanks for watching him.", 3.0, 4.5, 0.9)]),
+    ]
+    monkeypatch.setattr(generate, "WMODEL", _FakeModel(segs))
+
+    assert generate.process(str(v)) == "ok"
+    srt = (tmp_path / ("ep" + generate.SUFFIX)).read_text()
+    assert "Thanks for watching him." in srt
+    sidecar = json.loads((tmp_path / ("ep" + generate.QC_SUFFIX)).read_text())
+    assert sidecar["counters"]["dropped_boilerplate"] == 0
+
+
 def test_word_probs_stay_with_their_own_card_across_a_forward_steal(monkeypatch, tmp_path):
     """End-to-end: a runt steals time from its successor, so the successor's DISPLAY
     window no longer contains its own audio. Each card's word_probs must still describe
