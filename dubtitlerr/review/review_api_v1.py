@@ -378,7 +378,7 @@ def _command_refusal(name, status, error, **extra):
 
 
 def handle_command(body, who="admin", environ=None, anime_root=None):
-    """arr-style ``{"name": ..., "params": {...}}``. Only the three v1 commands exist."""
+    """arr-style ``{"name": ..., "params": {...}}``. Only the commands in COMMANDS exist."""
     if not isinstance(body, dict):
         return 400, {"error": 'send {"name": ..., "params": {...}}', "commands": list(COMMANDS)}
     extra = sorted(set(body) - {"name", "params"})
