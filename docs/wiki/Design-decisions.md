@@ -252,8 +252,11 @@ A notification is a provider: `{name, kind, enabled, triggers[]}` plus its kind'
 the same settings machinery as Connections (`settings.json` for visible fields, `secrets.json` mode
 0600 for write-only ones). Kinds are a registry — `discord`, `ntfy`, `webhook` today, so another kind
 is an addition, not a rewrite. Each provider chooses its own triggers from a fixed event set:
-`run.requested`, `sweep.completed`, `merge.completed`, `pass.failed`, `review.pending`, and
-`episode.delivered` (off by default in the panel, because it is one message per episode).
+`run.requested`, `sweep.completed`, `merge.completed`, `pass.failed`, `review.pending`,
+`episode.delivered` (off by default in the panel, because it is one message per episode) and
+`episode.refused` (a parked episode, one message per distinct refusal). Both per-episode events are
+opt-in: a provider sends only the triggers its own list names, so an install that wants to hear
+about a parked episode ticks `episode.refused` in the panel.
 
 Delivery is deliberately boring and bounded: one `POST` per provider per event through `urllib`, one
 10-second timeout, one retry after a timeout, a network error or a 5xx, never a retry after a 4xx.

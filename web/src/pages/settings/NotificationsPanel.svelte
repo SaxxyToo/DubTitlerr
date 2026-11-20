@@ -39,6 +39,7 @@
     'pass.failed': 'Pass failed',
     'review.pending': 'Review pending',
     'episode.delivered': 'Episode delivered',
+    'episode.refused': 'Episode refused',
   };
   const KIND_LABELS: Record<string, string> = {
     discord: 'Discord',
