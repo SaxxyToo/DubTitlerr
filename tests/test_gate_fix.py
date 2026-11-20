@@ -12,6 +12,7 @@ punctuation, so a five-cue fixture cannot absorb a split the way a 400-cue episo
 
 import json
 import os
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -291,7 +292,11 @@ def test_an_over_chars_srt_card_is_split(tmp_path):
 
 # --- repeated-character runs: a scream has no word boundary to wrap at ---------------
 
-SCREAM = "A" * 57  # the live FMA:B S01E41 event: one token, 7.1 s, 57 chars
+SCREAM = "A" * 57  # the uniform scream the P13 fixture used: one token, 7.1 s, 57 chars
+LIVE_SCREAM = "A" + "H" * 56  # what FMA:B S01E41 actually ships: 57 chars, {'a', 'h'}
+KEKE = "Ke" * 223  # Chainsaw Man S01E07's token: 446 chars, period 2, no uniform run
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures",
+                       "fmab_s01e41_abyss.ass")
 
 
 def dialogue_lines(stem):
@@ -317,6 +322,65 @@ def test_a_repeated_character_run_is_wrapped_without_touching_a_character(tmp_pa
     # and every rendered line now fits the gate's own budget
     assert len(body.split("\\N")) == 2
     assert all(len(ln) <= publish_gate.MAX_LINE for ln in body.split("\\N"))
+
+
+def test_the_live_scream_shape_is_wrapped_without_touching_a_character(tmp_path):
+    """FMA:B S01E41's real token is 'A' + 56 H's -- one stray, not a uniform run."""
+    cues = padded(100.0, 107.14, LIVE_SCREAM)
+    stem = write_episode(tmp_path, cues)
+    assert "line of 57 chars (max 46)" in gate_fails(stem), gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert result["fixes"][0]["action"] == "wrap-run", result["fixes"]
+    assert gate_fails(stem) == []
+    line = next(ln for ln in dialogue_lines(stem) if "AHHH" in ln)
+    body = line.rsplit(",", 1)[-1]
+    assert body.replace("\\N", "") == LIVE_SCREAM
+    first, second = body.split("\\N")
+    assert abs(len(first) - len(second)) <= 1, (first, second)
+    assert all(len(ln) <= publish_gate.MAX_LINE for ln in body.split("\\N"))
+
+
+def test_the_live_fmab_s01e41_artifact_is_fixed_in_place(tmp_path):
+    """The shipped E41 sidecar, byte for byte: only the scream's Dialogue line changes."""
+    d = tmp_path / "Show"
+    d.mkdir(parents=True)
+    stem = str(d / "ep41")
+    shutil.copyfile(FIXTURE, stem + ".eng.dubtitles.ass")
+    before = read(stem + ".eng.dubtitles.ass")
+    assert before.count(LIVE_SCREAM) == 1
+    assert "line of 57 chars (max 46)" in gate_fails(stem), gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert result["fixes"][0]["action"] == "wrap-run", result["fixes"]
+    assert gate_fails(stem) == []
+    after = read(stem + ".eng.dubtitles.ass")
+    body = next(ln for ln in after.splitlines() if "AHHH" in ln).rsplit(",", 1)[-1]
+    assert body.replace("\\N", "") == LIVE_SCREAM
+    assert all(len(ln) <= publish_gate.MAX_LINE for ln in body.split("\\N"))
+    # every other line, including the sign/song events' positions, is untouched
+    old, new = before.splitlines(), after.splitlines()
+    assert len(old) == len(new)
+    changed = [i for i, (a, b) in enumerate(zip(old, new)) if a != b]
+    assert len(changed) == 1, changed
+
+
+def test_a_period_two_run_is_still_refused_unchanged(tmp_path):
+    """'Kekekekeke...' has two characters but no tiny minority: it stays unfixable."""
+    cues = padded(100.0, 101.32, KEKE)
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert "single unbroken token" in result["summary"], result["summary"]
+    assert read(stem + ".eng.dubtitles.ass") == before
+    assert not os.path.exists(stem + ".eng.dubtitles.ass.pre-gate-fix.bak")
 
 
 def test_the_run_is_split_evenly_and_re_running_is_a_no_op(tmp_path):
@@ -435,13 +499,55 @@ def test_an_srt_scream_is_wrapped_with_a_real_line_break(tmp_path):
     assert all(len(ln) <= publish_gate.MAX_LINE for ln in wrapped.split("\n"))
 
 
-def test_wrap_run_declines_everything_but_one_identical_token():
+def test_wrap_run_declines_everything_but_one_run_with_a_tiny_minority():
     assert gate_fix._wrap_run("A" * 57) == "A" * 29 + "\n" + "A" * 28
     assert gate_fix._wrap_run("a" * 57) == "a" * 29 + "\n" + "a" * 28
+    assert gate_fix._wrap_run(LIVE_SCREAM) == LIVE_SCREAM[:29] + "\n" + LIVE_SCREAM[29:]
     assert gate_fix._wrap_run("A" * 46) is None, "a line that already fits is left alone"
-    assert gate_fix._wrap_run("Kek" * 30) is None, "not one repeated character"
     assert gate_fix._wrap_run("AHHH no") is None, "more than one token"
     assert gate_fix._wrap_run(SCREAM + "\n" + SCREAM) is None, "already two lines"
+
+
+def test_wrap_run_minority_boundary_is_two_stray_characters():
+    """Two distinct letters are fine when the stray one appears at most twice."""
+    two_strays = "A" + "H" * 55 + "A"          # 57 chars, 'a' x2
+    three_strays = "A" + "H" * 53 + "AAA"      # 57 chars, 'a' x3
+    assert len(two_strays) == len(three_strays) == 57
+    assert gate_fix._wrap_run(two_strays) is not None
+    assert gate_fix._wrap_run(three_strays) is None
+    assert gate_fix._wrap_run(KEKE) is None, "period-2 run: the minority is large"
+    assert gate_fix._wrap_run("Kek" * 30) is None, "three distinct characters"
+
+
+def test_why_unsplittable_stays_accurate_for_a_near_run(tmp_path):
+    """A mixed run must not be called 'identical chars', and the over-budget arm must say so."""
+    near_blob = "A" + "H" * 446  # 447 chars: wrap-able, but over the 88-char card budget
+    cues = padded(100.0, 101.32, near_blob)
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert "447" in result["summary"], result["summary"]
+    assert "identical chars" not in result["summary"], result["summary"]
+    assert "over the gate's 88-char budget" in result["summary"], result["summary"]
+    assert read(stem + ".eng.dubtitles.ass") == before
+
+
+def test_why_unsplittable_blames_duration_when_the_break_would_fit(tmp_path):
+    """57 chars over 9 s: the near-run wraps, the duration does not — say that, not 'identical'."""
+    cues = padded(100.0, 109.0, LIVE_SCREAM)
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert "57" in result["summary"], result["summary"]
+    assert "7.5s budget" in result["summary"], result["summary"]
+    assert "identical chars" not in result["summary"], result["summary"]
+    assert read(stem + ".eng.dubtitles.ass") == before
 
 
 # --- fault classification -----------------------------------------------------------

@@ -31,9 +31,11 @@ Fault classes it can repair, all under the gate's own budget
 
   * ``line of N chars`` and ``N card(s) over 88 chars`` -- re-wrap within the card, or
     split into two cards when no single word boundary fits the line budget. A line the
-    ASR emitted as ONE run of the same character repeated (a 57-character ``AHHH...``
-    scream) has no boundary at all: it gets an even line break instead, which changes no
-    character -- and still refuses if the card's TOTAL is over ``MAX_CHARS``.
+    ASR emitted as ONE run of one letter, with at most two stray characters (the shipped
+    57-character ``'A' + 'H'*56`` scream, a long laugh) has no boundary at all: it gets an
+    even line break instead, which changes no character -- and still refuses if the card's
+    TOTAL is over ``MAX_CHARS``. An alternating run (``Kekekekeke...``) is not a run and
+    stays refused.
   * ``N card(s) over 7.5s`` -- split the card, recursively, until each piece is inside
     the duration budget (a 16.9 s card needs three pieces, not two).
 
@@ -61,6 +63,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 
 from dubtitlerr.core.atomic_file import MODE_KEEP, atomic_write
 from dubtitlerr.pipeline import card_split, publish_gate, reflow
@@ -74,6 +77,12 @@ MAX_AUDIT_ATTEMPTS = 20
 GATE_MAX_CHARS = publish_gate.MAX_CHARS
 GATE_MAX_LINE = publish_gate.MAX_LINE
 GATE_MAX_DUR = publish_gate.MAX_DUR
+
+# A run is one repeated character; this many stray characters are still a run. FMA:B
+# S01E41's scream ships as 'A' + 'H'*56 -- the normal English spelling of a scream, one
+# leading 'A' then the held letter -- and a break inserted anywhere in it removes no
+# character.
+RUN_STRAYS = 2
 
 # `publish_gate.evaluate` reports faults as prose. These are the ones a layout repair can
 # address; anything else is a different failure class and must not be attempted.
@@ -132,25 +141,43 @@ def cue_faults(text, dur, max_line=GATE_MAX_LINE):
 def _wrap(text):
     """Lay a card's text out inside the line budget. Not one character changes.
 
-    A line the ASR emitted as ONE token of the same character repeated -- a 57-character
-    ``AHHHH...`` scream (FMA:B S01E41), a long laugh -- has no word boundary to wrap at,
-    so :func:`reflow.wrap_balance` hands it straight back and the card is unshippable.
-    A break inserted into a uniform run is pure layout: strip the breaks and the string
-    is byte-identical to what came in, which is the same invariant every other re-wrap
-    here honours. See :func:`_wrap_run` for the conditions.
+    A line the ASR emitted as ONE token that is a run of one letter -- the shipped
+    57-character ``'A' + 'H'*56`` scream, a long laugh, with at most two stray characters
+    anywhere in it -- has no word boundary to wrap at, so :func:`reflow.wrap_balance` hands
+    it straight back and the card is unshippable. A break inserted into such a run is pure
+    layout: strip the breaks and the string is byte-identical to what came in, which is the
+    same invariant every other re-wrap here honours. See :func:`_wrap_run` for the conditions.
     """
     flat = _flat(text)
     run = _wrap_run(flat)
     return run if run is not None else reflow.wrap_balance(flat)
 
 
+def _run_counts(text):
+    """Counter of the token's case-folded characters."""
+    return Counter(c.casefold() for c in text)
+
+
+def _is_run(text):
+    """One repeated character, with at most ``RUN_STRAYS`` strays elsewhere.
+
+    ``'A' + 'H' * 56`` (the shipped FMA:B S01E41 scream) is a run: one 'A', 56 H's.
+    ``'Kekekekeke...'`` is not -- it alternates, so its minority is half the token and
+    belongs to the word-repair path, not a layout break.
+    """
+    counts = _run_counts(text)
+    if len(counts) == 1:
+        return True
+    return len(counts) == 2 and min(counts.values()) <= RUN_STRAYS
+
+
 def _wrap_run(text, max_line=GATE_MAX_LINE):
     """Break a single run of one repeated character into equal lines, or None.
 
-    Only for the case no word-boundary wrap can reach: ONE token (no whitespace), every
-    character identical when case-folded, and longer than the line budget. The split is
-    even (the two lines differ by at most one character), so a scream reads as two
-    balanced lines rather than a full line and a stub.
+    Only for the case no word-boundary wrap can reach: ONE token (no whitespace) that is a
+    run (:func:`_is_run`) and longer than the line budget. The split is even (the two lines
+    differ by at most one character), so a scream reads as two balanced lines rather than a
+    full line and a stub.
 
     It deliberately does not consider the card's total length: a 446-character run is
     wrap-able by this function and STILL refused by the gate on ``MAX_CHARS``, so making
@@ -159,7 +186,7 @@ def _wrap_run(text, max_line=GATE_MAX_LINE):
     text = _flat(text)
     if len(text) <= max_line or " " in text:
         return None
-    if len({c.casefold() for c in text}) != 1:
+    if not _is_run(text):
         return None
     parts = -(-len(text) // max_line)  # ceil: how many lines the run needs
     size = -(-len(text) // parts)  # ceil: even lines, every one inside the budget
@@ -268,14 +295,17 @@ def _why_unsplittable(text):
     if " " not in flat:
         run = _wrap_run(flat)
         if run is not None:
+            counts = _run_counts(flat)
+            shape = (f"{len(flat)} identical chars" if len(counts) == 1 else
+                     f"{len(flat)} chars, one letter repeated {max(counts.values())} times")
             wrapped = " ".join(run.split("\n"))
             if len(wrapped) > GATE_MAX_CHARS:
-                return (f"single run of {len(flat)} identical chars: a line break fits the "
+                return (f"single run of {shape}: a line break fits the "
                         f"{GATE_MAX_LINE}-char line, but the card's total "
                         f"({len(wrapped)} with the break) is over the gate's "
                         f"{GATE_MAX_CHARS}-char budget, so it cannot be made displayable "
                         f"without changing words")
-            return (f"single run of {len(flat)} identical chars: the line break fits, but "
+            return (f"single run of {shape}: the line break fits, but "
                     f"the card is still over the {GATE_MAX_DUR:.1f}s budget and a repair "
                     f"may not change words (splitting a single run across cards is not a "
                     f"layout repair)")

@@ -287,16 +287,18 @@ refusal. The attempt is recorded in `<stem>.dubtitles.gate-fix.json` (cards touc
 duration and length, outcome) and as the `gate_fix` stage record; an episode that already passes is
 not touched at all. `GATE_FIX=0` disables just the attempt.
 
-A line the ASR emitted as one run of the same character repeated — a real 57-character `AHHH…`
+A line the ASR emitted as one run of a single letter — a real 57-character `'A' + 'H'×56`
 scream, a long laugh — has no word boundary to wrap or split at, so it gets a **line break**
 (`\N` in `.ass`, a newline in `.srt`) instead, at an even split inside the 46-character budget.
-That is pure layout: strip the breaks and the card's text is byte-identical, and its timing does
-not move. The audit records it as `action: "wrap-run"`. The break cannot rescue a card whose
-**total** is over 88 characters (the 446-character `Kekeke…` run is over even wrapped), so that
-refusal stands.
+A couple of stray characters in the token (the scream's leading `A`, two closing letters) do not
+disqualify it: the break inserts layout only. That is pure layout: strip the breaks and the card's
+text is byte-identical, and its timing does not move. The audit records it as
+`action: "wrap-run"`. The break cannot rescue a card whose **total** is over 88 characters (a
+446-character run is over even wrapped), and a token that *alternates* rather than repeats
+(`Kekekekeke…`, whose minority is half the token) is not a run — both of those refusals stand.
 
 Faults a repair may not fix without changing words or the transcript — coverage, punctuation, a
-cold open, a known mishear, a single unbroken token that is not one repeated character — are
+cold open, a known mishear, a single unbroken token that is not a run — are
 reported as unsupported rather than attempted.
 
 `llm-empty` is a name in the code's outcome list, but repair never writes it. When a model
