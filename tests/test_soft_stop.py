@@ -208,10 +208,16 @@ def _supervisor(tmp_path):
     log = tmp_path / "calls.log"
     log.write_text("")
     flag = tmp_path / "stop.flag"
+    config = tmp_path / "config"
+    config.mkdir()
+    # This harness is about the soft stop, not the boot default: start from the stored state
+    # that actually processes, or the loops would (correctly) boot paused and never run.
+    (config / "processing.json").write_text('{"state": "running", "by": "test", "at": "x"}')
     env = dict(os.environ)
     env.update(
         APP_DIR=str(app),
         STOP_FLAG=str(flag),
+        CONFIG_DIR=str(config),
         CALLLOG=str(log),
         GEN_DIE=str(tmp_path / "die"),
         MERGE_INTERVAL="1",

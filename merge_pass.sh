@@ -111,6 +111,7 @@ ROOT_ABS=$PWD
 # Soft stop: stop_requested comes from lib.sh; without it nothing ever stops.
 command -v stop_requested >/dev/null 2>&1 || stop_requested() { return 1; }
 command -v library_sweep_enabled >/dev/null 2>&1 || library_sweep_enabled() { return 0; }
+command -v hold_while_paused >/dev/null 2>&1 || hold_while_paused() { return 0; }
 
 # SCAN_DIRS ("$@" below): where the pass looks. The whole library by default. With LIBRARY_SWEEP off, only the show folders that
 # have a run request (pending, running, or done within the 7-day prune window), so nothing spends repair tokens unqueued.
@@ -172,6 +173,12 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 	# subshell, so `break`, not `exit`: the census and the COMPLETE/DONE lines below still run.
 	if stop_requested; then
 		echo "merge_pass: soft stop, not starting $stem"
+		break
+	fi
+	# Pause boundary between stems: the stem in flight finished, no new one starts until Start.
+	# A soft stop that arrives while holding breaks this pipe subshell exactly like the check above.
+	if ! hold_while_paused; then
+		echo "merge_pass: soft stop while paused, not starting $stem"
 		break
 	fi
 	[ -f "$stem.dubtitles.fail" ] && continue # generate crashed on it -> skip

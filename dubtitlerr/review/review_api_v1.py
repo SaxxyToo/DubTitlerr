@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote
 
-from dubtitlerr.core import common
+from dubtitlerr.core import common, processing_state
 from dubtitlerr.review import review_auth, review_requests
 from dubtitlerr.settings import settings_api, settings_notifications, settings_store
 
@@ -42,7 +42,7 @@ MAX_HISTORY_LIMIT = 200
 # library larger than this reports truncated=true rather than silently narrowing the answer.
 MAX_HISTORY_EPISODES = 5000
 
-COMMANDS = ("run.request", "system.restart", "notification.test")
+COMMANDS = ("run.request", "system.restart", "system.start", "system.pause", "system.stop", "notification.test")
 
 ROLE_ENTRIES = {
     ("GET", API_PREFIX + "/system/status"): "user",
@@ -246,6 +246,7 @@ def handle_system_status(snapshot=None, health=None, now=None):
             "order_file_present": (heartbeat or {}).get("order_file_present"),
         },
         "queue": counts,
+        "processing": processing_state.describe(),
         "library": {
             "episodes_cached": None if stems is None else len(stems),
             "cache_age_s": cache_age,
@@ -377,7 +378,7 @@ def _command_refusal(name, status, error, **extra):
 
 
 def handle_command(body, who="admin", environ=None, anime_root=None):
-    """arr-style ``{"name": ..., "params": {...}}``. Only the three v1 commands exist."""
+    """arr-style ``{"name": ..., "params": {...}}``. Only the commands in COMMANDS exist."""
     if not isinstance(body, dict):
         return 400, {"error": 'send {"name": ..., "params": {...}}', "commands": list(COMMANDS)}
     extra = sorted(set(body) - {"name", "params"})
@@ -406,6 +407,13 @@ def handle_command(body, who="admin", environ=None, anime_root=None):
 
     if name == "system.restart":
         status, result = settings_api.request_restart(environ, who)
+        if status >= 400:
+            return status, {"name": name, "ok": False, "error": str(result.get("error") or ""), "result": result}
+        return status, {"name": name, "ok": True, "result": result}
+
+    if name in ("system.start", "system.pause", "system.stop"):
+        status, result = settings_api.request_processing(name.rsplit(".", 1)[-1], environ, who)
+        common.log(f"review server: api v1 command {name} by {who}: {status}")
         if status >= 400:
             return status, {"name": name, "ok": False, "error": str(result.get("error") or ""), "result": result}
         return status, {"name": name, "ok": True, "result": result}

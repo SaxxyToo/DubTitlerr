@@ -25,8 +25,10 @@
   } from '../lib/settingsModel.js';
   import ConnectionsPanel from './settings/ConnectionsPanel.svelte';
   import NotificationsPanel from './settings/NotificationsPanel.svelte';
+  import ProcessingPanel from './settings/ProcessingPanel.svelte';
   import RestartDialog from './settings/RestartDialog.svelte';
   import RestartOverlay from './settings/RestartOverlay.svelte';
+  import { processingActionPath } from '../lib/processing.js';
   import { isAdmin } from '../lib/roles.js';
   import SettingRow from './settings/SettingRow.svelte';
   import Security from './Security.svelte';
@@ -71,12 +73,14 @@
   let restartKeys = $state<string[]>([]);
   let overlay = $state<{ step: 'waiting' | 'timeout'; detail: string } | null>(null);
   let watcher: ReturnType<typeof setInterval> | undefined;
+  let processingBusy = $state(false);
   const storage = () => (typeof localStorage === 'undefined' ? undefined : localStorage);
   let showAdvanced = $state(loadShowAdvanced(storage()));
 
   const entries = $derived<any[]>(schema?.settings ?? []);
   const restartLabels = $derived(restartKeys.map((k) => entries.find((e) => e.key === k)?.label ?? k));
   const values = $derived<Record<string, any>>(loaded?.values ?? {});
+  const processing = $derived<any>(loaded?.processing ?? null);
   const secretsWritable = $derived(Boolean(loaded?.secrets_writable));
   // Only an admin edits, saves, resets or restarts; every other role sees the same page read-only.
   const canEdit = $derived(isAdmin(role));
@@ -229,6 +233,32 @@
     }
   }
 
+  /** Start, pause or stop processing. Stop ends the container after the unit in flight drains. */
+  async function setProcessing(action: 'start' | 'pause' | 'stop') {
+    if (action === 'stop' && !window.confirm('Stop after the current unit finishes? The container will end.'))
+      return;
+    processingBusy = true;
+    saveError = '';
+    saveMessage = '';
+    try {
+      await api(processingActionPath(action), { method: 'POST', body: {} });
+      saveMessage =
+        action === 'stop'
+          ? 'Stopping after the current unit finishes. The UI returns when the container restarts.'
+          : action === 'start'
+            ? 'Start requested: the loops resume at their next boundary.'
+            : 'Pause requested: each loop holds after the unit in flight.';
+      await load();
+    } catch (exc) {
+      saveError =
+        exc instanceof ApiError
+          ? describeSaveError(exc.status, exc.payload as { error?: unknown })
+          : 'Could not change the processing state.';
+    } finally {
+      processingBusy = false;
+    }
+  }
+
   function watchRestart(oldBootId: string) {
     const startedAt = Date.now();
     stopWatching();
@@ -285,6 +315,15 @@
     </div>
   </header>
   {#if meta}<p class="page-sub">{summaries[meta.id] ?? ''}</p>{/if}
+
+  {#if category === 'general' && loaded}
+    <ProcessingPanel
+      {processing}
+      {canEdit}
+      busy={processingBusy}
+      onaction={(action) => void setProcessing(action)}
+    />
+  {/if}
 
   {#if loadError}<p class="notice failure" role="alert">{loadError}</p>{/if}
   {#if statusMsg}<p class="visually-hidden" role="status">{statusMsg}</p>{/if}
