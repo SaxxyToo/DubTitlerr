@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openSignedIn, reset, scanAccessibility } from './helpers';
+import { openSignedIn, reset, scanAccessibility, showLineTools } from './helpers';
 
 // R5: the reviewer has to be able to tell a dub-caption anchor (the dub's own words, a
 // near-certain repair) from a translation anchor (a judgement call) from no anchor at all.
@@ -16,6 +16,7 @@ test('the queue labels what each repair was anchored on and filters by it', asyn
   await page.getByLabel('Search episodes').fill('Neon Harbor');
   await page.getByRole('button', { name: /Neon Harbor.*S01E01/ }).click();
   await expect(page.getByTestId('evidence')).toBeVisible();
+  await showLineTools(page, testInfo.project.name);
 
   const lines = page.getByLabel('Search review lines');
   const anchors = page.getByLabel('Filter by reference anchor');
@@ -66,7 +67,9 @@ test('the queue labels what each repair was anchored on and filters by it', asyn
   await expect(page.getByTestId('evidence')).toContainText(/Line \d+ of 4/);
 
   // A card with no reference at all. S02E04 holds only a refused entry, so the inbox hides it
-  // until the include-refused toggle is on.
+  // until the include-refused toggle is on. On a phone the inbox is a separate screen.
+  if (testInfo.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Episodes', exact: true }).click();
   await page.getByRole('checkbox', { name: /Include episodes where every repair was turned down/ }).check();
   await page.getByLabel('Search episodes').fill('Paper Moon');
   await page.getByRole('button', { name: /Paper Moon.*S02E04/ }).click();

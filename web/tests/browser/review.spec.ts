@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { scanAccessibility, signOut } from './helpers';
+import { scanAccessibility, showLineTools, signOut } from './helpers';
 
 test('human review workspace keeps real workflow semantics', async ({ page, request }, testInfo) => {
   // One long journey: three axe scans, audio extraction and a full-page screenshot take 20-26 s on a quiet
@@ -33,6 +33,7 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
   await page.getByLabel('Search episodes').fill('Neon Harbor');
   await page.getByRole('button', { name: /Neon Harbor.*S01E01/ }).click();
   await expect(page.getByTestId('evidence')).toBeVisible();
+  await showLineTools(page, testInfo.project.name);
   await page.getByLabel('Search review lines').fill('factory');
   await expect(page.locator('del')).toContainText('factory');
   await expect(page.locator('ins')).toContainText('needle');
@@ -66,7 +67,7 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
   await expect(page.getByRole('status')).toContainText('media was not rewritten');
   await page.getByLabel('Search review lines').fill('');
   // Keyboard review must work, and must not fire while typing.
-  await page.locator('h1').click();
+  await page.locator('.review-title h2').click();
   await page.keyboard.press('r');
   // A staged verdict advances to the next line that has no choice yet.
   await expect(page.getByRole('button', { name: 'Review line 1, staged', exact: true })).toBeVisible();
@@ -136,7 +137,10 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
   await expect(page.getByRole('status')).toContainText('1 choice saved');
   await nav(/Review inbox/);
   // The last remaining episode question was settled in Shared lines; the inbox must re-fetch it.
-  await expect(page.getByRole('heading', { name: 'This queue is clear.' })).toBeVisible();
+  // On a phone the inbox is its own screen, so the editor's empty state is rendered but hidden.
+  if (testInfo.project.name === 'mobile')
+    await expect(page.locator('.review-panel')).toContainText('This queue is clear.');
+  else await expect(page.getByRole('heading', { name: 'This queue is clear.' })).toBeVisible();
   await page.getByLabel('Search episodes').fill('Paper Moon');
   await page.getByRole('button', { name: /Paper Moon.*S02E03/ }).click();
   await page.getByLabel('Search review lines').fill('script');
