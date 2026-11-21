@@ -288,4 +288,59 @@ def test_the_nightly_sweep_runs_the_audit():
     text = open(os.path.join(root, "gen_loop.sh"), encoding="utf-8").read()
     assert "#### GLOSSARY AUDIT" in text
     assert "dubtitlerr.glossary.glossary_audit" in text
+    assert 'glossary_audit "$_ps_gloss" --fix' in text, "the sweep ACTS (P24), it does not just report"
     assert text.index("#### VERIFY") < text.index("#### GLOSSARY AUDIT")
+
+
+# ---- acting mode (P24): the sweep removes what the audit reported -------------
+
+
+def test_fix_removes_the_reported_junk_and_protects_real_names(tmp_path):
+    path = write_gloss(tmp_path)
+    rep = ga.fix(str(path), TITLES)
+
+    assert rep["cleanup"]["removed"] >= 1, rep
+    doc = json.loads(path.read_text())
+    names = set(doc["names"])
+    moved = {j["name"] for j in rep["junk"]}
+    assert {"Continental", "Association", "Magic", "Northern", "Imperial", "Kills"} <= moved
+    assert not (moved & names), "every reported junk name is gone"
+    assert {"Frieren", "Fern", "Stark", "Sein", "Aureole", "Hero", "Land", "Monk", "Sense"} <= names
+    assert {"mana", "mage", "demon"} <= names, "lowercase prompt vocabulary is not a harvested name"
+
+    log = json.loads(open(rep["cleanup"]["log"]).read())
+    run = log["runs"][-1]
+    assert run["removed_count"] == rep["cleanup"]["removed"]
+    assert run["names_before"] - run["names_after"] == run["removed_count"]
+    assert {e["name"] for e in run["removed"]} == moved
+
+
+def test_a_second_sweep_finds_nothing_and_does_not_grow_the_log(tmp_path):
+    path = write_gloss(tmp_path)
+    first = ga.fix(str(path), TITLES)
+    second = ga.fix(str(path), TITLES)
+    assert second["cleanup"]["removed"] == 0
+    assert second["junk_count"] == 0 and not second.get("unevaluated")
+    assert len(json.loads(open(first["cleanup"]["log"]).read())["runs"]) == 1
+
+
+def test_fix_without_wiki_titles_removes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(gv, "CACHE_DIR", str(tmp_path / "no-cache"))
+    path = write_gloss(tmp_path)
+    before = path.read_bytes()
+    rep = ga.fix(str(path))
+    assert rep["cleanup"] == {"removed": 0, "log": None}
+    assert rep["unevaluated"], "entries are reported, never guessed away"
+    assert path.read_bytes() == before
+    assert not os.path.exists(ga.cleanup_path(str(path)))
+
+
+def test_cli_fix_writes_and_exits_0(tmp_path, monkeypatch, capsys):
+    titles = tmp_path / "titles.json"
+    titles.write_text(json.dumps(TITLES))
+    path = write_gloss(tmp_path)
+    code = run_cli(monkeypatch, [str(path), "--titles", str(titles), "--fix"])
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["cleanup"]["removed"] >= 1
+    assert "Continental" not in json.loads(path.read_text())["names"]
