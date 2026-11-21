@@ -1150,3 +1150,81 @@ def test_the_correction_lane_never_rewrites_a_lyric(tmp_path, monkeypatch):
     assert "Furikaereba itsumo." in bodies, "the lyric keeps the release's own words"
     assert "Frieren itsumo." not in bodies
     assert [c["index"] for c in result["corrections"]] == [PAD]
+
+
+# --- P26: a collapse artifact whose first repetition is too short to read --------------
+#
+# `hallucination.collapse_runs` folds a run of >= 4 identical one-word cards into one card
+# (first start, last end). When the word is a short exclamation the card spans the whole
+# run -- 8.35 s for 86 S01E22's "Princess!", 14.55 s for Berserk S01E06's "Griffith!" --
+# and the first repetition alone is 0.0 s / 0.52 s, under reflow.MIN_DUR. The trim-to-
+# first-utterance path then gave up and both episodes parked. The two fixtures are the
+# live artifacts' own header and Dialogue lines over the fault's time window, with the
+# real word stream for that window (verbatim; only the window is cut).
+
+
+def test_the_live_86_s01e22_princess_card_is_ended_at_its_repeated_run(tmp_path):
+    """#15: `Princess!` displayed 8.35 s; the ASR says it six times, first word 0.0 s."""
+    stem = _live_episode(tmp_path, "e86_s01e22_princess.dubtitles.ass", words="e86_s01e22_princess_words.json")
+    before_words = words_of(stem)
+    assert gate_fails(stem) == ["1 card(s) over 7.5s (max 8.3s)"], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["trim-end"]
+    fix = result["fixes"][0]
+    assert (round(fix["before"]["start"], 2), round(fix["before"]["dur"], 2)) == (90.5, 8.35)
+    # the contiguous run ends at 94.22 (the next repetition is 1.36 s later), plus LINGER
+    assert round(fix["after"][0]["end"], 2) == 94.52, fix
+    assert fix["after"][0]["dur"] <= publish_gate.MAX_DUR
+    assert gate_fails(stem) == []
+    assert words_of(stem) == before_words, "a trim may not change a word"
+    assert "Princess!" in [t for _, _, t in publish_gate.load_cues(stem)[1]]
+
+
+def test_the_live_berserk_s01e06_griffith_card_is_ended_at_its_repeated_run(tmp_path):
+    """#241: `Griffith!` displayed 14.55 s; the last shout 10 s later stays outside."""
+    stem = _live_episode(tmp_path, "berserk_s01e06_griffith.dubtitles.ass", words="berserk_s01e06_griffith_words.json")
+    before_words = words_of(stem)
+    assert gate_fails(stem) == ["1 card(s) over 7.5s (max 14.5s)"], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["trim-end"]
+    fix = result["fixes"][0]
+    assert (round(fix["before"]["start"], 2), round(fix["before"]["dur"], 2)) == (1270.81, 14.55)
+    # the three contiguous shouts end at 1274.85, plus LINGER; the 1284.53 one is a
+    # separate utterance and must not drag the card back over the budget
+    assert round(fix["after"][0]["end"], 2) == 1275.15, fix
+    assert gate_fails(stem) == []
+    assert words_of(stem) == before_words
+
+
+def test_a_short_first_utterance_with_no_repeat_still_parks(tmp_path):
+    """No repetition to fall back to: the trim cannot make a readable card, so it parks."""
+    words = [{"text": " Yes.", "start": 100.0, "end": 100.2, "prob": 0.9}]
+    cues = padded(100.0, 108.0, "Yes.")
+    stem = write_episode(tmp_path, cues, words=words)
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert "single unbroken token" in result["summary"], result["summary"]
+    assert read(stem + ".eng.dubtitles.ass") == before
+
+
+def test_a_repeated_run_longer_than_the_budget_is_clamped_to_it(tmp_path):
+    """Ten contiguous shouts span 10 s; the card ends inside 7.5 s, still displayable."""
+    words = [{"text": " No!", "start": 100.0 + i, "end": 101.0 + i, "prob": 0.9} for i in range(10)]
+    cues = padded(100.0, 112.0, "No!")
+    stem = write_episode(tmp_path, cues, words=words)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["trim-end"]
+    assert gate_fails(stem) == []
+    assert result["fixes"][0]["after"][0]["dur"] <= publish_gate.MAX_DUR

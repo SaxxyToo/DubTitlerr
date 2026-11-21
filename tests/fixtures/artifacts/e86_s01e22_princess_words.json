@@ -1,0 +1,307 @@
+{
+ "schema_version": 3,
+ "transcribe_version": 4,
+ "backend": "endpoint",
+ "model": "whisper-large-v3-subs",
+ "initial_prompt": "This is 86 Eighty Six [tvdbid-378609], a Japanese anime (English dub). Spell names correctly: Legion, Shin, Republic, Major, Handler, Lieutenant, Undertaker, Nouzen, Federacy, Shinei, Kiri, Roger, Morpho, Lena, Daiya, Frederica, Reaper, Anju, Fido, Miliz, Processors, Spearhead, Kurena, Squadron, Nordlicht, Alchemilla, Raiden, Sector, Theo, Kaie.",
+ "audio_duration": 1420.06275,
+ "segments": [
+  {
+   "start": 83.02,
+   "end": 85.24,
+   "no_speech_prob": 1.430778127087251e-07
+  },
+  {
+   "start": 85.24,
+   "end": 87.46000000000001,
+   "no_speech_prob": 1.430778127087251e-07
+  },
+  {
+   "start": 90.5,
+   "end": 94.22,
+   "no_speech_prob": 2.2627427824772894e-06
+  },
+  {
+   "start": 95.52,
+   "end": 98.44,
+   "no_speech_prob": 2.2627427824772894e-06
+  },
+  {
+   "start": 99.8,
+   "end": 100.34,
+   "no_speech_prob": 2.2627427824772894e-06
+  },
+  {
+   "start": 102.04,
+   "end": 104.24000000000001,
+   "no_speech_prob": 2.2627427824772894e-06
+  },
+  {
+   "start": 106.0,
+   "end": 107.5,
+   "no_speech_prob": 2.2627427824772894e-06
+  },
+  {
+   "start": 108.14,
+   "end": 109.84,
+   "no_speech_prob": 2.2627427824772894e-06
+  },
+  {
+   "start": 118.48,
+   "end": 121.48,
+   "no_speech_prob": 4.0473716467204213e-07
+  }
+ ],
+ "words": [
+  {
+   "text": " kibou",
+   "start": 83.8,
+   "end": 84.45,
+   "prob": 0.5909184217453003,
+   "seg": 7
+  },
+  {
+   "text": "odotte.",
+   "start": 84.45,
+   "end": 85.24,
+   "prob": 0.23691384494304657,
+   "seg": 7
+  },
+  {
+   "text": " Yomeru",
+   "start": 85.3,
+   "end": 85.97,
+   "prob": 0.5054836869239807,
+   "seg": 8
+  },
+  {
+   "text": " kigashi",
+   "start": 85.97,
+   "end": 86.82000000000001,
+   "prob": 0.5706115365028381,
+   "seg": 8
+  },
+  {
+   "text": "tondo.",
+   "start": 86.82000000000001,
+   "end": 87.46000000000001,
+   "prob": 0.7454025745391846,
+   "seg": 8
+  },
+  {
+   "text": " Princess!",
+   "start": 90.5,
+   "end": 90.5,
+   "prob": 0.708467423915863,
+   "seg": 9
+  },
+  {
+   "text": " Princess!",
+   "start": 90.5,
+   "end": 90.82000000000001,
+   "prob": 0.9187111258506775,
+   "seg": 9
+  },
+  {
+   "text": " Princess!",
+   "start": 91.07000000000001,
+   "end": 92.5,
+   "prob": 0.9700016379356384,
+   "seg": 9
+  },
+  {
+   "text": " Princess!",
+   "start": 92.5,
+   "end": 94.22,
+   "prob": 0.6725226640701294,
+   "seg": 9
+  },
+  {
+   "text": " Princess!",
+   "start": 95.58,
+   "end": 96.32000000000001,
+   "prob": 0.33133676648139954,
+   "seg": 10
+  },
+  {
+   "text": " Princess!",
+   "start": 96.32000000000001,
+   "end": 98.44,
+   "prob": 0.9970213770866394,
+   "seg": 10
+  },
+  {
+   "text": " Enough.",
+   "start": 99.8,
+   "end": 100.34,
+   "prob": 0.9965422749519348,
+   "seg": 11
+  },
+  {
+   "text": " You",
+   "start": 102.04,
+   "end": 102.04,
+   "prob": 0.7318822145462036,
+   "seg": 12
+  },
+  {
+   "text": " can't",
+   "start": 102.04,
+   "end": 102.04,
+   "prob": 0.9999790191650391,
+   "seg": 12
+  },
+  {
+   "text": " dwell",
+   "start": 102.04,
+   "end": 102.04,
+   "prob": 0.9450705647468567,
+   "seg": 12
+  },
+  {
+   "text": " on",
+   "start": 102.10000000000001,
+   "end": 102.14,
+   "prob": 0.8282846808433533,
+   "seg": 12
+  },
+  {
+   "text": " the",
+   "start": 102.5,
+   "end": 102.5,
+   "prob": 0.9998703002929688,
+   "seg": 12
+  },
+  {
+   "text": " dead",
+   "start": 102.61,
+   "end": 102.98,
+   "prob": 0.9997196793556213,
+   "seg": 12
+  },
+  {
+   "text": " anymore.",
+   "start": 102.98,
+   "end": 104.24000000000001,
+   "prob": 0.9999446868896484,
+   "seg": 12
+  },
+  {
+   "text": " It's",
+   "start": 106.0,
+   "end": 106.0,
+   "prob": 0.9999713897705078,
+   "seg": 13
+  },
+  {
+   "text": " pointless",
+   "start": 106.08,
+   "end": 106.24000000000001,
+   "prob": 0.9999065399169922,
+   "seg": 13
+  },
+  {
+   "text": " to",
+   "start": 106.55,
+   "end": 106.55,
+   "prob": 1.0,
+   "seg": 13
+  },
+  {
+   "text": " try.",
+   "start": 106.57000000000001,
+   "end": 107.5,
+   "prob": 0.9312726259231567,
+   "seg": 13
+  },
+  {
+   "text": " The",
+   "start": 108.14,
+   "end": 108.14,
+   "prob": 0.9385247826576233,
+   "seg": 14
+  },
+  {
+   "text": " living",
+   "start": 108.14,
+   "end": 108.14,
+   "prob": 0.999969482421875,
+   "seg": 14
+  },
+  {
+   "text": " can",
+   "start": 108.2,
+   "end": 108.26,
+   "prob": 0.8367992043495178,
+   "seg": 14
+  },
+  {
+   "text": " never",
+   "start": 108.26,
+   "end": 108.58,
+   "prob": 0.9999923706054688,
+   "seg": 14
+  },
+  {
+   "text": " interact",
+   "start": 108.71000000000001,
+   "end": 109.09,
+   "prob": 0.9999847412109375,
+   "seg": 14
+  },
+  {
+   "text": " with",
+   "start": 109.09,
+   "end": 109.35000000000001,
+   "prob": 1.0,
+   "seg": 14
+  },
+  {
+   "text": " them.",
+   "start": 109.35000000000001,
+   "end": 109.84,
+   "prob": 0.9999732971191406,
+   "seg": 14
+  },
+  {
+   "text": " Nothing",
+   "start": 119.05,
+   "end": 119.08,
+   "prob": 0.9315888285636902,
+   "seg": 15
+  },
+  {
+   "text": " good",
+   "start": 119.08,
+   "end": 119.42,
+   "prob": 0.9988400340080261,
+   "seg": 15
+  },
+  {
+   "text": " comes",
+   "start": 119.42,
+   "end": 119.86,
+   "prob": 0.9956663846969604,
+   "seg": 15
+  },
+  {
+   "text": " of",
+   "start": 119.86,
+   "end": 119.95,
+   "prob": 0.6409626007080078,
+   "seg": 15
+  },
+  {
+   "text": " them",
+   "start": 119.95,
+   "end": 120.14,
+   "prob": 0.9977994561195374,
+   "seg": 15
+  }
+ ],
+ "fixture_source": "86 Eighty Six (2021) - S01E22 - 022 - Shin [Bluray-1080p][FLAC 2.0][JA+EN][x265 10bit]-sam.eng.dubtitles.ass",
+ "fixture_window": [
+  84.0,
+  120.0
+ ]
+}
