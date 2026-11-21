@@ -290,9 +290,10 @@ not touched at all. `GATE_FIX=0` disables just the attempt.
 A line the ASR emitted as one run of a single letter — a real 57-character `'A' + 'H'×56`
 scream, a long laugh — has no word boundary to wrap or split at, so it gets a **line break**
 (`\N` in `.ass`, a newline in `.srt`) instead, at an even split inside the 46-character budget.
-A couple of stray characters in the token (the scream's leading `A`, two closing letters) do not
-disqualify it: the break inserts layout only. That is pure layout: strip the breaks and the card's
-text is byte-identical, and its timing does not move. The audit records it as
+A couple of stray **letters** in the token (the scream's leading `A`, two closing letters) do not
+disqualify it, and neither does punctuation: Berserk S01E16 ships `'A' + 'H'×57 + '!'` and its
+exclamation mark rides on the run rather than competing with it. That is pure layout: strip the
+breaks and the card's text is byte-identical, and its timing does not move. The audit records it as
 `action: "wrap-run"`. The break cannot rescue a card whose **total** is over 88 characters (a
 446-character run is over even wrapped), and a token that *alternates* rather than repeats
 (`Kekekekeke…`, whose minority is half the token) is not a run — both of those refusals stand.
