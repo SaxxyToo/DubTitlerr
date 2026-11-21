@@ -618,7 +618,7 @@ See [Glossary file](#glossary-file) for the stored keys.
 | `ARC_TAGS_TIMEOUT`  | `600`                       | Seconds one `--tag-arcs` run may take                                                                                                                                                                                                                               |
 | `ARC_MIN_TITLES`    | `10`                        | An arc with fewer wiki titles counts as missing. The smallest real One Piece arc has 38                                                                                                                                                                             |
 | `VERIFY_ARC_GATE`   | _(off)_                     | `1` flags a would-be write whose title is on no arc page (`not-in-arc-pages`). It does nothing, and says so once, unless every arc of the show has stored titles with finished redirects. On the audit set it blocked 45 of 119 wrong writes and 8 of 42 right ones |
-| `WIKI_HOST_ALLOW`   | _(unset)_                   | Comma-separated extra hosts `wiki_scope` may fetch. Built in: `fandom.com` and `bulbapedia.bulbagarden.net`                                                                                                                                                         |
+| `WIKI_HOST_ALLOW`   | _(unset)_                   | Legacy, no longer consulted: `wiki_scope` accepts any public https host whose URL ends in `api.php` (P22). Kept so an existing config still validates                                                                                                               |
 | `WIKI_ALLOW_HTTP`   | _(unset)_                   | `1` lets `glossary_verify` fetch an `http://` wiki, for tests. `wiki_scope` is always https                                                                                                                                                                         |
 
 Every wiki fetch is https-only. A redirect to another scheme is refused before the request is made.
@@ -697,6 +697,7 @@ replacement — once Plex, WatchState or Jellyfin is configured, that source own
 | `RESCAN_INTERVAL`                          | `21600`                | Idle seconds after a full generate sweep                                                                                                                 |
 | `ACQUIRE_TIMEOUT`                          | `1800`                 | Seconds                                                                                                                                                  |
 | `VERIFY_TIMEOUT`                           | `1200`                 | Seconds                                                                                                                                                  |
+| `AUDIT_TIMEOUT`                            | `300`                  | Seconds the per-show names-hygiene audit may take (read-only; a timeout just logs)                                                                       |
 | `LLM_TIMEOUT_CONNECT` / `LLM_TIMEOUT_READ` | `10` / `120`           | Seconds                                                                                                                                                  |
 
 ---
@@ -890,6 +891,28 @@ their names for the season and episode scopes.
 A whole-wiki scope tags no names and is left out of the arc gate's universe, because it contains
 every page verify could propose. Do not rely on a wiki's `Category:Characters`: Chainsmoker Cat's
 has one member of 33. The full key list is in the docstring of `wiki_scope.py`.
+
+The `wiki` URL is not Fandom-only: any public https MediaWiki `api.php` works, Wikipedia included
+(`https://en.wikipedia.org/w/api.php`). Automatic probing still suggests `*.fandom.com` candidates
+only; a plain MediaWiki is an explicit per-show choice. A URL that is not an `api.php` endpoint, a
+non-https URL, or an internal/link-local host is refused before any request.
+
+### Names-hygiene audit
+
+`glossary_audit` cross-references a glossary's `names` against its own `flagged` map and the wiki
+cache, and **reports** entries that are junk-classified yet still listed as names: a flag reason
+(`english-word`, `sentence-initial-only`, `common-word`, `no-match`, `no-wiki-match`, `below-floor`)
+or a capitalised ordinary English word with no exact wiki page. An exact wiki title protects a name
+however ordinary it looks (`Fern`, `Hero`, `Land`), and a lowercase entry (`mana`, `mage`) is treated
+as curated prompt vocabulary, never junk. It never writes: cleaning a legacy file is a human
+decision. It runs in the nightly sweep right after VERIFY, and by hand:
+
+```sh
+python3 -m dubtitlerr.glossary.glossary_audit "/config/glossaries/<Show>.json"
+```
+
+Exit `0` = clean, `1` = junk reported (nothing changed), `2` = the glossary could not be read.
+Without a cached wiki index the entries are listed as `unevaluated` rather than guessed.
 
 `glossary_verify` can be run by hand:
 

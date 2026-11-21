@@ -39,33 +39,57 @@ def cfg(**extra):
     return {"rung": "arc_index", "wiki": WIKI, "index_page": "Plot of Naruto", **extra}
 
 
-# ---- host allowlist: dot-anchored suffix --------------------------- ----
+# ---- host + endpoint safety (generic MediaWiki since P22) --------------------------- ----
 
 
 @pytest.mark.parametrize(
     "wiki",
     [
-        "https://evilfandom.com/api.php",
-        "https://fandom.com.evil.com/api.php",
-        "https://xbulbapedia.bulbagarden.net/w/api.php",
-        "https://bulbapedia.bulbagarden.net.evil.com/w/api.php",
+        "https://127.0.0.1/w/api.php",
+        "https://localhost/w/api.php",
+        "https://169.254.169.254/latest/api.php",
+        "https://[::1]/w/api.php",
+        "https://user:pw@en.wikipedia.org/w/api.php",
         "http://naruto.fandom.com/api.php",
+        "https://en.wikipedia.org/wiki/Frieren",  # a wiki PAGE url: not an api endpoint
+        "https://en.wikipedia.org",  # no api path at all
     ],
 )
-def test_a_lookalike_or_plain_http_host_is_rejected_before_any_request(wiki):
+def test_an_internal_or_non_api_url_is_rejected_before_any_request(wiki):
     def boom(url):
         raise AssertionError("no request may be made")
 
     res = wiki_scope.resolve_scope({"rung": "whole_wiki", "wiki": wiki}, http=boom)
-    assert res.complete is False and res.titles == set() and ("disallowed" in res.notes[0] or "https" in res.notes[0])
+    assert res.complete is False and res.titles == set()
+    assert "disallowed" in res.notes[0] or "https" in res.notes[0] or "api.php" in res.notes[0]
 
 
 @pytest.mark.parametrize(
-    "wiki", ["https://naruto.fandom.com/api.php", "https://fandom.com/api.php", "https://bulbapedia.bulbagarden.net/w/api.php"]
+    "wiki",
+    [
+        "https://naruto.fandom.com/api.php",
+        "https://fandom.com/api.php",
+        "https://bulbapedia.bulbagarden.net/w/api.php",
+        # generic MediaWiki: any public https host serving api.php is a valid spelling universe
+        "https://en.wikipedia.org/w/api.php",
+        "https://wiki.example.org/api.php",
+    ],
 )
-def test_the_real_hosts_are_accepted(wiki):
+def test_any_https_mediawiki_api_is_accepted(wiki):
     ok, _ = wiki_scope._validate_wiki_url(wiki)
     assert ok
+
+
+def test_a_generic_wiki_scope_fetches_its_own_api_path():
+    seen = []
+
+    def http(url):
+        seen.append(url)
+        return {"query": {"allpages": [{"title": "Pikachu"}]}}
+
+    res = wiki_scope.resolve_scope({"rung": "whole_wiki", "wiki": "https://en.wikipedia.org/w/api.php"}, http=http)
+    assert res.complete and "Pikachu" in res.titles
+    assert seen and all(u.startswith("https://en.wikipedia.org/w/api.php?") for u in seen)
 
 
 def test_the_season_rung_redirect_failure_makes_the_result_incomplete():
@@ -189,7 +213,7 @@ def test_the_documented_examples_are_valid_configs():
     doc = wiki_scope.__doc__
     block = doc.split("Examples (documentation only")[1].split("Library layout")[0]
     examples = re.findall(r"(\{.*?\})(?=\n\s*\n|\n    [A-Z]|\Z)", re.sub(r"\n\s{20,}", " ", block), re.S)
-    assert len(examples) == 5
+    assert len(examples) == 6
     for ex in examples:
         cfg_ = json.loads(ex)
         assert cfg_["rung"] in ("arc_index", "season_page", "whole_wiki")
