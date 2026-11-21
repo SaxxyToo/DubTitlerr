@@ -1,0 +1,17 @@
+[Script Info]
+; The three Frieren S01E27 dialogue lines the glossary's exact-token fix missed,
+; copied byte-for-byte from the live sidecar
+; "... S01E27 - 027 - An Era of Humans ... -PMR.eng.dubtitles.ass" on omarchy
+; (2026-11-20, library campaign). Every survivor is a possessive: the apostrophe
+; sits INTERNAL to the token, so the exact-token hard_fix never matched.
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Dubtitles,Arial,62,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2.5,0,2,10,10,24,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:08:38.68,0:08:41.46,Dubtitles,,0,0,0,,Look who it is. Freeran's kid.
+Dialogue: 0,0:12:01.61,0:12:03.91,Dubtitles,,0,0,0,,The fault here is all Freeran's.
+Dialogue: 0,0:22:15.91,0:22:20.55,Dubtitles,,0,0,0,,Like I said, Zeria's intuition\Nis always right, after all.

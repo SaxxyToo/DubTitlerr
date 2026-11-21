@@ -1,8 +1,10 @@
 """Unit tests for glossary.py (C1). Pure functions; wordlist from the bundled fallback."""
 
 import json
+import os
 
 from dubtitlerr.glossary import glossary
+from dubtitlerr.pipeline import publish_gate
 
 
 def gloss(names=None, phrases=None, hard_fixes=None, prompt="", show="Test"):
@@ -399,3 +401,135 @@ def test_tag_names_by_arc_ignores_an_empty_title_set():
     glossary.tag_names_by_arc(g, "Dressrosa", {"Donquixote Doflamingo"})
     glossary.tag_names_by_arc(g, "Gaimon", set())
     assert g["arc_tags"]["doflamingo"] == ["Dressrosa"]
+
+
+# --- possessive hard_fix forms (P18: Frieren S01E27) --------------------------
+#
+# Frieren S01E27 shipped three uncorrected tokens while the same run corrected 16x
+# "Frieren" and 4x "Serie": "Freeran's" and "Zeria's". Both mishears are curated in
+# hard_fixes, but the apostrophe is INTERNAL to the token -- neither leading nor
+# trailing punctuation -- so the exact-token key ("freeran") never matched it.
+#
+# The fix is deliberately narrow: ONLY the four possessive suffixes are recognised,
+# and the suffix is carried into the replacement byte-for-byte. No stemming, no
+# plural without an apostrophe ("Freerans"), no partial-token rewrites.
+
+FRIEREN_FIXES = {"Freeran": "Frieren", "Zeria": "Serie"}
+FIXTURE_ASS = os.path.join(os.path.dirname(__file__), "fixtures", "frieren_s01e27_possessives.ass")
+
+
+def test_possessive_singular_straight_apostrophe():
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+    assert glossary.correct("Look who it is. Freeran's kid.", g) == ("Look who it is. Frieren's kid.", 1)
+
+
+def test_possessive_singular_curly_apostrophe_preserved_byte_for_byte():
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+    out, n = glossary.correct("The fault here is all Freeran\u2019s.", g)
+    assert out == "The fault here is all Frieren\u2019s."
+    assert "\u2019" in out and "'" not in out
+    assert n == 1
+
+
+def test_possessive_plural_straight_apostrophe():
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+    assert glossary.correct("Freerans' house", g) == ("Frierens' house", 1)
+
+
+def test_possessive_plural_curly_apostrophe_preserved_byte_for_byte():
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+    out, n = glossary.correct("Freerans\u2019 house", g)
+    assert out == "Frierens\u2019 house"
+    assert n == 1
+
+
+def test_possessive_match_is_case_insensitive_and_keeps_the_suffix():
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+    assert glossary.correct("freeran's kid", g) == ("Frieren's kid", 1)
+    assert glossary.correct("FREERAN's kid", g) == ("Frieren's kid", 1)
+    assert glossary.correct("Zeria's intuition", g) == ("Serie's intuition", 1)
+
+
+def test_possessive_keeps_surrounding_punctuation_and_quotes():
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+    assert glossary.correct('"Freeran\'s."', g) == ('"Frieren\'s."', 1)
+    assert glossary.correct("(Freeran's)", g) == ("(Frieren's)", 1)
+
+
+def test_possessive_never_fires_without_a_possessive_suffix():
+    """The guards: a longer token that merely STARTS with the mishear, and the bare
+    plural with no apostrophe, must both be left alone."""
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+    for line in ["Freeranx", "Freerans", "Freeranarchy"]:
+        assert glossary.correct(line, g) == (line, 0)
+
+
+def test_possessive_leaves_an_already_correct_name_alone():
+    g = gloss(hard_fixes=FRIEREN_FIXES, names=["Frieren", "Serie"])
+    for line in ["Frieren's kid.", "Frieren\u2019s intuition", "Serie's exam"]:
+        assert glossary.correct(line, g) == (line, 0)
+
+
+def test_possessive_still_applies_the_plain_exact_token_fix():
+    """Unchanged behaviour: the bare token, with or without surrounding punctuation."""
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+    assert glossary.correct("Said Freeran quietly", g) == ("Said Frieren quietly", 1)
+    assert glossary.correct("Frieren? No, Freeran.", g) == ("Frieren? No, Frieren.", 1)
+    assert glossary.correct("It is Freeran", g) == ("It is Frieren", 1)
+
+
+def test_phrase_fix_word_boundary_already_covers_possessives():
+    """The card asked whether phrase_fixes has the same gap. It does not: the trailing
+    \\b sits between the phrase's final letter and the apostrophe, so the possessive
+    tail is simply carried through."""
+    g = gloss(hard_fixes={"graaf granat": "Graf Granat"})
+    assert glossary.correct("Graf Granat's men", g) == ("Graf Granat's men", 0)
+    assert glossary.correct("graaf granat's men", g) == ("Graf Granat's men", 1)
+    assert glossary.correct("graaf granat\u2019s men", g) == ("Graf Granat\u2019s men", 1)
+
+
+def _correct_body(body, g):
+    """Correct one cue body the way generate.py does: LINE by LINE, so a \\N break
+    survives (correct() joins its tokens with single spaces)."""
+    fixed, n = zip(*(glossary.correct(line, g) for line in body.split("\n")))
+    return "\n".join(fixed), sum(n)
+
+
+def test_e27_fixture_lines_all_get_corrected():
+    """The three live survivors, byte-for-byte from the shipped sidecar."""
+    text = open(FIXTURE_ASS, encoding="utf-8").read()
+    cues = publish_gate.parse_ass(text, style="Dubtitles")
+    assert [c[2] for c in cues] == [
+        "Look who it is. Freeran's kid.",
+        "The fault here is all Freeran's.",
+        "Like I said, Zeria's intuition\nis always right, after all.",
+    ]
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+    fixed = [_correct_body(body, g) for _, _, body in cues]
+    assert [f[0] for f in fixed] == [
+        "Look who it is. Frieren's kid.",
+        "The fault here is all Frieren's.",
+        "Like I said, Serie's intuition\nis always right, after all.",
+    ]
+    assert [f[1] for f in fixed] == [1, 1, 1]
+
+
+def test_e27_fixture_clears_the_gates_mishear_check(tmp_path):
+    """The gate is what caught and parked E27; after the fix its mishear test must be
+    silent. The uncorrected lines are checked first, so the assertion cannot pass on a
+    mishear list that never contained these words."""
+    gloss_path = tmp_path / "Frieren.json"
+    gloss_path.write_text(json.dumps({"show": "Frieren", "hard_fixes": FRIEREN_FIXES}))
+    mishears = publish_gate.glossary_mishears(str(gloss_path))
+    assert {"Freeran", "Zeria"} <= {w for w in mishears}, mishears
+
+    text = open(FIXTURE_ASS, encoding="utf-8").read()
+    cues = publish_gate.parse_ass(text, style="Dubtitles")
+    g = gloss(hard_fixes=FRIEREN_FIXES)
+
+    def gate_hits(cs):
+        return [f for f in publish_gate.evaluate(cs, mishears=mishears) if f.startswith("known mishear")]
+
+    assert gate_hits(cues), "the raw E27 lines must still trip the gate"
+    healed = [(a, b, _correct_body(body, g)[0]) for a, b, body in cues]
+    assert gate_hits(healed) == []
