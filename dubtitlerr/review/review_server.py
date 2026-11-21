@@ -873,8 +873,18 @@ class LoginThrottle:
     A success forgets the client and the username's counter.
     """
 
-    def __init__(self, clock=time.monotonic, sleeper=time.sleep, max_fail=5, window=300.0,
-                 lockout=60.0, cap=1024, user_cap=1024, pause=0.5, pause_cap=5.0):
+    def __init__(
+        self,
+        clock=time.monotonic,
+        sleeper=time.sleep,
+        max_fail=5,
+        window=300.0,
+        lockout=60.0,
+        cap=1024,
+        user_cap=1024,
+        pause=0.5,
+        pause_cap=5.0,
+    ):
         from collections import OrderedDict
 
         self.clock, self.max_fail, self.window, self.lockout = clock, max_fail, window, lockout
@@ -923,7 +933,7 @@ class LoginThrottle:
             if rec is None or self.clock() - rec["first"] > self.window:
                 return 0.0
             extra = rec["fails"] - self.max_fail
-            return min(self.pause_cap, self.pause * 2 ** extra) if extra >= 0 else 0.0
+            return min(self.pause_cap, self.pause * 2**extra) if extra >= 0 else 0.0
 
     def user_failure(self, key: str) -> None:
         with self._lock:
