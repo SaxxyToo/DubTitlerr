@@ -58,7 +58,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-from dubtitlerr.core import common, decisions, unresolved
+from dubtitlerr.core import common, decisions, media_select, unresolved
 from dubtitlerr.core.common import log
 from dubtitlerr.core.decisions import show_for
 from dubtitlerr.review import (
@@ -1024,26 +1024,13 @@ def preview_audio(body: dict) -> tuple:
     if not _AUDIO_SLOTS.acquire(blocking=False):
         return 429, {"error": "audio preview busy; try again shortly"}
     try:
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_streams", "-of", "json", video],
-            capture_output=True,
-            timeout=10,
-            check=True,
-            stdin=subprocess.DEVNULL,
-        )
-        info = json.loads(probe.stdout)
-        streams = info.get("streams", []) if isinstance(info, dict) else []
-        audio = [
-            s
-            for s in streams
-            if isinstance(s, dict)
-            and s.get("codec_type") == "audio"
-            and isinstance(s.get("tags", {}), dict)
-            and str(s.get("tags", {}).get("language", "")).lower() in ("eng", "en")
-            and "commentary" not in str(s.get("tags", {}).get("title", "")).lower()
-        ]
-        if not audio:
-            return 422, {"error": "no English dialogue audio track"}
+        # The SAME decision the pipeline makes (core/media_select.py). The preview used to
+        # accept English tags only, so an `und` track titled "English Dub" -- the shape the
+        # pipeline itself transcribes -- 422'd here while the episode it came from played.
+        streams = media_select.probe_audio_streams(video, timeout=10)
+        pick = media_select.select_english_audio(streams)
+        if not pick.ok:
+            return 422, {"error": f"no English dialogue audio track ({pick.reason})"}
         offset = max(0, start - 1.5)
         duration = min(AUDIO_MAX_SECONDS, end + 1.5 - offset)
         result = subprocess.run(
@@ -1057,7 +1044,7 @@ def preview_audio(body: dict) -> tuple:
                 "-i",
                 video,
                 "-map",
-                f"0:{int(audio[0]['index'])}",
+                f"0:{pick.index}",
                 "-t",
                 str(duration),
                 "-vn",
@@ -1079,7 +1066,7 @@ def preview_audio(body: dict) -> tuple:
         if not result.stdout.startswith(b"RIFF") or len(result.stdout) <= 44:
             return 502, {"error": "audio extraction produced no clip"}
         return 200, result.stdout
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, media_select.MediaProbeError):
         return 502, {"error": "audio preview unavailable; check the media and ffmpeg"}
     finally:
         _AUDIO_SLOTS.release()
