@@ -30,9 +30,14 @@ MAX_DUR = 7.5
 MIN_COVER = 0.90
 MIN_CARDS_PER_MIN = 6.0
 # A sentence split across two cues leaves the first without a terminal mark, so a healthy
-# file sits well under 100%. Below two thirds, the file is probably raw ASR (the old NGE
-# season ran 0-5%). 0.65 is the line between "real subtitles" and "transcript".
-MIN_PUNCT_ENDED = 0.65
+# file sits well under 100%. Raw ASR is orders of magnitude below: the old NGE season ran
+# 0-5% and Death Note S01E10 (still on disk) 0.0%. Between them sits a legitimately
+# split-heavy dubtitle: splitting "Thank / you / for" across cues leaves the first two bare,
+# and Chainsaw Man S01E01 measures 63.3% (159/251) -- measured 2026-11-20, the file the
+# gate was refusing. The line is therefore a MINIMUM that separates subtitles from
+# transcripts, not a quality bar; 0.60 admits the split-heavy real file with margin while
+# every raw-era file (0.0-5%) still fails by an order of magnitude.
+MIN_PUNCT_ENDED = 0.60
 MAX_ORPHAN = 0.15
 MIN_NAME_LEN = 3
 

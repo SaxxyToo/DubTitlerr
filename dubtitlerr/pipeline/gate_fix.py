@@ -23,8 +23,23 @@ What this module will and will not do:
   * **It only touches layout faults.** Coverage, punctuation, cold-open, cards-per-minute
     and known-mishear findings are a different failure class -- fixing those needs the
     transcript or a model, so they are reported as unsupported rather than attempted.
+  * **A card with no word in it is not dialogue.** An over-duration card whose text is
+    symbol-only (`♪`, `♪♪♪`, ...) is a music marker the dub ASR emitted with no words
+    attached: trim-to-speech has no word data and split/wrap has no boundary, so the card
+    used to be reported unfixable forever. Such a card is dropped instead -- it removes no
+    spoken word, and the fansub/song path owns that span -- and the drop is counted in the
+    audit document (`music_cues_dropped`).
   * **An already-passing file is a no-op.** No audit entry, no stage record, no byte
     written -- so a healthy episode costs the merge pass nothing.
+  * **A give-up is PARKED, not retried every pass.** When the attempt ends `unfixable`,
+    `unsupported` or `still-failing`, `<stem>.dubtitles.parked.json` records the refusal and
+    the ATTEMPT STAMP that produced it (transcribe_version + text_version +
+    ``GATE_FIX_EPOCH``). Ordinary merge passes skip a parked episode; it is retried only
+    when the stamp no longer matches the running code (a deployed fix heals it exactly
+    once) or when a run request for the show was created after the park. Bump
+    ``GATE_FIX_EPOCH`` for every change to this module's behaviour: the tier versions
+    cannot see a gate_fix improvement (the P16 no-text-bump precedent), so without the
+    epoch a parked episode would never be retried by a new fix.
 
 Fault classes it can repair, all under the gate's own budget
 (``publish_gate.MAX_DUR`` / ``MAX_CHARS`` / ``MAX_LINE``):
@@ -46,6 +61,8 @@ the outcome the merge pass' census reads (``ok`` or ``refused``).
 
 CLI:
   python3 -m dubtitlerr.pipeline.gate_fix STEM [--dry-run] [--json] [--duration S]
+  python3 -m dubtitlerr.pipeline.gate_fix STEM --parked [--show NAME]   # exit 0 = skip
+  python3 -m dubtitlerr.pipeline.gate_fix STEM --unpark                  # retry this pass
 
 Exit codes (the merge pass branches on these):
   0  the episode's subtitle now passes the gate (fixed, or it already did)
@@ -69,8 +86,28 @@ from dubtitlerr.core.atomic_file import MODE_KEEP, atomic_write
 from dubtitlerr.pipeline import card_split, publish_gate, reflow
 
 AUDIT_SUFFIX = ".dubtitles.gate-fix.json"
+PARK_SUFFIX = ".dubtitles.parked.json"
 BACKUP_SUFFIX = ".pre-gate-fix.bak"
 MAX_AUDIT_ATTEMPTS = 20
+
+# GATE_FIX_EPOCH: the "which behaviour gave up here" stamp on a parked episode.
+#
+# Bump this whenever anything in this module changes what it will fix, drop, or report.
+# Neither TRANSCRIBE_VERSION nor TEXT_VERSION can see such a change: a gate_fix fix does
+# not alter how the text was derived from the words (the P16 no-text-bump precedent), so a
+# parked episode would keep its old verdict and a newly deployed repair would never reach
+# it. The attempt stamp is compared against today's values on every pass, so a bump heals
+# every parked episode exactly once and then parks whatever still cannot be fixed.
+#
+# History (append one entry per bump, oldest first):
+#   1 (2026-11-20): introduced with parking. Same release adds the music-symbol drop
+#     (over-duration cards whose text has no word character at all), so the four episodes
+#     the 2026-11-20 campaign left churning heal on their first pass under this epoch.
+GATE_FIX_EPOCH = 1
+
+# Outcomes that are PARKED: a deterministic give-up on this exact artifact. `cannot-evaluate`
+# is deliberately absent -- an unreadable artifact can be transient, so it keeps retrying.
+PARKED_OUTCOMES = ("unfixable", "unsupported", "still-failing")
 
 # The gate's budget is the target; a fix that only satisfies a laxer one would be refused
 # again by the very check that sent us here.
@@ -133,6 +170,21 @@ def cue_faults(text, dur, max_line=GATE_MAX_LINE):
     if dur > GATE_MAX_DUR + reflow.EPS:
         out.append(f"{dur:.2f}s card")
     return out
+
+
+def is_music_marker(text):
+    """True when a card carries no word character at all -- a music marker, not dialogue.
+
+    The dub ASR emits bare music marks (``♪``, ``♪♪♪``) as their own cards, and Blue Eye
+    Samurai S01E02 ships a 29.9 s ``♪`` and a 37.0 s ``♪♪♪``. Neither trim-to-speech (there
+    are no words at all) nor split/wrap (there is no boundary) can normalise one, so the
+    card was reported unfixable on every pass. A card with no letter and no digit says
+    nothing: dropping it removes no word, and the fansub/song path owns the span.
+
+    Deliberately only symbols/whitespace: a number ("42") is content, and so is any word.
+    """
+    flat = _flat(text)
+    return bool(flat) and not any(ch.isalnum() for ch in flat)
 
 
 # --- one card ------------------------------------------------------------------------
@@ -333,6 +385,18 @@ def fix_cues(cues, words_doc=None, max_line=GATE_MAX_LINE):
             new_cues.append((start, end, text))
             origin.append(index)
             continue
+        # A music marker that outlives the screen budget is not a layout fault and has no
+        # words to keep: drop it through the song/music policy. Never wrap or split-bail.
+        if is_music_marker(flat) and dur > GATE_MAX_DUR + reflow.EPS:
+            actions.append({
+                "index": index,
+                "action": "drop-music",
+                "before": {"start": round(start, 3), "end": round(end, 3),
+                           "dur": round(dur, 3), "chars": len(flat),
+                           "longest": _line_len(text)},
+                "after": [],
+            })
+            continue
         words = card_split.card_words(words_doc, start, end) if words_doc else None
         next_start = cues[index + 1][0] if index + 1 < len(cues) else None
         pieces = _pieces(text, start, end, words, next_start,
@@ -428,22 +492,29 @@ def _ass_events(lines):
     return events
 
 
-def render_ass(text, cues, origin, touched):
+def render_ass(text, cues, origin, touched, dropped=frozenset()):
     """Rewrite only the cards the repair touched, in place, preserving every other byte.
 
     Editing lines rather than re-serialising through a subtitle library is deliberate: a
     re-serialise loses the file's own override tags and can move sign/song events, which
     this pipeline promises not to do.
+
+    ``dropped`` names source cards removed from the output entirely (a music marker); their
+    Dialogue lines are deleted and every other line keeps its bytes.
     """
     lines = text.splitlines()
     events = _ass_events(lines)
-    if len(events) != len({*origin}):
-        raise ValueError(f"{len(events)} dialogue events but {len({*origin})} source cards")
+    if len(events) != len({*origin} | set(dropped)):
+        raise ValueError(f"{len(events)} dialogue events but "
+                         f"{len({*origin} | set(dropped))} source cards")
     groups = {}
     for k, (start, end, body) in enumerate(cues):
         groups.setdefault(origin[k], []).append((start, end, body))
     replacement = {}
     for i, ev in enumerate(events):
+        if i in dropped:
+            replacement[ev["line"]] = None  # marker: this Dialogue line is removed
+            continue
         if i not in touched:
             continue
         tags = _ASS_TAGS.match(ev["text"]).group(1)
@@ -454,7 +525,13 @@ def render_ass(text, cues, origin, touched):
             prefix[2] = _fmt_ass(end)
             out.append(",".join(prefix) + "," + tags + body.replace("\n", "\\N"))
         replacement[ev["line"]] = "\n".join(out)
-    out = [replacement.get(i, line) for i, line in enumerate(lines)]
+    out = []
+    for i, line in enumerate(lines):
+        if i in replacement:
+            if replacement[i] is not None:
+                out.append(replacement[i])
+        else:
+            out.append(line)
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
@@ -472,10 +549,11 @@ def _srt_blocks(text):
     return blocks
 
 
-def render_srt(text, cues, origin, touched):
+def render_srt(text, cues, origin, touched, dropped=frozenset()):
     blocks = _srt_blocks(text)
-    if len(blocks) != len({*origin}):
-        raise ValueError(f"{len(blocks)} srt blocks but {len({*origin})} source cards")
+    if len(blocks) != len({*origin} | set(dropped)):
+        raise ValueError(f"{len(blocks)} srt blocks but "
+                         f"{len({*origin} | set(dropped))} source cards")
     out = []
     for i, (start, end, body) in enumerate(cues, 1):
         if origin[i - 1] not in touched:
@@ -491,8 +569,10 @@ def load_artifact(stem):
         return None, [], None
     text = open(path, encoding="utf-8-sig", errors="replace").read()
     if path.endswith(".srt"):
-        return path, cues, lambda new, org, touched: render_srt(text, new, org, touched)
-    return path, cues, lambda new, org, touched: render_ass(text, new, org, touched)
+        return path, cues, lambda new, org, touched, dropped=frozenset(): render_srt(
+            text, new, org, touched, dropped)
+    return path, cues, lambda new, org, touched, dropped=frozenset(): render_ass(
+        text, new, org, touched, dropped)
 
 
 # --- audit ---------------------------------------------------------------------------
@@ -528,6 +608,125 @@ def _signature(fails, artifact):
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
+# --- parked episodes ------------------------------------------------------------------
+#
+# A give-up is deterministic: the same artifact, words and code produce the same refusal
+# forever. Re-running it every merge pass (every MERGE_INTERVAL) burns the episode's slot
+# and proves nothing -- Michael, on four episodes churning every ~10 minutes: "no point in
+# it constantly trying over and over again." So the verdict is persisted WITH the code that
+# produced it, and the pass skips it until one of two things changes:
+#
+#   * the ATTEMPT STAMP (tier versions + GATE_FIX_EPOCH) stops matching what is running --
+#     a deployed fix retries the episode exactly once, and it either heals or re-parks
+#     under the new stamp; or
+#   * a run request for the show was created AFTER the park -- an explicit "try this again"
+#     beats the parked verdict once, and the re-park is newer than the request, so a second
+#     retry needs a second request.
+#
+# The record lives beside the artifact (`<stem>.dubtitles.parked.json`), so it travels with
+# the episode on the same disk branch the rest of the pipeline writes to.
+
+
+def _park_path(stem):
+    try:
+        from dubtitlerr.core import common
+        return common.out_for(stem + PARK_SUFFIX)
+    except ImportError:
+        return stem + PARK_SUFFIX
+
+
+def attempt_stamp():
+    """The runtime values that decide whether a parked verdict is still authoritative."""
+    from dubtitlerr.core import common
+    return {"transcribe_version": common.TRANSCRIBE_VERSION,
+            "text_version": common.TEXT_VERSION,
+            "gate_fix_epoch": GATE_FIX_EPOCH}
+
+
+def read_park(stem):
+    try:
+        with open(_park_path(stem)) as f:
+            doc = json.load(f)
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_park(stem, result, at):
+    doc = {
+        "parked": True,
+        "at": at,
+        "outcome": result["outcome"],
+        "summary": result["summary"],
+        "fails": result.get("fails_after") or result.get("fails", []),
+        "attempt_stamp": attempt_stamp(),
+    }
+    atomic_write(_park_path(stem), lambda f: json.dump(doc, f, indent=1))
+
+
+def clear_park(stem):
+    """Drop a parked verdict (healed, or about to be re-attempted). Never raises."""
+    try:
+        os.remove(_park_path(stem))
+    except OSError:
+        pass
+
+
+def _requests_dir():
+    return os.environ.get("REQUESTS_DIR") or os.path.join(
+        os.environ.get("CONFIG_DIR", "/config"), "requests")
+
+
+def request_since(show, when):
+    """True if a queued/finished run request for ``show`` was created after ``when``.
+
+    A request file's mtime is its creation time (a pending -> done move is a rename), so
+    "newer than the park" is exactly "somebody asked again after this episode gave up".
+    Read-only, and a broken/unreadable queue means no request: the parked verdict stands.
+    """
+    if not show:
+        return False
+    rdir = _requests_dir()
+    for d in (rdir, os.path.join(rdir, "done")):
+        try:
+            entries = list(os.scandir(d))
+        except OSError:
+            continue
+        for entry in entries:
+            if (not entry.is_file() or entry.name.startswith(".")
+                    or not entry.name.endswith((".json", ".running"))):
+                continue
+            try:
+                if entry.stat().st_mtime <= when:
+                    continue
+                with open(entry.path, encoding="utf-8") as f:
+                    doc = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if isinstance(doc, dict) and doc.get("show") == show:
+                return True
+    return False
+
+
+def parked_state(stem, show=None):
+    """``(parked, note)`` -- is this episode's give-up still authoritative?
+
+    ``parked`` True means an ordinary pass must not re-attempt it. False with a non-empty
+    note means a parked verdict exists but is stale (a code/version change or a newer run
+    request), i.e. retry this pass.
+    """
+    doc = read_park(stem)
+    if not doc.get("parked"):
+        return False, ""
+    stamp = doc.get("attempt_stamp")
+    if stamp != attempt_stamp():
+        return False, "the attempt stamp changed since the park (a fix or version bump)"
+    if request_since(show, float(doc.get("at") or 0)):
+        return False, "a run request was created after the park"
+    return True, (f"gate_fix gave up ({doc.get('outcome')}): {doc.get('summary', '')}"
+                  + " — retries on a version/epoch change or a new run request")
+
+
 # --- one attempt ---------------------------------------------------------------------
 
 
@@ -539,6 +738,9 @@ def _fixed_summary(actions):
         if a["action"] == "trim-end":
             parts.append(f"card #{a['index']} ended at its own speech "
                          f"({before:.2f}s -> {a['after'][0]['dur']:.2f}s)")
+        elif a["action"] == "drop-music":
+            parts.append(f"card #{a['index']} dropped (music marker over "
+                         f"{GATE_MAX_DUR:.1f}s, {before:.1f}s, no words)")
         elif a["action"] == "split":
             parts.append(f"card #{a['index']} split into {len(a['after'])} "
                          f"(longest {max(x['dur'] for x in a['after']):.2f}s)")
@@ -573,10 +775,19 @@ def attempt(stem, duration=None, max_line=GATE_MAX_LINE, dry_run=False):
     if not before:
         result.update(code=0, outcome=OUTCOME_NOOP,
                       summary=f"{os.path.basename(path)} already passes the gate")
+        if not dry_run:
+            clear_park(stem)  # a healed episode must not stay parked
         return result  # NO-OP: no audit entry, no stage record, no bytes touched
 
     _layout, other = split_fails(before)
-    if other:
+    music = [i for i, (start, end, text) in enumerate(cues)
+             if is_music_marker(_flat(text)) and end - start > GATE_MAX_DUR + reflow.EPS]
+    # A non-layout finding is still not attempted -- UNLESS the file also carries music
+    # markers to drop. A marker is not dialogue, and removing it is not a transcript repair;
+    # it can also lift the punctuation ratio honestly (Blue Eye S01E06: 59.4% before its
+    # three over-duration '♪♪' cards, 60.2% after). The in-memory re-gate decides: if any
+    # finding survives, nothing is written.
+    if other and not music:
         result.update(outcome=OUTCOME_UNSUPPORTED,
                       summary=("not a layout fault (needs the transcript or a model): "
                                + "; ".join(other)))
@@ -600,7 +811,8 @@ def attempt(stem, duration=None, max_line=GATE_MAX_LINE, dry_run=False):
     result["fixes"] = actions
 
     # Re-gate IN MEMORY before a byte is written: a partial fix must never ship.
-    new_text = render(new_cues, origin, {a["index"] for a in actions})
+    dropped = {a["index"] for a in actions if a["action"] == "drop-music"}
+    new_text = render(new_cues, origin, {a["index"] for a in actions}, dropped)
     if path.endswith(".srt"):
         after_cues = publish_gate.parse_srt(new_text)
     else:
@@ -646,9 +858,11 @@ def _backup(path):
 def _record(stem, result, parked, failures_before=None):
     """Append the attempt to the audit file, write the stage record, set the exit code.
 
-    "Parked" no longer means "notify every pass": the escalation block remembers the
-    signature of the last refusal it surfaced, so a standing refusal is escalated once and
-    then recorded as already-known (exit 1) until it changes.
+    "Parked" means a deterministic give-up. It is persisted as
+    ``<stem>.dubtitles.parked.json`` with the attempt stamp that produced it, so ordinary
+    passes skip the episode instead of re-attempting it; see :func:`parked_state`. The
+    escalation block still remembers the signature of the last refusal it surfaced, so a
+    standing refusal is notified once and then recorded as already-known (exit 1).
     """
     doc = read_audit(stem)
     attempts = doc.get("attempts") if isinstance(doc.get("attempts"), list) else []
@@ -663,6 +877,9 @@ def _record(stem, result, parked, failures_before=None):
     attempts.append(entry)
     doc["attempts"] = attempts[-MAX_AUDIT_ATTEMPTS:]
     doc["artifact"] = result.get("artifact")
+    dropped = sum(1 for a in entry["fixes"] if a.get("action") == "drop-music")
+    if dropped:
+        doc["music_cues_dropped"] = int(doc.get("music_cues_dropped") or 0) + dropped
 
     sig = _signature(result.get("fails_after") or fails_before,
                      result.get("artifact"))
@@ -676,6 +893,15 @@ def _record(stem, result, parked, failures_before=None):
             result["code"] = 3
     else:
         result["code"] = 0 if result["outcome"] in PASSED else 1
+    # Persist (or drop) the parked verdict. A give-up is remembered WITH the stamp that
+    # produced it; anything else clears it, because this pass just re-examined the file.
+    if parked and result["outcome"] in PARKED_OUTCOMES:
+        try:
+            _write_park(stem, result, entry["at"])
+        except OSError:
+            pass  # the audit + stage record still record the refusal
+    else:
+        clear_park(stem)
     _write_audit(stem, doc)
     outcome = "ok" if result["outcome"] in PASSED else "refused"
     try:
@@ -697,8 +923,23 @@ def main(argv=None):
     ap.add_argument("--max-line", type=int, default=GATE_MAX_LINE)
     ap.add_argument("--dry-run", action="store_true",
                     help="report what would be fixed; write nothing at all")
+    ap.add_argument("--parked", action="store_true",
+                    help="exit 0 if this episode is parked and the verdict still stands; "
+                         "print the reason. Writes nothing.")
+    ap.add_argument("--unpark", action="store_true",
+                    help="drop the parked verdict so the next attempt runs now")
+    ap.add_argument("--show", default=None,
+                    help="--parked: show name, to honour a run request created after the park")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.parked:
+        parked, note = parked_state(a.stem, show=a.show)
+        if note:
+            print(note)
+        return 0 if parked else 1
+    if a.unpark:
+        clear_park(a.stem)
+        return 0
     try:
         result = attempt(a.stem, duration=a.duration, max_line=a.max_line,
                          dry_run=a.dry_run)

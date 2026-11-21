@@ -171,7 +171,21 @@ def test_the_fixed_file_is_what_got_muxed(tmp_path):
     assert (Path(stem).parent / "ep01.dubtitles.done").exists(), res.stdout
 
 
-def test_an_unfixable_refusal_is_parked_and_surfaced_once(tmp_path):
+def _park(stem):
+    try:
+        return json.load(open(stem + ".dubtitles.parked.json"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _audit_attempts(stem):
+    try:
+        return len(json.load(open(stem + ".dubtitles.gate-fix.json"))["attempts"])
+    except (OSError, ValueError, KeyError):
+        return 0
+
+
+def test_an_unfixable_refusal_is_parked_surfaced_once_and_never_retried(tmp_path):
     blob = "Kek" * 149
     res, calls, sent, stem = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="1")
     output = res.stdout + res.stderr
@@ -182,12 +196,72 @@ def test_an_unfixable_refusal_is_parked_and_surfaced_once(tmp_path):
     refused = _refusals(sent)
     assert len(refused) == 1, sent
     assert "parked ep01" in refused[0][refused[0].index("--summary") + 1]
+    assert _park(stem)["parked"] is True, _park(stem)
+    assert _audit_attempts(stem) == 1
 
-    # The same refusal next pass keeps the log line but does not repeat the message.
-    res2, calls2, sent2, _ = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="1")
-    assert "skip mux: publish gate failed" in res2.stdout, res2.stdout
-    assert calls2 == []
-    assert _refusals(sent2) == [], sent2
+    # Every later ordinary pass SKIPS it: no gate_fix invocation, no new audit attempt, no
+    # repeated notification. Michael: "no point in it constantly trying over and over again."
+    for _ in range(2):
+        res2, calls2, sent2, _ = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="1")
+        assert "skip: parked ep01" in res2.stdout, res2.stdout
+        assert "skip mux: publish gate failed" not in res2.stdout, res2.stdout
+        assert calls2 == []
+        assert _refusals(sent2) == [], sent2
+        assert _audit_attempts(stem) == 1, "a parked episode must not be re-attempted"
+        assert "1 episode(s) parked" in res2.stdout, res2.stdout
+
+
+def test_a_changed_attempt_stamp_retries_the_parked_episode_exactly_once(tmp_path):
+    """A deployed gate_fix change heals parked episodes once, without timer retries."""
+    blob = "Kek" * 149
+    _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="0")
+    stem = str(tmp_path / "library" / "Show" / "ep01")
+    doc = _park(stem)
+    assert doc["attempt_stamp"]["gate_fix_epoch"] >= 1
+    assert _audit_attempts(stem) == 1
+
+    doc["attempt_stamp"]["gate_fix_epoch"] -= 1  # what an older release parked it with
+    (tmp_path / "library" / "Show" / "ep01.dubtitles.parked.json").write_text(json.dumps(doc))
+
+    res, calls, sent, _ = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="1")
+    assert "retry: parked ep01" in res.stdout, res.stdout
+    assert "attempt stamp changed" in res.stdout, res.stdout
+    assert calls == []
+    assert _audit_attempts(stem) == 2, "the stale verdict bought exactly one new attempt"
+    assert _park(stem)["attempt_stamp"] == doc["attempt_stamp"] | {
+        "gate_fix_epoch": doc["attempt_stamp"]["gate_fix_epoch"] + 1}
+    # Older signature: the same refusal is not re-notified.
+    assert _refusals(sent) == [], sent
+
+    # ...and the pass after that skips again.
+    res2, calls2, _, _ = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="1")
+    assert "skip: parked ep01" in res2.stdout, res2.stdout
+    assert _audit_attempts(stem) == 2, res2.stdout
+
+
+def test_a_run_request_created_after_the_park_retries_it_once(tmp_path):
+    blob = "Kek" * 149
+    _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="0")
+    stem = str(tmp_path / "library" / "Show" / "ep01")
+    assert _audit_attempts(stem) == 1
+    rdir = tmp_path / "requests"
+    rdir.mkdir()
+    (rdir / "req.json").write_text(json.dumps({"show": "Show"}))
+
+    res, calls, _, _ = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="0",
+                            REQUESTS_DIR=str(rdir))
+    assert "retry: parked ep01" in res.stdout, res.stdout
+    assert "run request" in res.stdout, res.stdout
+    assert calls == []
+    assert _audit_attempts(stem) == 2, res.stdout
+    assert _park(stem)["at"] > (rdir / "req.json").stat().st_mtime
+
+    # The re-park is newer than the request: the next pass skips without another request.
+    res2, _, _, _ = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="0",
+                         REQUESTS_DIR=str(rdir))
+    assert "skip: parked ep01" in res2.stdout, res2.stdout
+    assert _audit_attempts(stem) == 2, res2.stdout
+
 
 
 def test_no_subscriber_means_no_event_but_the_park_still_happens(tmp_path):

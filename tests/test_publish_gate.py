@@ -143,6 +143,48 @@ def test_a_raw_transcript_fails_the_punctuation_floor():
     assert any("mishear" in f for f in fails)
 
 
+# --- the punctuation floor is a minimum, and it admits real split-heavy subtitles -----
+#
+# Measured 2026-11-20 against the live library: Chainsaw Man S01E01 = 63.3% (159/251) with
+# legitimately split cards ("Thank / you / for" across cues), while raw-era files sit at
+# 0-5% (Death Note S01E10, still on disk, is 0.0%).
+
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts")
+
+
+def test_the_live_chainsaw_man_episode_passes_the_punctuation_floor():
+    """Real bytes: 159 of 251 cards end a sentence. The floor is a minimum (0.60), not a bar
+    every card must clear -- a split sentence leaves its first card bare by design."""
+    text = open(os.path.join(FIXTURES, "csm_s01e01_dubtitles.ass"),
+                encoding="utf-8-sig", errors="replace").read()
+    cues = g.parse_ass(text, style="Dubtitles")
+    ended = sum(1 for _, _, t in cues if t.rstrip().endswith(g.END))
+    assert (len(cues), ended) == (251, 159)
+    assert g.evaluate(cues, None) == [], g.evaluate(cues, None)
+
+
+def test_a_file_just_under_the_floor_still_fails():
+    """Boundary: 60 of 100 ends pass, 59 of 100 fail. One card is the margin."""
+    def cues_with(ended):
+        return [(1.0 + i, 2.0 + i, "Ends here." if i < ended else "No terminal here")
+                for i in range(100)]
+
+    assert g.evaluate(cues_with(60), None) == [], g.evaluate(cues_with(60), None)
+    fails = g.evaluate(cues_with(59), None)
+    assert any("sentence punctuation" in f for f in fails), fails
+
+
+def test_the_live_zero_percent_raw_file_still_fails_the_floor():
+    """Negative control: the 0.0%-era file must not be admitted by the lower line."""
+    text = open(os.path.join(FIXTURES, "death_note_s01e10_raw.srt"),
+                encoding="utf-8-sig", errors="replace").read()
+    cues = g.parse_srt(text)
+    ended = sum(1 for _, _, t in cues if t.rstrip().endswith(g.END))
+    assert (len(cues), ended) == (262, 0)
+    fails = g.evaluate(cues, None)
+    assert any("0% of cards carry sentence punctuation" in f for f in fails), fails
+
+
 def test_a_published_sidecar_is_found_by_its_delivery_name(tmp_path):
     """`stem.dub.en.ass` is what the library actually carries; the gate must audit it, not
     only the pipeline's internal `stem.eng.dubtitles.ass`."""

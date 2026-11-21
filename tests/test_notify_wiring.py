@@ -251,8 +251,8 @@ def test_a_pass_end_reports_merge_completed_and_skips_per_episode_events_unless_
     assert _events(log) == ["merge.completed"], _events(log)
     call = _call(log, "merge.completed")
     assert call["loop"] == "merge"
-    assert call["counts"] == {"delivered": 1, "failed": 0, "total_done": 1}
-    assert call["summary"] == "merge pass: 1 delivered, 0 failed, 1 total done"
+    assert call["counts"] == {"delivered": 1, "failed": 0, "parked": 0, "total_done": 1}
+    assert call["summary"] == "merge pass: 1 delivered, 0 failed, 0 parked, 1 total done"
 
 
 def test_a_subscriber_gets_one_episode_delivered_event_per_delivery(tmp_path):
