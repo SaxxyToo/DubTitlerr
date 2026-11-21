@@ -503,6 +503,35 @@ def test_surrounding_context_is_visually_distinguished_from_the_current_line(tmp
     assert ".ctx b" in review_server._CSS, "the current line must stay visually distinct from its muted neighbours"
 
 
+def test_every_review_page_declares_a_viewport_so_a_phone_does_not_shrink_it(tmp_path, monkeypatch):
+    """Reported 2026-11-21: the review pages are adjudicated from a phone (omarchy's :8842 is
+    the LAN-visible one) and on iOS Safari they rendered at roughly a third scale -- 14px body
+    text, pinhead radios, and a sticky Save bar sitting under the floating URL pill.
+
+    The cause is not a broken rule: with no viewport meta, mobile Safari lays out at its 980px
+    default and scales the result down to fit, so a page that is legible on a desktop is
+    unreadable on a phone without a single declaration being wrong. The three render functions
+    are separate strings, so this pins all of them -- fixing the episode page alone leaves
+    /shared and the locked shell still shrunk."""
+    stem = _episode(tmp_path)
+    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
+
+    pages = {
+        "episode": review_server.render_page(stem),
+        "index": review_server.render_page(),
+        "shared": review_server.render_shared(),
+        "locked": review_server.render_locked("page"),
+    }
+    for name, page in pages.items():
+        assert 'name="viewport"' in page, f"the {name} page has no viewport meta -- a phone shrinks it"
+        assert "width=device-width" in page, f"the {name} page must lay out at the device width"
+
+    # A viewport only stops the shrink. The sticky bar is bottom-anchored, which is exactly where
+    # iOS floats its URL pill, and the radios are sub-44px tap targets on a phone.
+    assert "@media (max-width:640px)" in review_server._CSS, "narrow screens need their own rules"
+    assert "safe-area-inset-bottom" in review_server._CSS, "the sticky bar is bottom-anchored -- it has to clear the iOS URL pill"
+
+
 def test_the_token_is_never_placed_in_a_url(tmp_path, monkeypatch):
     """A token in a query string lands in every proxy log, browser history and Referer
     header it passes. The page must carry it in a header instead."""
