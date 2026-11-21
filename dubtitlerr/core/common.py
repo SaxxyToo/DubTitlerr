@@ -241,6 +241,11 @@ TRACK_NAME = "Dubtitles"
 # whole library to reach the same files the sweep reaches in minutes. Revisit only if a
 # future arm #5 template change finds artefacts the sweep did not.
 #
+# NO TEXT BUMP FOR THE ZXX SIGNS FALLBACK (2026-11-20), same rule: the affected population
+# is the releases whose dedicated signs/songs track is tagged zxx and which have no in-scope
+# track naming itself as signs (Dororo and JJK in this library). Re-run those shows from a
+# request; a v12 would re-derive the whole text tier to reach the same episodes.
+#
 # THE MODEL IS NOT A VERSION (P12, 2026-11-20). The tiers record what the CODE did to the
 # output; neither can see which weights decoded the audio, and the weights change without a
 # code change: the library was moved onto whisper-large-v3-subs and every earlier episode
@@ -739,10 +744,13 @@ def eng_sub_streams(video, sub_langs):
     return [idx for idx, _title in eng_sub_tracks(video, sub_langs)]
 
 
-def eng_sub_tracks(video, sub_langs):
-    """``(index, title)`` for each usable English ASS/SSA stream — the shared probe behind
-    eng_sub_streams() and signs_sub_streams(). Only the latter needs the title, but both
-    must apply the same is_our_track() exclusion, so the filtering lives in one place."""
+def _probe_sub_tracks(video, sub_langs):
+    """``(index, title, language)`` for each usable ASS/SSA stream in ``sub_langs``.
+
+    The shared probe behind eng_sub_tracks() and the signs planner. Only the planner needs
+    the language, but all of them must apply the same is_our_track() exclusion, so the
+    filtering lives in one place.
+    """
     try:
         r = subprocess.run(
             [
@@ -772,9 +780,16 @@ def eng_sub_tracks(video, sub_langs):
             continue
         if is_our_track(stream_title(st)):  # our own old output — never context
             continue
-        if ((st.get("tags") or {}).get("language", "") or "").lower() in sub_langs:
-            out.append((st["index"], stream_title(st)))
+        lang = ((st.get("tags") or {}).get("language", "") or "").lower()
+        if lang in sub_langs:
+            out.append((st["index"], stream_title(st), lang))
     return out
+
+
+def eng_sub_tracks(video, sub_langs):
+    """``(index, title)`` for each usable text subtitle stream in ``sub_langs`` -- the shared
+    probe behind eng_sub_streams() and the signs planner."""
+    return [(idx, title) for idx, title, _lang in _probe_sub_tracks(video, sub_langs)]
 
 
 # A track whose title says it carries the signs/songs. Covers the spellings actually
@@ -807,22 +822,44 @@ NON_DIALOGUE_STYLE = re.compile(
 )
 
 
-def signs_sub_streams(video, sub_langs):
-    """Stream indices to lift signs/songs from.
+def _signs_plan(video, sub_langs):
+    """``(stream_indices, dedicated)`` for the signs/songs merge.
 
     Releases routinely ship the SAME signs typeset into several English tracks — a full
     dialogue track, a signs/songs track, sometimes a CC track (39 of this library's 79
     releases have more than one). Merging all of them renders every sign two or three
-    times, a few pixels apart. So when any track names itself as the signs track, that
-    one is the release's own curated signs list and the only one we read; if several do
-    (rival groups' typesetting of the same signs), the first wins.
+    times, a few pixels apart. So when any in-scope track names itself as the signs track,
+    that one is the release's own curated signs list and the only one we read; if several
+    do (rival groups' typesetting of the same signs), the first wins.
+
+    ``zxx`` ("no linguistic content") is the standard tag for a curated signs/songs track
+    and is deliberately outside SUB_LANGS — it carries no dialogue, so it must never feed
+    dialogue_intervals() or a repair reference. It is, however, exactly what the signs
+    merge wants: when no in-scope track names itself as signs, a ``zxx`` track that does is
+    the release's curated list (Dororo and JJK ship theirs this way). Never accept another
+    real language (spa/ger) in the fallback: those are translations, not this release's
+    English typesetting.
 
     Releases that name nothing usefully fall back to the historic behaviour — every
-    track, classified per event by keep_event() — which is how a single mixed
-    dialogue+signs track has always been handled."""
-    tracks = eng_sub_tracks(video, sub_langs)
-    signs = [idx for idx, title in tracks if SIGNS_TITLE.search(title or "")]
-    return [signs[0]] if signs else [idx for idx, _ in tracks]
+    in-scope track, classified per event by keep_event() — which is how a single mixed
+    dialogue+signs track has always been handled.
+    """
+    tracks = _probe_sub_tracks(video, set(sub_langs) | {"zxx"})
+    in_scope = [(idx, title) for idx, title, lang in tracks if lang in sub_langs]
+    named = [idx for idx, title in in_scope if SIGNS_TITLE.search(title or "")]
+    if named:
+        return [named[0]], True
+    zxx_named = [
+        idx for idx, title, lang in tracks if lang == "zxx" and SIGNS_TITLE.search(title or "")
+    ]
+    if zxx_named:
+        return [zxx_named[0]], True
+    return [idx for idx, _ in in_scope], False
+
+
+def signs_sub_streams(video, sub_langs):
+    """Stream indices to lift signs/songs from. See _signs_plan() for the selection."""
+    return _signs_plan(video, sub_langs)[0]
 
 
 def signs_track_dedicated(video, sub_langs) -> bool:
@@ -832,8 +869,9 @@ def signs_track_dedicated(video, sub_langs) -> bool:
     The two cases want different handling one level down: a curated signs track holds
     signs and songs only, while the fallback reads the release's dialogue track too, where
     a bare ``\\an8`` is far more often a line of dialogue moved clear of a sign than a sign
-    (see dub_signs_merge.keep_event). A failed probe reads as False -- the stricter side."""
-    return any(SIGNS_TITLE.search(title or "") for _idx, title in eng_sub_tracks(video, sub_langs))
+    (see dub_signs_merge.keep_event). A failed probe reads as False -- the stricter side.
+    """
+    return _signs_plan(video, sub_langs)[1]
 
 
 def extract_sub(video, idx, out):

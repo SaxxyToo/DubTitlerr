@@ -346,7 +346,11 @@ def eng_audio_index(video):
     except Exception as e:
         log("ffprobe failed", video, e)
         return None
-    eng = [s for s in streams if _audio_lang(s) in ("eng", "en")]
+    eng = [
+        s
+        for s in streams
+        if _audio_lang(s) in ("eng", "en") and "commentary" not in _audio_title(s).lower()
+    ]
     if eng:
         return eng[0]["index"]
     # No English-tagged audio. Two pieces of evidence are still worth accepting:

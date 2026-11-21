@@ -142,7 +142,8 @@ def test_episodes_that_could_not_be_built_are_counted_by_reason(tmp_path, monkey
     assert rep["rebuilt"] == 1
     assert rep["not_done"] == {"no-eng-dub": 1, "extract-failed": 1}
     ok, why = rr.verdict(rep, 0)
-    assert not ok and "2 of 3" in why and "no-eng-dub" in why
+    assert not ok and why is not None and "2 of 3" in why and "no-eng-dub" in why
+    assert "sub-only release; no English audio track" in why
 
 
 # --- review_requests.verdict: the decision, from the report alone ----------------------------
