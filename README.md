@@ -8,6 +8,10 @@
 
 DubTitlerr transcribes English dub audio into subtitles and merges on-screen signs and songs into the same track.
 
+![The review workspace: a flagged repair with its dub audio evidence and the fansub reference beside it](docs/review-workspace.png)
+
+The review workspace at `/review`: each repair the repair stage was unsure about arrives with its audio evidence, the line before and after, and the reference track, so a decision is one listen rather than a re-read.
+
 ## The problem
 
 The English subtitles shipped with most anime translate the Japanese script, not the English dub, so watching dubbed with them on gives you two scripts at once.
@@ -145,6 +149,7 @@ The two images install the same runtime packages, serve the same review UI and s
 - Transcription: **either** an NVIDIA GPU with CUDA for local Whisper (6 GB is enough at int8) **or** an OpenAI-compatible transcription endpoint. With `ASR_BACKEND=endpoint` there is no GPU, no model and no CUDA dependency at all.
 - An OpenAI-compatible chat endpoint for repair (llama.cpp serving qwen3-4b-instruct by default, or a hosted API with a key). A hosted API receives the lines it repairs.
 - ffmpeg and mkvtoolnix; both are baked into each image.
+- From a source checkout, `pip install -e ".[local]"` adds in-process faster-whisper (`ASR_BACKEND=local`). It is an optional extra, not a base dependency: the endpoint backend, the lite image, CI and `pip install -e ".[dev]"` all run without it.
 
 ## Quickstart
 

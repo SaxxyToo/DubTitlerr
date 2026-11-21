@@ -117,7 +117,6 @@ wheels = [
 name = "dubtitlerr"
 source = { virtual = "." }
 dependencies = [
-    { name = "faster-whisper" },
     { name = "jellyfish" },
     { name = "pysubs2", version = "1.8.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "pysubs2", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -131,17 +130,20 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+local = [
+    { name = "faster-whisper" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "faster-whisper", specifier = ">=1.2" },
+    { name = "faster-whisper", marker = "extra == 'local'", specifier = ">=1.2" },
     { name = "jellyfish", specifier = ">=1.0" },
     { name = "pysubs2", specifier = ">=1.7" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "webrtcvad", marker = "extra == 'analysis'", specifier = ">=2.0" },
 ]
-provides-extras = ["dev", "analysis"]
+provides-extras = ["dev", "local", "analysis"]
 
 [[package]]
 name = "faster-whisper"

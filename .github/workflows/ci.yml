@@ -55,6 +55,10 @@ jobs:
       # decisions.py, which holds every human verdict. ruff's config lives in pyproject
       # (line-length, rule selection, the *.md exclude), so "." is the honest argument.
       - run: ruff check .
+      # The same gate scripts/check.sh runs. The formatter's exclude list in pyproject is a
+      # documented baseline (files that predate this gate), so this fails only on a NEW
+      # unformatted file or on a baselined file that was edited and can now be formatted.
+      - run: ruff format --check .
 
   review-ui:
     runs-on: ubuntu-latest

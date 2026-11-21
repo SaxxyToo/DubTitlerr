@@ -57,7 +57,7 @@ try:  # local ASR only: the lite (endpoint-backed) image ships no torch/ctransla
 except ImportError:  # pragma: no cover - endpoint-only deployments
     WhisperModel = None
 
-from dubtitlerr.core import common
+from dubtitlerr.core import common, media_select
 from dubtitlerr.core.common import (
     STAMP_SUFFIX,
     TRANSCRIBE_VERSION,
@@ -116,9 +116,7 @@ MODEL_DIR = os.environ.get("MODEL_DIR", "/subgen/models")
 #              llama-swap whisper, the Nous gateway ...). No model, no torch, no GPU --
 #              this is what the lite image runs.
 ASR_BACKEND = os.environ.get("ASR_BACKEND", "local").strip().lower()
-ASR_URL = os.environ.get(
-    "ASR_URL", "https://openrouter.ai/api/v1/audio/transcriptions"
-).strip()
+ASR_URL = os.environ.get("ASR_URL", "https://openrouter.ai/api/v1/audio/transcriptions").strip()
 ASR_MODEL = os.environ.get("ASR_MODEL", "openai/whisper-1").strip()
 ASR_KEY_ENV = os.environ.get("ASR_KEY_ENV", "OPENROUTER_API_KEY").strip()
 ASR_TIMEOUT = int(os.environ.get("ASR_TIMEOUT", "900"))
@@ -151,6 +149,8 @@ class EndpointAsrError(Exception):
     GPU context. Raising this takes the non-poison path: marker cleared, crash.json
     written, episode retried on the next sweep.
     """
+
+
 # V2 A8: optional pre-transcription audio cleanup (default highpass + dynamic-range
 # compand, tuned for noisy/quiet anime dub tracks). Empty string ("") disables it
 # entirely (the old, pre-A8 ffmpeg command) -- set WHISPER_AUDIO_FILTER="" to opt out.
@@ -296,145 +296,26 @@ def _no_glossary_warning(show, episode) -> int:
     return 1
 
 
-# A title is evidence only when it names ENGLISH AUDIO. Some muxes leave the audio language
-# tag empty or `und` but keep "English 5.1" / "English Dub" in the title; without that the
-# episode is skipped as a sub-only release.
-#
-# The accept condition is an explicit English token. "dub"/"dubbed" is supporting evidence
-# only: it never tells us WHICH language the dub is in, so a bare-dub title is accepted only
-# when it names no other language. An external review (2026-11-20, v0.4.11) showed the old
-# single regex accepting "Spanish Dub" and, first-match-wins, choosing it over "English Dub"
-# while English ASR transcribed the Spanish track; "Japanese (Eng subs) stereo" was picked
-# for the same reason. Both paths produced subtitles that could pass the gates silently.
-ENGLISH_TITLE = re.compile(r"\beng(?:lish)?\b", re.I)
-DUB_TITLE = re.compile(r"\bdub(?:bed)?\b", re.I)
-
-# A title that names subtitles describes the subtitle mux, not the audio behind it, so
-# "English subs" is not evidence that a track is the English dub.
-SUBTITLE_TITLE = re.compile(r"\b(?:subs?|subbed|subtitles?|subtitled|closed captions?|cc)\b", re.I)
-
-# Titles that name another language are evidence AGAINST this being the English dub. Kept as
-# one maintainable tuple: add a language here, not another regex at a call site. Covers the
-# tag vocabulary measured across 173 files of the anime library on 2026-11-20 (jpn/eng/spa
-# tags with "Japanese (Korean Names)" style titles) plus the usual dub markets.
-OTHER_LANGUAGE_NAMES = (
-    "arabic", "bengali", "cantonese", "castilian", "chinese", "czech", "danish",
-    "dutch", "filipino", "finnish", "french", "farsi", "german", "greek", "hebrew",
-    "hindi", "hungarian", "indonesian", "italian", "japanese", "korean", "latin",
-    "malay", "mandarin", "norwegian", "persian", "polish", "portuguese", "romanian",
-    "russian", "spanish", "swedish", "tagalog", "tamil", "telugu", "thai", "turkish",
-    "ukrainian", "urdu", "vietnamese",
-)
-OTHER_LANGUAGE_TITLE = re.compile(
-    r"\b(?:" + "|".join(OTHER_LANGUAGE_NAMES) + r")\b", re.I
-)
-
-
-def _title_english_evidence(title):
-    """(accept, reason) for an untagged audio stream's title.
-
-    Explicit English audio wins; a bare "dub"/"dubbed" is accepted only when the title names
-    no other language and does not describe subtitles. Everything else is refused, which
-    leaves the stream to the opt-in lone-untagged path or a sub-only skip.
-    """
-    if not title or not title.strip():
-        return False, "no title"
-    other = OTHER_LANGUAGE_TITLE.search(title)
-    if other:
-        return False, f"title names another language ({other.group(0)!r})"
-    names_subtitles = SUBTITLE_TITLE.search(title) is not None
-    if ENGLISH_TITLE.search(title):
-        if names_subtitles and not DUB_TITLE.search(title):
-            return False, "title names subtitles, not audio"
-        return True, "title names English audio"
-    if DUB_TITLE.search(title):
-        if names_subtitles:
-            return False, "title names subtitles, not audio"
-        return True, "bare dub title naming no other language"
-    return False, "title names no English audio or dub"
-
-
-def _audio_lang(stream):
-    return ((stream.get("tags") or {}).get("language") or "").lower()
-
-
-def _audio_title(stream):
-    return (stream.get("tags") or {}).get("title") or ""
-
-
-def _und_as_dub():
-    """UND_AUDIO_AS_DUB: treat a LONE untagged audio track as the English dub.
-
-    Read per call, like every other env knob here, so a stored setting takes effect on the
-    next show without a restart. Default off: a single untagged track can just as easily be
-    a Japanese-only release, and the old comment's warning still holds.
-    """
-    return os.environ.get("UND_AUDIO_AS_DUB", "") not in ("", "0")
-
-
+# One audio-track decision, shared with the review server's audio preview: see
+# dubtitlerr/core/media_select.py. Both call sites used to carry their own rules, and the
+# preview -- English tags only -- disagreed with the pipeline on `und` tracks titled
+# "English Dub", 422ing an episode the pipeline had just produced.
 def eng_audio_index(video):
     try:
-        r = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "a",
-                "-show_entries",
-                "stream=index:stream_tags=language,title",
-                "-of",
-                "json",
-                video,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=FFPROBE_TIMEOUT,
-            stdin=subprocess.DEVNULL,
-        )
-        streams = json.loads(r.stdout).get("streams", [])
-    except Exception as e:
+        streams = media_select.probe_audio_streams(video, timeout=FFPROBE_TIMEOUT)
+    except media_select.MediaProbeError as e:
         log("ffprobe failed", video, e)
         return None
-    eng = [
-        s
-        for s in streams
-        if _audio_lang(s) in ("eng", "en") and "commentary" not in _audio_title(s).lower()
-    ]
-    if eng:
-        return eng[0]["index"]
-    # No English-tagged audio. Two pieces of evidence are still worth accepting:
-    #   1. a title that names English audio (or a bare dub naming no other language);
-    #   2. a single untagged track, but only when the operator opts in (UND_AUDIO_AS_DUB).
-    # Anything else is a sub-only or ambiguous release, and transcribing stream 0 as
-    # English would produce garbage -- the old rule. REQUIRE_ENG=0 remains the blunt
-    # override for a pre-filtered English collection.
-    candidates = []
-    for s in streams:
-        title = _audio_title(s)
-        if _audio_lang(s) not in ("", "und") or "commentary" in title.lower():
-            continue
-        accept, why = _title_english_evidence(title)
-        if accept:
-            candidates.append((s, title, why, ENGLISH_TITLE.search(title) is not None))
-    if candidates:
-        # Several title matches: the explicitly-English one wins, whatever stream order says.
-        explicit = [c for c in candidates if c[3]]
-        chosen, title, why, _ = (explicit or candidates)[0]
-        skipped = [f"index {c[0]['index']} {c[1]!r}" for c in candidates if c[0] is not chosen]
+    pick = media_select.select_english_audio(streams)
+    if pick.reason == media_select.REASON_TITLE:
+        skipped = f"; not preferred: {', '.join(pick.skipped)}" if pick.skipped else ""
         log(
             f"no English audio tag; using the title-identified English track "
-            f"(index {chosen['index']}, title {title!r}; {why}"
-            + (f"; not preferred: {', '.join(skipped)}" if skipped else "")
-            + ")"
+            f"(index {pick.index}, title {pick.title!r}; {pick.detail}{skipped})"
         )
-        return chosen["index"]
-    if _und_as_dub() and len(streams) == 1 and _audio_lang(streams[0]) in ("", "und"):
-        log(f"no English audio tag; using the only untagged audio track (index {streams[0]['index']}) — UND_AUDIO_AS_DUB is on")
-        return streams[0]["index"]
-    if os.environ.get("REQUIRE_ENG", "1") == "1":
-        return None
-    return streams[0]["index"] if streams else None
+    elif pick.reason == media_select.REASON_UND_AS_DUB:
+        log(f"no English audio tag; using the only untagged audio track (index {pick.index}) — UND_AUDIO_AS_DUB is on")
+    return pick.index
 
 
 def media_duration(path):
@@ -1007,8 +888,9 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
     merge_log, cascade_log = [], []
     try:
         cut_list = scene_cuts(_video_for(stem)) if _snap_enabled() else []
-        cards = reflow.reflow(words, segments, merge_log=merge_log, audio_duration=audio_duration,
-                              cascade_log=cascade_log, cuts=cut_list)
+        cards = reflow.reflow(
+            words, segments, merge_log=merge_log, audio_duration=audio_duration, cascade_log=cascade_log, cuts=cut_list
+        )
     except reflow.CascadeInfeasible as e:
         return _cascade_infeasible(stem, fail, e)
     kept, fixes, dropped = [], 0, 0
@@ -1036,10 +918,7 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
     boiler_drops, boiler_audits = boilerplate.drop_indices(cards, rec=rec)
     for a in boiler_audits:
         if a["dropped"]:
-            log(
-                f"  boilerplate {a['run']} cue dropped at {float(a['start'] or 0.0):.3f}s: "
-                f"{a['text']!r}"
-            )
+            log(f"  boilerplate {a['run']} cue dropped at {float(a['start'] or 0.0):.3f}s: {a['text']!r}")
         else:
             log(f"  boilerplate mid-file cue KEPT at {float(a['start'] or 0.0):.3f}s: {a['text']!r}")
     for idx, c in enumerate(cards):
@@ -1226,9 +1105,27 @@ def endpoint_key_problem():
 def _mp3_for_upload(wav, path):
     """Endpoints cap the upload (OpenRouter 25 MB); a 24-min 16 kHz wav is ~46 MB."""
     r = subprocess.run(
-        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", wav, "-ac", "1", "-ar", "16000",
-         "-c:a", "libmp3lame", "-b:a", "32k", path],
-        capture_output=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            wav,
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "32k",
+            path,
+        ],
+        capture_output=True,
+        timeout=FFMPEG_TIMEOUT,
+        stdin=subprocess.DEVNULL,
     )
     if r.returncode != 0:
         return False
@@ -1241,13 +1138,11 @@ def _post_multipart(url, fields, filename, payload, content_type, headers, timeo
     boundary = "----dubtitlerr" + os.urandom(8).hex()
     chunks = []
     for name, value in fields:
-        chunks.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
-        )
+        chunks.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     chunks.append(
         (
             f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-            f'Content-Type: {content_type}\r\n\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
         ).encode()
     )
     chunks.append(payload)
@@ -1422,11 +1317,25 @@ def scene_cuts(video):
         pass
     try:
         r = subprocess.run(
-            ["ffmpeg", "-nostdin", "-v", "info", "-i", video, "-filter:v",
-             f"select='gt(scene,{SCENE_THRESHOLD})',showinfo", "-f", "null", "-"],
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "info",
+                "-i",
+                video,
+                "-filter:v",
+                f"select='gt(scene,{SCENE_THRESHOLD})',showinfo",
+                "-f",
+                "null",
+                "-",
+            ],
             # Bounded like any other full decode: ~80 s for an episode, ~10 min for a three-hour film.
             # On a timeout the episode is simply not snapped, and nothing is cached.
-            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=FFMPEG_TIMEOUT,
+            stdin=subprocess.DEVNULL,
         )
         cuts = sorted({round(float(m), 3) for m in re.findall(r"pts_time:([0-9.]+)", getattr(r, "stderr", "") or "")})
     except (subprocess.SubprocessError, OSError) as exc:
@@ -1448,9 +1357,11 @@ def _wav_duration(path):
     """Seconds of audio in a file, or 0.0 when ffprobe cannot say."""
     try:
         r = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=nw=1:nk=1", path],
-            capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL,
         )
         return float(r.stdout.strip())
     except (ValueError, subprocess.SubprocessError, OSError):
@@ -1461,9 +1372,11 @@ def _detect_silences(path):
     """(start, end) of every silent stretch in a file, from ffmpeg's own detector."""
     try:
         r = subprocess.run(
-            ["ffmpeg", "-nostdin", "-v", "info", "-i", path, "-af",
-             "silencedetect=noise=-35dB:d=0.35", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
+            ["ffmpeg", "-nostdin", "-v", "info", "-i", path, "-af", "silencedetect=noise=-35dB:d=0.35", "-f", "null", "-"],
+            capture_output=True,
+            text=True,
+            timeout=FFMPEG_TIMEOUT,
+            stdin=subprocess.DEVNULL,
         )
         out = r.stderr
     except (subprocess.SubprocessError, OSError):
@@ -1508,10 +1421,30 @@ def _cut_chunk(wav, start, end, out_path):
     # on a 16 kHz wav exits 0 and writes a 138-byte header with no audio at all, so the
     # chunk is silently empty and the endpoint gets nothing to transcribe.
     r = subprocess.run(
-        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.3f}",
-         "-t", f"{end - start:.3f}", "-i", wav, "-ac", "1", "-ar", "16000",
-         "-c:a", "pcm_s16le", out_path],
-        capture_output=True, text=True, timeout=FFMPEG_TIMEOUT, stdin=subprocess.DEVNULL,
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-ss",
+            f"{start:.3f}",
+            "-t",
+            f"{end - start:.3f}",
+            "-i",
+            wav,
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            out_path,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=FFMPEG_TIMEOUT,
+        stdin=subprocess.DEVNULL,
     )
     if r.returncode != 0:
         log(f"warning: cutting {start:.0f}-{end:.0f}s failed: {(r.stderr or '').strip()[:200]}")
@@ -1775,8 +1708,7 @@ def process(video):
         else:
             if WMODEL is None:
                 raise RuntimeError(
-                    "ASR_BACKEND=local but faster_whisper is not installed "
-                    "(use the full image, or set ASR_BACKEND=endpoint)"
+                    "ASR_BACKEND=local but faster_whisper is not installed (use the full image, or set ASR_BACKEND=endpoint)"
                 )
             beam_size = int(os.environ.get("WHISPER_BEAM_SIZE", "7"))
             segs, _info = WMODEL.transcribe(
@@ -1820,13 +1752,15 @@ def process(video):
                 sw = s.words or []
                 if sw:
                     for w in sw:
-                        words.append({
-                            "text": w.word,
-                            "start": w.start,
-                            "end": w.end,
-                            "prob": getattr(w, "probability", 1.0) or 1.0,
-                            "seg": si,
-                        })
+                        words.append(
+                            {
+                                "text": w.word,
+                                "start": w.start,
+                                "end": w.end,
+                                "prob": getattr(w, "probability", 1.0) or 1.0,
+                                "seg": si,
+                            }
+                        )
                 else:  # no word timestamps -> whole segment as one "word"
                     words.append(
                         {"text": s.text, "start": s.start, "end": s.end, "prob": min(1.0, math.exp(s.avg_logprob)), "seg": si}
@@ -2094,16 +2028,19 @@ def main():
                 # it as a gap, which is the truth.
                 try:
                     with open(out_for(stem + NO_SPEECH_SUFFIX), "w") as fh:
-                        json.dump({"path": v, "attempts": attempts, "exc_type": type(e).__name__,
-                                   "msg": str(e), "time": time.time()}, fh)
+                        json.dump(
+                            {"path": v, "attempts": attempts, "exc_type": type(e).__name__, "msg": str(e), "time": time.time()},
+                            fh,
+                        )
                 except OSError:
                     pass
                 log(f"  endpoint failed {attempts}x -> marked no-speech, no further retries: {os.path.basename(v)}")
             else:
                 try:
                     with open(crash_path, "w") as f:
-                        json.dump({"path": v, "exc_type": type(e).__name__, "msg": str(e),
-                                   "time": time.time(), "attempts": attempts}, f)
+                        json.dump(
+                            {"path": v, "exc_type": type(e).__name__, "msg": str(e), "time": time.time(), "attempts": attempts}, f
+                        )
                 except OSError:
                     pass
     # V2 C1: per-show run summary (glossaries/<show>.lastrun.json) -- one file per --root
