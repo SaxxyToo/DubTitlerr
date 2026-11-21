@@ -17,6 +17,7 @@ Pure stdlib for parsing; ffprobe is only needed for the duration (skipped with -
 
 Exit codes: 0 pass, 1 below threshold, 2 cannot evaluate (missing artifact).
 """
+
 import argparse
 import json
 import os
@@ -24,24 +25,34 @@ import re
 import subprocess
 import sys
 
+from dubtitlerr.core import song_spans
+
 MAX_CHARS = 88
 MAX_LINE = 46
 MAX_DUR = 7.5
 MIN_COVER = 0.90
 MIN_CARDS_PER_MIN = 6.0
-# A sentence split across two cues leaves the first without a terminal mark, so a healthy
-# file sits well under 100%. Raw ASR is orders of magnitude below: the old NGE season ran
-# 0-5% and Death Note S01E10 (still on disk) 0.0%. Between them sits a legitimately
-# split-heavy dubtitle: splitting "Thank / you / for" across cues leaves the first two bare,
-# and Chainsaw Man S01E01 measures 63.3% (159/251) -- measured 2026-11-20, the file the
-# gate was refusing. The line is therefore a MINIMUM that separates subtitles from
-# transcripts, not a quality bar; 0.60 admits the split-heavy real file with margin while
-# every raw-era file (0.0-5%) still fails by an order of magnitude.
-MIN_PUNCT_ENDED = 0.60
+# A sentence split across two cues leaves the first without a TERMINAL mark, but it is
+# still punctuated text: it ends at the clause it was cut on, and that is what separates a
+# subtitle from a transcript. Counting only terminal marks mixed the two questions
+# together -- a show whose cards are cut mid-sentence looked exactly like raw ASR.
+#
+# Measured 2026-11-21 over every dubtitle artifact in the live library (1,063 files):
+# counting a card as punctuated when it ends with ANY punctuation mark, the unpunctuated
+# band tops out at 27.1% (the raw-era FMA:B and Apothecary S02 files, which also carry
+# 0.0-8.9 punctuation marks per 100 words) and the lowest real sidecar is 86 Eighty-Six
+# S01E01 at 60.9% (325 cards; 13.4 marks/100 words). 0.50 sits under the real floor with
+# a 1.8x margin and above the raw band with a 1.8x margin. Every raw-era file, including
+# the 0.0% Death Note S01E10 control, fails by more than 30 points.
+MIN_PUNCT_ENDED = 0.50
 MAX_ORPHAN = 0.15
 MIN_NAME_LEN = 3
 
-END = (".", "!", "?", "\u2026", "\"", "'", "\u201d", "\u2019")
+# Sentence-terminal marks: what the orphan rule and "does this card end a sentence" read.
+END = (".", "!", "?", "\u2026", '"', "'", "\u201d", "\u2019")
+# Any punctuation a card can legitimately end on, clause marks included -- a card cut at a
+# comma is punctuated text continuing a sentence (see MIN_PUNCT_ENDED).
+PUNCT = END + (",", ";", ":", "\u2013", "\u2014")
 GLOSSARY_DIR = os.environ.get("GLOSSARY_DIR", "/config/glossaries")
 
 
@@ -91,8 +102,12 @@ def load_cues(stem):
     merge_pass gates `stem.eng.dubtitles.<ext>`; auditing what is already in the library
     means reading `stem.dub.en.<ext>`, so both names resolve here.
     """
-    for suffix, parser in ((".eng.dubtitles.srt", parse_srt), (".eng.dubtitles.ass", parse_ass),
-                           (".dub.en.srt", parse_srt), (".dub.en.ass", parse_ass)):
+    for suffix, parser in (
+        (".eng.dubtitles.srt", parse_srt),
+        (".eng.dubtitles.ass", parse_ass),
+        (".dub.en.srt", parse_srt),
+        (".dub.en.ass", parse_ass),
+    ):
         path = stem + suffix
         if not os.path.exists(path):
             continue
@@ -113,9 +128,12 @@ def video_duration(stem):
         if not os.path.exists(path):
             continue
         try:
-            out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                                  "-of", "default=nw=1:nk=1", path],
-                                 capture_output=True, text=True, timeout=60)
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
             return float(out.stdout.strip())
         except (OSError, ValueError, subprocess.SubprocessError):
             return None
@@ -136,20 +154,33 @@ def glossary_mishears(path):
     pairs = list((doc.get("hard_fixes") or {}).items())
     try:
         from dubtitlerr.glossary.glossary import load
+
         g = load(path) or {}
         pairs += list((g.get("token_fixes") or {}).items())
         pairs += list((g.get("phrase_fixes") or {}).items())
     except Exception:  # noqa: BLE001 - a glossary import failure must not crash the gate
         pass
-    return sorted({k for k, v in pairs
-                   if len(k) >= MIN_NAME_LEN
-                   and k.strip().casefold() != str(v).strip().casefold()
-                   # an expansion (asuka langley -> Asuka Langley Soryu) is not a mishear
-                   and k.strip().casefold() not in str(v).strip().casefold()})
+    return sorted(
+        {
+            k
+            for k, v in pairs
+            if len(k) >= MIN_NAME_LEN
+            and k.strip().casefold() != str(v).strip().casefold()
+            # an expansion (asuka langley -> Asuka Langley Soryu) is not a mishear
+            and k.strip().casefold() not in str(v).strip().casefold()
+        }
+    )
 
 
 def evaluate(cues, duration=None, mishears=(), max_chars=MAX_CHARS, max_line=MAX_LINE):
-    """Return the list of reasons this sidecar must not be published (empty = pass)."""
+    """Return the list of reasons this sidecar must not be published (empty = pass).
+
+    Song spans are not dialogue. A dub re-uses the Japanese OP/ED, and the English ASR
+    renders the sung audio as pseudo-romaji with the odd English adaptation line
+    (``core/song_spans``). Those cards carry no English to check, so they are left out of
+    the punctuation, layout and mishear checks rather than being counted as failures --
+    the voice-orchestra lyric region parked Frieren S02E01 forever otherwise.
+    """
     fails = []
     if not cues:
         return ["no cues"]
@@ -160,28 +191,35 @@ def evaluate(cues, duration=None, mishears=(), max_chars=MAX_CHARS, max_line=MAX
         per_min = len(cues) / (duration / 60.0)
         if per_min < MIN_CARDS_PER_MIN:
             fails.append(f"{per_min:.1f} cards per minute")
-    lines = [t.split("\n") for _, _, t in cues]
+    song = song_spans.indexes(cues)
+    dialogue = [c for i, c in enumerate(cues) if i not in song]
+    if not dialogue:
+        return fails + ["no dialogue cards (the whole file reads as a song)"]
+    lines = [t.split("\n") for _, _, t in dialogue]
     longest_line = max((len(x) for ls in lines for x in ls), default=0)
     if longest_line > max_line:
         fails.append(f"line of {longest_line} chars (max {max_line})")
-    over = sum(1 for _, _, t in cues if len(t.replace("\n", " ")) > max_chars)
+    over = sum(1 for _, _, t in dialogue if len(t.replace("\n", " ")) > max_chars)
     if over:
         fails.append(f"{over} card(s) over {max_chars} chars")
-    longdur = [b - a for a, b, _ in cues if b - a > MAX_DUR]
+    longdur = [b - a for a, b, _ in dialogue if b - a > MAX_DUR]
     if longdur:
         fails.append(f"{len(longdur)} card(s) over {MAX_DUR:.1f}s (max {max(longdur):.1f}s)")
-    ended = sum(1 for _, _, t in cues if t.rstrip().endswith(END))
-    if ended / len(cues) < MIN_PUNCT_ENDED:
-        fails.append(f"{100 * ended / len(cues):.0f}% of cards carry sentence punctuation")
+    ended = sum(1 for _, _, t in dialogue if t.rstrip().endswith(PUNCT))
+    if ended / len(dialogue) < MIN_PUNCT_ENDED:
+        fails.append(f"{100 * ended / len(dialogue):.0f}% of cards end with punctuation")
     # Lowercase start AFTER a sentence ended = cold-start ASR cut. A lowercase start after an
     # unpunctuated card is a sentence split across two cues, which is normal subtitling.
-    if cues[0][0] > 290:
-        fails.append(f"first cue at {cues[0][0]:.0f}s (cold open missing?)")
-    orphan = sum(1 for i in range(1, len(cues))
-                 if cues[i][2][:1].islower() and cues[i - 1][2].rstrip().endswith((".", "!", "?", "\u2026")))
-    if orphan / len(cues) > MAX_ORPHAN:
-        fails.append(f"{100 * orphan / len(cues):.0f}% lowercase orphan cards")
-    text = " ".join(t.replace("\n", " ") for _, _, t in cues)
+    if dialogue[0][0] > 290:
+        fails.append(f"first cue at {dialogue[0][0]:.0f}s (cold open missing?)")
+    orphan = sum(
+        1
+        for i in range(1, len(dialogue))
+        if dialogue[i][2][:1].islower() and dialogue[i - 1][2].rstrip().endswith((".", "!", "?", "\u2026"))
+    )
+    if orphan / len(dialogue) > MAX_ORPHAN:
+        fails.append(f"{100 * orphan / len(dialogue):.0f}% lowercase orphan cards")
+    text = " ".join(t.replace("\n", " ") for _, _, t in dialogue)
     hits = [w for w in mishears if re.search(rf"(?<!\w){re.escape(w)}(?!\w)", text, re.I)]
     if hits:
         fails.append(f"known mishear(s): {', '.join(sorted(set(hits))[:6])}")
@@ -218,14 +256,17 @@ def main(argv=None):
     gloss_path = a.glossary or glossary_for(a.stem, a.glossary_dir)
     mishears = glossary_mishears(gloss_path) if gloss_path else []
     fails = evaluate(cues, duration, mishears, max_line=a.max_line)
+    songs = song_spans.describe(cues)
     if a.json:
-        print(json.dumps({"artifact": path, "cues": len(cues), "duration": duration,
-                          "fails": fails}, indent=1))
+        print(
+            json.dumps({"artifact": path, "cues": len(cues), "duration": duration, "song_spans": songs, "fails": fails}, indent=1)
+        )
     elif fails:
         print(f"gate: FAIL {os.path.basename(path)} — {'; '.join(fails)}")
     else:
         covered = f", {100 * cues[-1][1] / duration:.0f}% covered" if duration else ""
-        print(f"gate: ok {os.path.basename(path)} ({len(cues)} cues{covered})")
+        sung = f", {sum(s['cards'] for s in songs)} song card(s) excluded" if songs else ""
+        print(f"gate: ok {os.path.basename(path)} ({len(cues)} cues{covered}{sung})")
     return 1 if fails else 0
 
 

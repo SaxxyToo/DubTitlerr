@@ -39,6 +39,11 @@ What this module will and will not do:
     used to be reported unfixable forever. Such a card is dropped instead -- it removes no
     spoken word, and the fansub/song path owns that span -- and the drop is counted in the
     audit document (`music_cues_dropped`).
+  * **A song span is not dialogue either.** The dub re-uses the Japanese OP/ED, and the
+    English ASR renders the singing as pseudo-romaji. Those cards are recognised as a song
+    span (`core/song_spans`) and left exactly as they are: `publish_gate` does not score
+    them, and this module does not re-wrap, split or drop them. The release's own lyric
+    and sign events stay where the merge put them.
   * **An already-passing file is a no-op.** No audit entry, no stage record, no byte
     written -- so a healthy episode costs the merge pass nothing.
   * **A give-up is PARKED, not retried every pass.** When the attempt ends `unfixable`,
@@ -99,6 +104,7 @@ import sys
 import time
 from collections import Counter
 
+from dubtitlerr.core import song_spans
 from dubtitlerr.core.atomic_file import MODE_KEEP, atomic_write
 from dubtitlerr.glossary import glossary as glossary_text
 from dubtitlerr.pipeline import card_split, publish_gate, reflow
@@ -126,7 +132,12 @@ MAX_AUDIT_ATTEMPTS = 20
 #     parked with `known mishear(s)` heal on their first pass under this epoch. The attempt
 #     stamp also carries a glossary fingerprint now, so a glossary change retries that
 #     show's parked episodes once (exactly what heals them) without an operator unpark.
-GATE_FIX_EPOCH = 2
+#   3 (2026-11-21): park-class resolutions. A card claims an ASR word that starts up to
+#     WORDS_LEAD before it, so the repetition trim fires on the real card it was written
+#     for (Cyberpunk S02E01 #101); song-span cards are recognised and left untouched
+#     (Frieren S02E01's ending lyrics). Every episode parked at an earlier epoch is
+#     re-examined once under this behaviour.
+GATE_FIX_EPOCH = 3
 
 # Outcomes that are PARKED: a deterministic give-up on this exact artifact. `cannot-evaluate`
 # is deliberately absent -- an unreadable artifact can be transient, so it keeps retrying.
@@ -143,6 +154,14 @@ GATE_MAX_DUR = publish_gate.MAX_DUR
 # leading 'A' then the held letter -- and a break inserted anywhere in it removes no
 # character.
 RUN_STRAYS = 2
+
+# How far before its own start a card may claim an ASR word. The assembler puts the card
+# boundary at the segment boundary and a word at its own onset, so the two disagree by a
+# few frames: Cyberpunk S02E01's card #101 ("I need you." over 22.1 s) starts at 395.70 s
+# while its first word "I" starts at 395.12 s. Without that word the card's text matches no
+# word run at all, the repetition trim cannot fire, and the card was reported unfixable
+# forever. A word starting more than a second before its card is a different card's word.
+WORDS_LEAD = 1.0
 
 # `publish_gate.evaluate` reports faults as prose. These are the ones a layout repair can
 # address; anything else is a different failure class and must not be attempted.
@@ -266,7 +285,7 @@ def _wrap_run(text, max_line=GATE_MAX_LINE):
         return None
     parts = -(-len(text) // max_line)  # ceil: how many lines the run needs
     size = -(-len(text) // parts)  # ceil: even lines, every one inside the budget
-    return "\n".join(text[i:i + size] for i in range(0, len(text), size))
+    return "\n".join(text[i : i + size] for i in range(0, len(text), size))
 
 
 def _own_speech(words, text):
@@ -286,10 +305,9 @@ def _own_speech(words, text):
     if not n or n > len(norm):
         return None
     for i in range(len(norm) - n + 1):
-        if norm[i:i + n] != tokens:
+        if norm[i : i + n] != tokens:
             continue
-        run = [w for w in words[i:i + n]
-               if w.get("start") is not None and w.get("end") is not None]
+        run = [w for w in words[i : i + n] if w.get("start") is not None and w.get("end") is not None]
         if not run:
             return None
         return min(w["start"] for w in run), max(w["end"] for w in run)
@@ -355,11 +373,16 @@ def _pieces(text, start, end, words, next_start=None, is_last=False, depth=0):
         return None
     out = []
     for half in pair:
-        sub_words = (card_split.card_words({"words": words}, half["start"], half["end"])
-                     if words else None)
-        pieces = _pieces(half["text"], half["start"], half["end"], sub_words,
-                         next_start if half is pair[-1] else pair[1]["start"],
-                         is_last and half is pair[-1], depth + 1)
+        sub_words = card_split.card_words({"words": words}, half["start"], half["end"]) if words else None
+        pieces = _pieces(
+            half["text"],
+            half["start"],
+            half["end"],
+            sub_words,
+            next_start if half is pair[-1] else pair[1]["start"],
+            is_last and half is pair[-1],
+            depth + 1,
+        )
         if pieces is None:
             return None
         out.extend(pieces)
@@ -372,23 +395,34 @@ def _why_unsplittable(text):
         run = _wrap_run(flat)
         if run is not None:
             counts = _run_counts(flat)
-            shape = (f"{len(flat)} identical chars" if len(counts) == 1 else
-                     f"{len(flat)} chars, one letter repeated {max(counts.values())} times")
+            shape = (
+                f"{len(flat)} identical chars"
+                if len(counts) == 1
+                else f"{len(flat)} chars, one letter repeated {max(counts.values())} times"
+            )
             wrapped = " ".join(run.split("\n"))
             if len(wrapped) > GATE_MAX_CHARS:
-                return (f"single run of {shape}: a line break fits the "
-                        f"{GATE_MAX_LINE}-char line, but the card's total "
-                        f"({len(wrapped)} with the break) is over the gate's "
-                        f"{GATE_MAX_CHARS}-char budget, so it cannot be made displayable "
-                        f"without changing words")
-            return (f"single run of {shape}: the line break fits, but "
-                    f"the card is still over the {GATE_MAX_DUR:.1f}s budget and a repair "
-                    f"may not change words (splitting a single run across cards is not a "
-                    f"layout repair)")
-        return (f"single unbroken token of {len(flat)} chars: there is no word boundary to "
-                f"wrap or split at, and a repair may not change words")
-    return (f"no word/sentence/clause boundary leaves two cards inside the gate's budget "
-            f"({GATE_MAX_CHARS} chars, {GATE_MAX_LINE}/line, {GATE_MAX_DUR:.1f}s)")
+                return (
+                    f"single run of {shape}: a line break fits the "
+                    f"{GATE_MAX_LINE}-char line, but the card's total "
+                    f"({len(wrapped)} with the break) is over the gate's "
+                    f"{GATE_MAX_CHARS}-char budget, so it cannot be made displayable "
+                    f"without changing words"
+                )
+            return (
+                f"single run of {shape}: the line break fits, but "
+                f"the card is still over the {GATE_MAX_DUR:.1f}s budget and a repair "
+                f"may not change words (splitting a single run across cards is not a "
+                f"layout repair)"
+            )
+        return (
+            f"single unbroken token of {len(flat)} chars: there is no word boundary to "
+            f"wrap or split at, and a repair may not change words"
+        )
+    return (
+        f"no word/sentence/clause boundary leaves two cards inside the gate's budget "
+        f"({GATE_MAX_CHARS} chars, {GATE_MAX_LINE}/line, {GATE_MAX_DUR:.1f}s)"
+    )
 
 
 def fix_cues(cues, words_doc=None, max_line=GATE_MAX_LINE):
@@ -402,34 +436,52 @@ def fix_cues(cues, words_doc=None, max_line=GATE_MAX_LINE):
     normalized.
     """
     new_cues, actions, origin = [], [], []
+    # A song span is not dialogue: its cards carry no word worth re-flowing, and the
+    # release's own lyric lines must keep their bytes. `publish_gate` already excludes the
+    # span from its dialogue checks; leaving the cards alone here keeps the two in step.
+    song = song_spans.indexes(cues)
     for index, (start, end, text) in enumerate(cues):
         flat = _flat(text)
         dur = end - start
-        if not cue_faults(text, dur, max_line):
+        if index in song or not cue_faults(text, dur, max_line):
             new_cues.append((start, end, text))
             origin.append(index)
             continue
         # A music marker that outlives the screen budget is not a layout fault and has no
         # words to keep: drop it through the song/music policy. Never wrap or split-bail.
         if is_music_marker(flat) and dur > GATE_MAX_DUR + reflow.EPS:
-            actions.append({
-                "index": index,
-                "action": "drop-music",
-                "before": {"start": round(start, 3), "end": round(end, 3),
-                           "dur": round(dur, 3), "chars": len(flat),
-                           "longest": _line_len(text)},
-                "after": [],
-            })
+            actions.append(
+                {
+                    "index": index,
+                    "action": "drop-music",
+                    "before": {
+                        "start": round(start, 3),
+                        "end": round(end, 3),
+                        "dur": round(dur, 3),
+                        "chars": len(flat),
+                        "longest": _line_len(text),
+                    },
+                    "after": [],
+                }
+            )
             continue
-        words = card_split.card_words(words_doc, start, end) if words_doc else None
+        words = card_split.card_words(words_doc, start - WORDS_LEAD, end) if words_doc else None
         next_start = cues[index + 1][0] if index + 1 < len(cues) else None
-        pieces = _pieces(text, start, end, words, next_start,
-                         is_last=index == len(cues) - 1)
+        pieces = _pieces(text, start, end, words, next_start, is_last=index == len(cues) - 1)
         if pieces is None:
-            return None, {"index": index, "start": round(start, 3), "end": round(end, 3),
-                          "dur": round(dur, 3), "chars": len(flat),
-                          "longest": _line_len(text),
-                          "reason": _why_unsplittable(text)}, None
+            return (
+                None,
+                {
+                    "index": index,
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "dur": round(dur, 3),
+                    "chars": len(flat),
+                    "longest": _line_len(text),
+                    "reason": _why_unsplittable(text),
+                },
+                None,
+            )
         if pieces[0].get("trimmed"):
             action = "trim-end"
         elif len(pieces) > 1:
@@ -438,18 +490,30 @@ def fix_cues(cues, words_doc=None, max_line=GATE_MAX_LINE):
             action = "wrap-run"
         else:
             action = "rewrap"
-        actions.append({
-            "index": index,
-            "action": action,
-            "before": {"start": round(start, 3), "end": round(end, 3),
-                       "dur": round(dur, 3), "chars": len(flat),
-                       "longest": _line_len(text)},
-            "after": [{"start": round(p["start"], 3), "end": round(p["end"], 3),
-                       "dur": round(p["end"] - p["start"], 3),
-                       "chars": len(_flat(p["text"])),
-                       "lines": len(p["text"].split("\n")),
-                       "longest": _line_len(p["text"])} for p in pieces],
-        })
+        actions.append(
+            {
+                "index": index,
+                "action": action,
+                "before": {
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "dur": round(dur, 3),
+                    "chars": len(flat),
+                    "longest": _line_len(text),
+                },
+                "after": [
+                    {
+                        "start": round(p["start"], 3),
+                        "end": round(p["end"], 3),
+                        "dur": round(p["end"] - p["start"], 3),
+                        "chars": len(_flat(p["text"])),
+                        "lines": len(p["text"].split("\n")),
+                        "longest": _line_len(p["text"]),
+                    }
+                    for p in pieces
+                ],
+            }
+        )
         new_cues.extend((p["start"], p["end"], p["text"]) for p in pieces)
         origin.extend([index] * len(pieces))
     return new_cues, actions, origin
@@ -466,6 +530,12 @@ def correct_cues(cues, gloss):
     ``glossary.correct`` works a line at a time, so the break count never moves. Timing is
     copied through untouched -- this lane changes words, never when they are shown.
 
+    A song-span card is never corrected. A glossary rule is admitted from dialogue, and a
+    lyric that happens to match one (Frieren S02E01's glossary carries
+    ``Furikaereba -> Frieren``) must keep the release's own words: no correction can make
+    a lyric right, and rewriting it ships "Frieren itsumo." where the song sings
+    "Furikaereba itsumo." -- which is exactly what this lane did before song spans existed.
+
     Returns ``(cues, corrections)``; ``corrections`` names every card that changed, with
     the text before/after, so the audit says exactly what was re-applied.
     """
@@ -475,8 +545,12 @@ def correct_cues(cues, gloss):
     if not (names or token_fixes or phrase_fixes):
         return cues, []
     rules = {"names": names, "token_fixes": token_fixes, "phrase_fixes": phrase_fixes}
+    song = song_spans.indexes(cues)
     out, corrections = [], []
     for index, (start, end, text) in enumerate(cues):
+        if index in song:
+            out.append((start, end, text))
+            continue
         lines, changed = [], 0
         for line in text.split("\n"):
             fixed, n = glossary_text.correct(line, rules)
@@ -487,8 +561,7 @@ def correct_cues(cues, gloss):
             continue
         new_text = "\n".join(lines)
         out.append((start, end, new_text))
-        corrections.append({"index": index, "changes": changed,
-                            "before": text, "after": new_text})
+        corrections.append({"index": index, "changes": changed, "before": text, "after": new_text})
     return out, corrections
 
 
@@ -498,9 +571,10 @@ def _corrections_summary(corrections, limit=3):
     for c in corrections[:limit]:
         parts.append(f"card #{c['index']} {c['before']!r} -> {c['after']!r}")
     more = len(corrections) - len(parts)
-    return ("re-applied the glossary's corrections to "
-            f"{len(corrections)} card(s): " + "; ".join(parts)
-            + (f"; +{more} more" if more > 0 else ""))
+    return (
+        "re-applied the glossary's corrections to "
+        f"{len(corrections)} card(s): " + "; ".join(parts) + (f"; +{more} more" if more > 0 else "")
+    )
 
 
 def _parse_rendered(path, text):
@@ -560,7 +634,7 @@ def _ass_events(lines):
     if start is None:
         return []
     fmt = next((ln for ln in lines[start:] if ln.startswith("Format:")), "")
-    fields = [f.strip() for f in fmt[len("Format:"):].split(",")] if fmt else []
+    fields = [f.strip() for f in fmt[len("Format:") :].split(",")] if fmt else []
     nf = max(1, len(fields))
     styles = set(re.findall(r"^Style:\s*([^,]+)", "\n".join(lines), re.M))
     style = "Dubtitles" if "Dubtitles" in styles else None
@@ -574,7 +648,7 @@ def _ass_events(lines):
             continue
         if style and parts[3].strip() != style:
             continue
-        events.append({"line": i, "prefix": parts[:nf - 1], "text": parts[-1]})
+        events.append({"line": i, "prefix": parts[: nf - 1], "text": parts[-1]})
     return events
 
 
@@ -591,8 +665,7 @@ def render_ass(text, cues, origin, touched, dropped=frozenset()):
     lines = text.splitlines()
     events = _ass_events(lines)
     if len(events) != len({*origin} | set(dropped)):
-        raise ValueError(f"{len(events)} dialogue events but "
-                         f"{len({*origin} | set(dropped))} source cards")
+        raise ValueError(f"{len(events)} dialogue events but {len({*origin} | set(dropped))} source cards")
     groups = {}
     for k, (start, end, body) in enumerate(cues):
         groups.setdefault(origin[k], []).append((start, end, body))
@@ -629,17 +702,16 @@ def _srt_blocks(text):
         if len(lines) < 2 or "-->" not in lines[1]:
             continue
         a, b = lines[1].split("-->")
-        blocks.append({"start": publish_gate._srt_time(a.strip()),
-                       "end": publish_gate._srt_time(b.strip()),
-                       "body": "\n".join(lines[2:])})
+        blocks.append(
+            {"start": publish_gate._srt_time(a.strip()), "end": publish_gate._srt_time(b.strip()), "body": "\n".join(lines[2:])}
+        )
     return blocks
 
 
 def render_srt(text, cues, origin, touched, dropped=frozenset()):
     blocks = _srt_blocks(text)
     if len(blocks) != len({*origin} | set(dropped)):
-        raise ValueError(f"{len(blocks)} srt blocks but "
-                         f"{len({*origin} | set(dropped))} source cards")
+        raise ValueError(f"{len(blocks)} srt blocks but {len({*origin} | set(dropped))} source cards")
     out = []
     for i, (start, end, body) in enumerate(cues, 1):
         if origin[i - 1] not in touched:
@@ -655,10 +727,8 @@ def load_artifact(stem):
         return None, [], None
     text = open(path, encoding="utf-8-sig", errors="replace").read()
     if path.endswith(".srt"):
-        return path, cues, lambda new, org, touched, dropped=frozenset(): render_srt(
-            text, new, org, touched, dropped)
-    return path, cues, lambda new, org, touched, dropped=frozenset(): render_ass(
-        text, new, org, touched, dropped)
+        return path, cues, lambda new, org, touched, dropped=frozenset(): render_srt(text, new, org, touched, dropped)
+    return path, cues, lambda new, org, touched, dropped=frozenset(): render_ass(text, new, org, touched, dropped)
 
 
 # --- audit ---------------------------------------------------------------------------
@@ -670,6 +740,7 @@ def _audit_path(stem):
     # the fixer still runs -- and dry-runs -- in an environment the gate itself can run in.
     try:
         from dubtitlerr.core import common
+
         return common.out_for(stem + AUDIT_SUFFIX)
     except ImportError:
         return stem + AUDIT_SUFFIX
@@ -716,6 +787,7 @@ def _signature(fails, artifact):
 def _park_path(stem):
     try:
         from dubtitlerr.core import common
+
         return common.out_for(stem + PARK_SUFFIX)
     except ImportError:
         return stem + PARK_SUFFIX
@@ -736,10 +808,15 @@ def _glossary_fingerprint(stem):
         return ""
     if not gloss:
         return ""
-    blob = json.dumps({"names": sorted(gloss.get("names") or []),
-                       "token": sorted((gloss.get("token_fixes") or {}).items()),
-                       "phrase": sorted((gloss.get("phrase_fixes") or {}).items())},
-                      ensure_ascii=False, sort_keys=True)
+    blob = json.dumps(
+        {
+            "names": sorted(gloss.get("names") or []),
+            "token": sorted((gloss.get("token_fixes") or {}).items()),
+            "phrase": sorted((gloss.get("phrase_fixes") or {}).items()),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
@@ -752,9 +829,12 @@ def attempt_stamp(stem=None):
     glossary field carries.
     """
     from dubtitlerr.core import common
-    stamp = {"transcribe_version": common.TRANSCRIBE_VERSION,
-             "text_version": common.TEXT_VERSION,
-             "gate_fix_epoch": GATE_FIX_EPOCH}
+
+    stamp = {
+        "transcribe_version": common.TRANSCRIBE_VERSION,
+        "text_version": common.TEXT_VERSION,
+        "gate_fix_epoch": GATE_FIX_EPOCH,
+    }
     if stem is not None:
         stamp["glossary"] = _glossary_fingerprint(stem)
     return stamp
@@ -791,8 +871,7 @@ def validate_park(doc):
     stamp, now = doc.get("attempt_stamp"), attempt_stamp()
     # Typed against TODAY's stamp, not against int: if a version ever becomes a string the
     # validator follows it, so a legitimate record is never called unusable.
-    if not isinstance(stamp, dict) or not all(
-            k in stamp and type(stamp[k]) is type(now[k]) for k in now):
+    if not isinstance(stamp, dict) or not all(k in stamp and type(stamp[k]) is type(now[k]) for k in now):
         raise ParkRecordError(f"park record has no usable attempt stamp: {stamp!r}")
 
 
@@ -817,8 +896,7 @@ def clear_park(stem):
 
 
 def _requests_dir():
-    return os.environ.get("REQUESTS_DIR") or os.path.join(
-        os.environ.get("CONFIG_DIR", "/config"), "requests")
+    return os.environ.get("REQUESTS_DIR") or os.path.join(os.environ.get("CONFIG_DIR", "/config"), "requests")
 
 
 def request_since(show, when):
@@ -837,8 +915,7 @@ def request_since(show, when):
         except OSError:
             continue
         for entry in entries:
-            if (not entry.is_file() or entry.name.startswith(".")
-                    or not entry.name.endswith((".json", ".running"))):
+            if not entry.is_file() or entry.name.startswith(".") or not entry.name.endswith((".json", ".running")):
                 continue
             try:
                 if entry.stat().st_mtime <= when:
@@ -868,8 +945,10 @@ def parked_state(stem, show=None):
         return False, "the attempt stamp changed since the park (a fix or version bump)"
     if request_since(show, float(doc.get("at") or 0)):
         return False, "a run request was created after the park"
-    return True, (f"gate_fix gave up ({doc.get('outcome')}): {doc.get('summary', '')}"
-                  + " — retries on a version/epoch change or a new run request")
+    return True, (
+        f"gate_fix gave up ({doc.get('outcome')}): {doc.get('summary', '')}"
+        + " — retries on a version/epoch change or a new run request"
+    )
 
 
 # --- one attempt ---------------------------------------------------------------------
@@ -881,18 +960,17 @@ def _fixed_summary(actions):
     for a in actions:
         before = a["before"]["dur"]
         if a["action"] == "trim-end":
-            parts.append(f"card #{a['index']} ended at its own speech "
-                         f"({before:.2f}s -> {a['after'][0]['dur']:.2f}s)")
+            parts.append(f"card #{a['index']} ended at its own speech ({before:.2f}s -> {a['after'][0]['dur']:.2f}s)")
         elif a["action"] == "drop-music":
-            parts.append(f"card #{a['index']} dropped (music marker over "
-                         f"{GATE_MAX_DUR:.1f}s, {before:.1f}s, no words)")
+            parts.append(f"card #{a['index']} dropped (music marker over {GATE_MAX_DUR:.1f}s, {before:.1f}s, no words)")
         elif a["action"] == "split":
-            parts.append(f"card #{a['index']} split into {len(a['after'])} "
-                         f"(longest {max(x['dur'] for x in a['after']):.2f}s)")
+            parts.append(f"card #{a['index']} split into {len(a['after'])} (longest {max(x['dur'] for x in a['after']):.2f}s)")
         elif a["action"] == "wrap-run":
-            parts.append(f"card #{a['index']} repeated-character run wrapped onto "
-                         f"{a['after'][0]['lines']} lines "
-                         f"(longest {a['after'][0]['longest']} chars)")
+            parts.append(
+                f"card #{a['index']} repeated-character run wrapped onto "
+                f"{a['after'][0]['lines']} lines "
+                f"(longest {a['after'][0]['longest']} chars)"
+            )
         else:
             parts.append(f"card #{a['index']} re-wrapped")
     return "; ".join(parts)
@@ -904,12 +982,20 @@ def attempt(stem, duration=None, max_line=GATE_MAX_LINE, dry_run=False):
     The returned ``code`` is the CLI's exit code (see the module docstring).
     """
     path, cues, render = load_artifact(stem)
-    result = {"artifact": path, "code": 1, "outcome": OUTCOME_STILL_FAILING,
-              "summary": "", "fails": [], "fails_after": [], "fixes": []}
+    result = {
+        "artifact": path,
+        "code": 1,
+        "outcome": OUTCOME_STILL_FAILING,
+        "summary": "",
+        "fails": [],
+        "fails_after": [],
+        "fixes": [],
+    }
     if not path:
-        result.update(outcome=OUTCOME_CANNOT_EVALUATE,
-                      summary=f"no subtitle artifact for {os.path.basename(stem)}"
-                              f" (the gate cannot evaluate it)")
+        result.update(
+            outcome=OUTCOME_CANNOT_EVALUATE,
+            summary=f"no subtitle artifact for {os.path.basename(stem)} (the gate cannot evaluate it)",
+        )
         return _finish(stem, result, dry_run, parked=True)
 
     dur = duration if duration is not None else publish_gate.video_duration(stem)
@@ -919,8 +1005,7 @@ def attempt(stem, duration=None, max_line=GATE_MAX_LINE, dry_run=False):
     before = publish_gate.evaluate(cues, dur, mishears, max_line=max_line)
     result["fails"] = before
     if not before:
-        result.update(code=0, outcome=OUTCOME_NOOP,
-                      summary=f"{os.path.basename(path)} already passes the gate")
+        result.update(code=0, outcome=OUTCOME_NOOP, summary=f"{os.path.basename(path)} already passes the gate")
         if not dry_run:
             clear_park(stem)  # a healed episode must not stay parked
         return result  # NO-OP: no audit entry, no stage record, no bytes touched
@@ -936,31 +1021,28 @@ def attempt(stem, duration=None, max_line=GATE_MAX_LINE, dry_run=False):
     if corrections:
         result["corrections"] = corrections
         corrected_text = render(cues, range(len(cues)), corrected)
-        after = publish_gate.evaluate(_parse_rendered(path, corrected_text), dur, mishears,
-                                      max_line=max_line)
+        after = publish_gate.evaluate(_parse_rendered(path, corrected_text), dur, mishears, max_line=max_line)
         result["fails_after"] = after
         if not after:
-            result.update(code=0, outcome=OUTCOME_CORRECTED,
-                          summary=_corrections_summary(corrections) + " — gate passes")
+            result.update(code=0, outcome=OUTCOME_CORRECTED, summary=_corrections_summary(corrections) + " — gate passes")
             if not dry_run:
                 _write_product(path, corrected_text)
                 _record(stem, result, parked=False, failures_before=before)
             return result
 
     _layout, other = split_fails(after)
-    music = [i for i, (start, end, text) in enumerate(cues)
-             if is_music_marker(_flat(text)) and end - start > GATE_MAX_DUR + reflow.EPS]
+    music = [
+        i for i, (start, end, text) in enumerate(cues) if is_music_marker(_flat(text)) and end - start > GATE_MAX_DUR + reflow.EPS
+    ]
     # A non-layout finding that the correction lane could not heal is still not attempted --
     # UNLESS the file also carries music markers to drop. A marker is not dialogue, and
     # removing it is not a transcript repair; it can also lift the punctuation ratio
     # honestly (Blue Eye S01E06: 59.4% before its three over-duration '♪♪' cards, 60.2%
     # after). The in-memory re-gate decides: if any finding survives, nothing is written.
     if other and not music:
-        summary = ("not a layout fault (needs the transcript or a model): "
-                   + "; ".join(other))
+        summary = "not a layout fault (needs the transcript or a model): " + "; ".join(other)
         if corrections:
-            summary = (_corrections_summary(corrections)
-                       + " — the gate still refuses: " + "; ".join(other))
+            summary = _corrections_summary(corrections) + " — the gate still refuses: " + "; ".join(other)
         result.update(outcome=OUTCOME_UNSUPPORTED, summary=summary)
         return _finish(stem, result, dry_run, parked=True)
 
@@ -975,9 +1057,11 @@ def attempt(stem, duration=None, max_line=GATE_MAX_LINE, dry_run=False):
 
     new_cues, actions, origin = fix_cues(cues, words_doc, max_line=max_line)
     if new_cues is None:
-        result.update(outcome=OUTCOME_UNFIXABLE, fix=actions,
-                      summary=(f"card #{actions['index']} cannot be normalized: "
-                               + actions["reason"]))
+        result.update(
+            outcome=OUTCOME_UNFIXABLE,
+            fix=actions,
+            summary=(f"card #{actions['index']} cannot be normalized: " + actions["reason"]),
+        )
         return _finish(stem, result, dry_run, parked=True)
     result["fixes"] = actions
 
@@ -990,9 +1074,7 @@ def attempt(stem, duration=None, max_line=GATE_MAX_LINE, dry_run=False):
     after = publish_gate.evaluate(after_cues, dur, mishears, max_line=max_line)
     result["fails_after"] = after
     if after:
-        result.update(outcome=OUTCOME_STILL_FAILING,
-                      summary="fixed the layout but the gate still refuses: "
-                              + "; ".join(after))
+        result.update(outcome=OUTCOME_STILL_FAILING, summary="fixed the layout but the gate still refuses: " + "; ".join(after))
         return _finish(stem, result, dry_run, parked=True)
 
     summary = _fixed_summary(actions) + " — gate passes"
@@ -1035,12 +1117,16 @@ def _record(stem, result, parked, failures_before=None):
     """
     doc = read_audit(stem)
     attempts = doc.get("attempts") if isinstance(doc.get("attempts"), list) else []
-    fails_before = (failures_before if failures_before is not None
-                    else result["fails"])
-    entry = {"at": time.time(), "outcome": result["outcome"],
-             "summary": result["summary"], "artifact": result.get("artifact"),
-             "fails_before": fails_before, "fails_after": result.get("fails_after", []),
-             "fixes": result.get("fixes", [])}
+    fails_before = failures_before if failures_before is not None else result["fails"]
+    entry = {
+        "at": time.time(),
+        "outcome": result["outcome"],
+        "summary": result["summary"],
+        "artifact": result.get("artifact"),
+        "fails_before": fails_before,
+        "fails_after": result.get("fails_after", []),
+        "fixes": result.get("fixes", []),
+    }
     if result.get("corrections"):
         entry["corrections"] = result["corrections"]
     if result.get("fix"):
@@ -1052,15 +1138,13 @@ def _record(stem, result, parked, failures_before=None):
     if dropped:
         doc["music_cues_dropped"] = int(doc.get("music_cues_dropped") or 0) + dropped
 
-    sig = _signature(result.get("fails_after") or fails_before,
-                     result.get("artifact"))
+    sig = _signature(result.get("fails_after") or fails_before, result.get("artifact"))
     previous = (doc.get("escalation") or {}).get("signature")
     if parked:
         if previous == sig:
             result["code"] = 1  # known refusal: keep the log line, skip the notification
         else:
-            doc["escalation"] = {"signature": sig, "at": entry["at"],
-                                 "reason": result["summary"]}
+            doc["escalation"] = {"signature": sig, "at": entry["at"], "reason": result["summary"]}
             result["code"] = 3
     else:
         result["code"] = 0 if result["outcome"] in PASSED else 1
@@ -1077,8 +1161,8 @@ def _record(stem, result, parked, failures_before=None):
     outcome = "ok" if result["outcome"] in PASSED else "refused"
     try:
         from dubtitlerr.core import common
-        common.write_stage(stem, "gate_fix", outcome,
-                           f"{result['outcome']}: {result['summary']}"[:300])
+
+        common.write_stage(stem, "gate_fix", outcome, f"{result['outcome']}: {result['summary']}"[:300])
     except (ImportError, OSError, ValueError):
         pass
 
@@ -1089,18 +1173,16 @@ def _record(stem, result, parked, failures_before=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("stem", help="path stem without .eng.dubtitles.<ext>")
-    ap.add_argument("--duration", type=float, default=None,
-                    help="container duration in seconds (default: ffprobe the video)")
+    ap.add_argument("--duration", type=float, default=None, help="container duration in seconds (default: ffprobe the video)")
     ap.add_argument("--max-line", type=int, default=GATE_MAX_LINE)
-    ap.add_argument("--dry-run", action="store_true",
-                    help="report what would be fixed; write nothing at all")
-    ap.add_argument("--parked", action="store_true",
-                    help="exit 0 if this episode is parked and the verdict still stands; "
-                         "print the reason. Writes nothing.")
-    ap.add_argument("--unpark", action="store_true",
-                    help="drop the parked verdict so the next attempt runs now")
-    ap.add_argument("--show", default=None,
-                    help="--parked: show name, to honour a run request created after the park")
+    ap.add_argument("--dry-run", action="store_true", help="report what would be fixed; write nothing at all")
+    ap.add_argument(
+        "--parked",
+        action="store_true",
+        help="exit 0 if this episode is parked and the verdict still stands; print the reason. Writes nothing.",
+    )
+    ap.add_argument("--unpark", action="store_true", help="drop the parked verdict so the next attempt runs now")
+    ap.add_argument("--show", default=None, help="--parked: show name, to honour a run request created after the park")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     if a.parked:
@@ -1116,8 +1198,7 @@ def main(argv=None):
         clear_park(a.stem)
         return 0
     try:
-        result = attempt(a.stem, duration=a.duration, max_line=a.max_line,
-                         dry_run=a.dry_run)
+        result = attempt(a.stem, duration=a.duration, max_line=a.max_line, dry_run=a.dry_run)
     except (OSError, ValueError) as exc:
         print(f"gate_fix: cannot evaluate {os.path.basename(a.stem)}: {exc}")
         return 2
@@ -1128,8 +1209,7 @@ def main(argv=None):
             head = "gate_fix: would fix"
         else:
             head = "gate_fix:"
-        print(f"{head} {os.path.basename(a.stem)} — {result['outcome']}: "
-              f"{result['summary']}")
+        print(f"{head} {os.path.basename(a.stem)} — {result['outcome']}: {result['summary']}")
     return result["code"]
 
 
