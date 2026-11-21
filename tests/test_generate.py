@@ -2981,3 +2981,24 @@ def test_eng_audio_index_ignores_an_untagged_commentary_title(monkeypatch):
         ),
     )
     assert generate.eng_audio_index("ep.mkv") is None
+
+
+def test_eng_audio_index_skips_an_english_commentary_track(monkeypatch):
+    # A commentary track is never the dub, even when it carries the only eng/en tag.
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams(
+            {"index": 1, "tags": {"language": "eng", "title": "English Commentary"}},
+            {"index": 2, "tags": {"language": "eng", "title": "English 5.1"}},
+        ),
+    )
+    assert generate.eng_audio_index("ep.mkv") == 2
+
+
+def test_eng_audio_index_refuses_an_all_commentary_english_set(monkeypatch):
+    monkeypatch.setenv("REQUIRE_ENG", "1")
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams({"index": 1, "tags": {"language": "eng", "title": "English Commentary"}}),
+    )
+    assert generate.eng_audio_index("ep.mkv") is None

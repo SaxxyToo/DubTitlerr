@@ -1125,3 +1125,70 @@ def test_decoder_stamp_identity_reads_the_variable_the_active_backend_uses(monke
 
     monkeypatch.setenv("ASR_BACKEND", "local")
     assert common.decoder_stamp_identity() == {"asr_backend": "local", "asr_model": "large-v3-turbo"}
+
+
+# --- zxx (no linguistic content) signs tracks ---------------------------------
+# The correct tag for a curated signs/songs track is zxx, which is intentionally outside
+# SUB_LANGS. When no in-scope track names itself as signs, that track is the release's own
+# typesetting and must be read; a real out-of-scope language (spa/ger) must not be.
+
+
+def test_signs_streams_reads_a_zxx_named_signs_track_when_no_in_scope_track_is_named(monkeypatch):
+    monkeypatch.setattr(
+        common,
+        "subprocess",
+        _fake_ffprobe(
+            [
+                _sub(3, lang="eng", title="Dialogue [GSK_kun]"),
+                _sub(4, lang="zxx", title="Signs/Songs [GSK_kun]"),
+            ]
+        ),
+    )
+    assert common.signs_sub_streams("fake.mkv", {"eng", "en", "und"}) == [4]
+    assert common.signs_track_dedicated("fake.mkv", {"eng", "en", "und"}) is True
+
+
+def test_signs_streams_prefers_an_in_scope_named_track_over_zxx(monkeypatch):
+    monkeypatch.setattr(
+        common,
+        "subprocess",
+        _fake_ffprobe(
+            [
+                _sub(3, lang="eng", title="Signs & Songs"),
+                _sub(4, lang="zxx", title="Signs/Songs"),
+            ]
+        ),
+    )
+    assert common.signs_sub_streams("fake.mkv", {"eng"}) == [3]
+
+
+def test_signs_streams_never_uses_another_real_language_as_signs(monkeypatch):
+    # Chainsaw Man ships a Spanish signs track next to its English one; if the English
+    # track is a plain dialogue script, the fallback must read that, never the Spanish.
+    monkeypatch.setattr(
+        common,
+        "subprocess",
+        _fake_ffprobe(
+            [
+                _sub(4, lang="eng", title="Full Subtitles [GJM]"),
+                _sub(8, lang="spa", title="Signs/Songs (LA) [One Fansub]"),
+            ]
+        ),
+    )
+    assert common.signs_sub_streams("fake.mkv", {"eng"}) == [4]
+    assert common.signs_track_dedicated("fake.mkv", {"eng"}) is False
+
+
+def test_signs_streams_ignores_an_untitled_zxx_track(monkeypatch):
+    monkeypatch.setattr(
+        common,
+        "subprocess",
+        _fake_ffprobe(
+            [
+                _sub(3, lang="eng", title="Dialogue"),
+                _sub(4, lang="zxx", title="Honorifics"),
+            ]
+        ),
+    )
+    assert common.signs_sub_streams("fake.mkv", {"eng"}) == [3]
+    assert common.signs_track_dedicated("fake.mkv", {"eng"}) is False

@@ -787,9 +787,21 @@ def verdict(report: dict | None, rc: int) -> tuple[bool, str | None]:
     return True, None
 
 
+# Plain words for the skip reasons a request report carries. The raw token stays in the
+# line (scripts and tests match it); the gloss is what makes a sub-only release legible to
+# an operator who has never seen `no-eng-dub` before.
+_REASON_GLOSS = {
+    "no-eng-dub": "sub-only release; no English audio track",
+    "extract-failed": "could not read the audio track",
+    "no-speech": "the ASR endpoint found no speech",
+}
+
+
 def _report_line(report: dict) -> str:
     parts = [f"{report.get(k, 0)} {k.replace('_', ' ')}" for k in ("rebuilt", "delivered", "awaiting_merge") if report.get(k)]
-    parts += [f"{n} {why}" for why, n in sorted((report.get("not_done") or {}).items(), key=lambda kv: -kv[1])]
+    for why, n in sorted((report.get("not_done") or {}).items(), key=lambda kv: -kv[1]):
+        gloss = f" ({_REASON_GLOSS[why]})" if why in _REASON_GLOSS else ""
+        parts.append(f"{n} {why}{gloss}")
     return f"{report.get('scope', 0)} in scope: " + (", ".join(parts) or "nothing")
 
 
