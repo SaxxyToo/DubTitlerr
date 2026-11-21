@@ -106,6 +106,25 @@ notify_send() {
 	python3 -m dubtitlerr.core.notify send "$@" >/dev/null 2>&1 || true
 }
 
+# >>> single worker
+# ONE worker per library. Nothing in the code locks across workers (AGENTS.md), so two workers
+# on the same library race on <stem>.muxtmp.mkv and re-transcribe each other's episodes. This
+# is the container-level claim: a second start on the same /config refuses to run instead of
+# racing, and the lock dies with the holder, so a crash-restarted worker needs no cleanup.
+if command -v flock >/dev/null 2>&1; then
+	exec 9>"$CONFIG_DIR/worker.lock" || {
+		echo "FATAL: cannot open the worker lock $CONFIG_DIR/worker.lock"
+		exit 1
+	}
+	if ! flock -n 9; then
+		echo "FATAL: another worker already holds $CONFIG_DIR/worker.lock — one worker per library (stop the other container, or give this one its own CONFIG_DIR)"
+		exit 1
+	fi
+else
+	echo "WARNING: flock(1) is missing — a second worker on $CONFIG_DIR would race (see AGENTS.md)"
+fi
+# <<< single worker
+
 # merge loop in the background. It checks the flag at the top of each iteration; the merge
 # pass in flight finishes first (merge_pass.sh stops starting new stems on its own).
 (
