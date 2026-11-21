@@ -108,7 +108,7 @@ import threading
 import time
 import urllib.parse
 
-from dubtitlerr.core import decisions, reftracks, unresolved
+from dubtitlerr.core import decisions, reftracks, unanchored, unresolved
 from dubtitlerr.core.common import (
     MEDIA_GID,
     MEDIA_UID,
@@ -293,12 +293,20 @@ def _parse_extra_body(raw):
 
 def glossary_for(path, gloss_dir=GLOSSARY_DIR):
     """Resolve the show glossary for an episode by walking up to the first ancestor
-    directory that has a matching <Show>.json in the glossary dir; else a no-op glossary."""
+    directory that has a matching <Show>.json in the glossary dir; else a no-op glossary.
+
+    The returned dict carries ``glossary_id``, the glossary file's stem. The review UI lists
+    shows by that name, so per-show state recorded here lands on the row the operator sees
+    even when the file's ``show`` field is a display title ("Frieren: Beyond Journey's End"
+    for the folder "Frieren Beyond Journey's End (2023) {tvdb-424536}").
+    """
     d = os.path.dirname(os.path.abspath(path))
     while d and d != os.path.dirname(d):
         gp = os.path.join(gloss_dir, os.path.basename(d) + ".json")
         if os.path.exists(gp):
-            return glossary.load(gp)
+            cfg = glossary.load(gp)
+            cfg["glossary_id"] = os.path.splitext(os.path.basename(gp))[0]
+            return cfg
         d = os.path.dirname(d)
     return glossary.load("")
 
@@ -436,6 +444,23 @@ def skips_unanchored(ref, gloss=None):
     The global default stays CLOSED and everything above stays the authority on why: a
     show that declares nothing behaves exactly as it did before."""
     return not ref and not (REPAIR_UNANCHORED or (gloss or {}).get("unanchored_repair"))
+
+
+def record_unanchored(gloss, stem, targets):
+    """Append this episode to the show's no-reference record for the review UI.
+
+    Best-effort by design: the episode already completed, and a read-only or full config
+    volume must not turn an observability write into a stage failure.
+    """
+    show = (
+        (gloss or {}).get("glossary_id")
+        or (gloss or {}).get("show")
+        or os.environ.get("SHOW_NAME", "")
+    )
+    try:
+        unanchored.record(show, os.path.basename(stem), targets)
+    except Exception as e:  # noqa: BLE001 - observability must never fail the episode
+        log("  WARNING could not record unanchored repair state:", e)
 
 
 def build_prompt(asr, sub, gloss, prev_text="", next_text="", arc=None, episode=None):
@@ -2146,6 +2171,7 @@ def _process_episode(conf_path):
     # skipped_no_ref count inside a JSON sidecar nobody opens. The message names the remedy:
     # a user who does not know the setting exists cannot act on "144 targets skipped".
     if targets and fixed == 0 and skipped_no_ref == len(targets):
+        record_unanchored(gloss, stem, len(targets))
         log(
             f"  WARNING every one of {len(targets)} targets on {os.path.basename(stem)} was skipped for want of a"
             " reference — this release has no English subtitles for the Japanese audio, so there is nothing to"

@@ -2843,3 +2843,85 @@ def test_the_endpoint_request_asks_for_segments_as_well_as_words(tmp_path, monke
     granules = [v for k, v in seen.get("fields", []) if k == "timestamp_granularities[]"]
     assert "word" in granules, "word timestamps are still required by reflow"
     assert "segment" in granules, "segments carry no_speech_prob; asking only for words loses it"
+
+
+# --- no-English-tag audio fallbacks ------------------------------------------
+# A fresh install meets two shapes the old selector refused: an untagged track whose
+# TITLE still says English, and a genuinely dub-only mux with no language tags at all.
+# The title is evidence; an untagged, untitled track is a guess, so it stays opt-in.
+
+
+def _streams(*streams):
+    return json.dumps({"streams": list(streams)})
+
+
+def test_eng_audio_index_accepts_a_title_identified_english_track(monkeypatch):
+    # A title saying English is evidence even when the language tag is missing. Breaks if the
+    # selector only ever looks at tags and skips a perfectly good dub.
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams(
+            {"index": 1, "tags": {"language": "und", "title": "English 5.1"}},
+            {"index": 2, "tags": {"language": "jpn", "title": "Japanese 2.0"}},
+        ),
+    )
+    assert generate.eng_audio_index("ep.mkv") == 1
+
+
+def test_eng_audio_index_still_prefers_a_tagged_english_track(monkeypatch):
+    # The fallback must never outrank real metadata.
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams(
+            {"index": 1, "tags": {"language": "und", "title": "English 2.0"}},
+            {"index": 2, "tags": {"language": "eng", "title": "English 5.1"}},
+        ),
+    )
+    assert generate.eng_audio_index("ep.mkv") == 2
+
+
+def test_eng_audio_index_does_not_assume_an_untagged_track_by_default(monkeypatch):
+    # The old warning is still right: a Japanese-only mux must not be transcribed as English
+    # by guesswork. Without the setting, an untagged track stays refused.
+    monkeypatch.delenv("UND_AUDIO_AS_DUB", raising=False)
+    monkeypatch.setenv("REQUIRE_ENG", "1")
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams({"index": 1, "tags": {"language": "und", "title": "2.0"}}),
+    )
+    assert generate.eng_audio_index("ep.mkv") is None
+
+
+def test_eng_audio_index_uses_a_lone_untagged_track_when_enabled(monkeypatch, capsys):
+    monkeypatch.setenv("UND_AUDIO_AS_DUB", "1")
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams({"index": 1, "tags": {"language": "und", "title": "2.0"}}),
+    )
+    assert generate.eng_audio_index("ep.mkv") == 1
+    assert "untagged" in capsys.readouterr().out
+
+
+def test_eng_audio_index_requires_exactly_one_untagged_track(monkeypatch):
+    # Two untagged tracks is an ambiguous mux, not a dub-only one. The setting says "lone".
+    monkeypatch.setenv("UND_AUDIO_AS_DUB", "1")
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams(
+            {"index": 1, "tags": {"language": "und", "title": "2.0"}},
+            {"index": 2, "tags": {"language": "und", "title": "5.1"}},
+        ),
+    )
+    assert generate.eng_audio_index("ep.mkv") is None
+
+
+def test_eng_audio_index_ignores_an_untagged_commentary_title(monkeypatch):
+    # "English Commentary" matches the language word; a commentary track is never the dub.
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams(
+            {"index": 1, "tags": {"language": "und", "title": "English Commentary"}},
+            {"index": 2, "tags": {"language": "jpn", "title": "Japanese 2.0"}},
+        ),
+    )
+    assert generate.eng_audio_index("ep.mkv") is None

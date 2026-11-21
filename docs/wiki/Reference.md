@@ -411,7 +411,7 @@ these fields still read.
 | `ANIME_ROOT`     | `/media/Anime Library`      | Root the generate loop walks                       |
 | `MERGE_ROOTS`    | `/data/Media/Anime Library` | Roots the merge pass walks (colon-separated)       |
 | `MUX_ROOTS`      | `/data/Media/Anime Library` | Roots `mux.py` walks                               |
-| `ANIME_ORDER`    | `/config/anime_order.txt`   | Show order file                                    |
+| `ANIME_ORDER`    | `/config/anime_order.txt`   | Show order file; if missing, the builder queues the library tree |
 | `GLOSSARY_DIR`   | `/config/glossaries`        | Per-show glossaries                                |
 | `DECISIONS_DIR`  | `/config/decisions`         | Per-show verdict stores                            |
 | `WIKI_CACHE_DIR` | `/config/wiki_cache`        | Cached Fandom wiki responses                       |
@@ -430,6 +430,7 @@ these fields still read.
 | `COMPUTE_TYPE`                       | `int8`           | Precision. On Pascal cards `float16` does not load at all — this is not a quality knob there   |
 | `WHISPER_BEAM_SIZE`                  | `7`              | Beam width                                                                                     |
 | `REQUIRE_ENG`                        | `1`              | Skip episodes with no English audio track                                                      |
+| `UND_AUDIO_AS_DUB`                   | `0`              | Treat a file's only audio track as the English dub when it has no language tag. Off by default; a Japanese-only file would be transcribed as English |
 | `SKIP_IF_SRT`                        | `1`              | Skip an episode that already has a dubtitle sidecar                                            |
 | `SHOW_NAME`                          | _(empty)_        | Override the show name derived from the path                                                   |
 | `GLOSSARY_FILE`                      | _(empty)_        | Override the glossary resolved from the show                                                   |
@@ -677,6 +678,12 @@ then with the `(YYYY)` kept, then with it stripped, then case/punctuation-insens
 title two folders share (e.g. `JoJo's Bizarre Adventure` for both the 1993 and 2012 series)
 is reported as unmatched, never guessed — so name your folders `Title (YYYY) {tvdb-N}` and
 the id settles it.
+
+**No media server, no order file.** On the first sweep the generate loop builds
+`anime_order.txt` from the top level of `ANIME_ROOT`: every folder holding a video becomes a
+show, newest episode first. It never overwrites an existing file, so a hand-written list or a
+watch-queue result stays authoritative. This is the fresh-install bootstrap, not a watch-order
+replacement — once Plex, WatchState or Jellyfin is configured, that source owns the queue.
 
 ### Loop cadence
 

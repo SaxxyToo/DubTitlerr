@@ -31,6 +31,7 @@ from dubtitlerr.core import heartbeat as _heartbeat
 # import time cannot come from this module. Re-exported here because common is the shared
 # helper surface the rest of the pipeline imports.
 from dubtitlerr.core.atomic_file import MODE_KEEP, SIDECAR_MODE, atomic_write, atomic_write_bytes  # noqa: F401
+from dubtitlerr.core.media_types import VIDEO_EXTS  # noqa: F401 - re-exported as common.VIDEO_EXTS
 
 MEDIA_UID = int(os.environ.get("MEDIA_UID", "1000"))
 MEDIA_GID = int(os.environ.get("MEDIA_GID", "100"))
@@ -79,7 +80,8 @@ def read_heartbeat():
 MEDIA_ROOT = os.environ.get("MEDIA_ROOT", "/media")
 OUTPUT_ROOT = os.environ.get("OUTPUT_ROOT", "")
 
-VIDEO_EXTS = (".mkv", ".mp4", ".m4v")
+# VIDEO_EXTS is re-exported above from media_types.py (a stdlib-only leaf) so the
+# shell-loop CLIs can read it without importing pysubs2.
 
 # SUB_LANGS: accepted embedded-sub languages for dialogue_intervals()'s default (all-stream)
 # path -- same env var/default repair.py has always read (T1 hoist: single source of truth).

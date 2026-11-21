@@ -90,9 +90,13 @@ def main():
         os.environ["HEARTBEAT_PATH"] = str(base / "heartbeat.json")
         os.environ["GLOSSARY_DIR"] = str(glossary_dir)
         os.environ["DECISIONS_DIR"] = str(ddir)
-        from dubtitlerr.core import common, decisions, unresolved
+        from dubtitlerr.core import common, decisions, unanchored, unresolved
         from dubtitlerr.review import review_auth, review_settings
         from dubtitlerr.review import review_server as rs
+
+        # Neon Harbor's copies have no English subtitle for the Japanese audio: the repair
+        # stage records that, and the Glossary page must offer the per-show switch.
+        unanchored.record("Neon Harbor", "Neon Harbor - S01E01.mkv", 12)
 
         common.heartbeat(last_sweep_end=time.time(), roots_readable=True, order_file_present=True)
         review_settings.EFFECTIVE_ENV_PATH = str(base / "no-effective.env")  # absent: settings come from the environment

@@ -82,6 +82,9 @@ def run_server_function(tmp_path, secrets, env=None):
         ("glossary", "glossary_lock.py"),
         ("core", "common.py"),
         ("core", "atomic_file.py"),
+        # common re-exports VIDEO_EXTS from this stdlib-only leaf, so importing common in a
+        # minimal app dir needs it alongside.
+        ("core", "media_types.py"),
         # container_run.sh reports a dying generate loop through the notify CLI; notify must
         # import from this app copy like the image's does (stdlib only, no common/pysubs2).
         ("core", "notify.py"),

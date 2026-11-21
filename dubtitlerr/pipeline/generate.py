@@ -296,6 +296,32 @@ def _no_glossary_warning(show, episode) -> int:
     return 1
 
 
+# A title that names the English dub. Some muxes leave the audio language tag empty or
+# `und` but keep "English 5.1" / "English Dub" in the title; the title is evidence, and
+# without it the episode is skipped as a sub-only release. Deliberately narrow: a title
+# saying only a channel layout ("2.0") is not evidence, and the opt-in below is what
+# covers a truly untagged mux.
+DUB_TITLE = re.compile(r"\b(eng(?:lish)?|dub(?:bed)?)\b", re.I)
+
+
+def _audio_lang(stream):
+    return ((stream.get("tags") or {}).get("language") or "").lower()
+
+
+def _audio_title(stream):
+    return (stream.get("tags") or {}).get("title") or ""
+
+
+def _und_as_dub():
+    """UND_AUDIO_AS_DUB: treat a LONE untagged audio track as the English dub.
+
+    Read per call, like every other env knob here, so a stored setting takes effect on the
+    next show without a restart. Default off: a single untagged track can just as easily be
+    a Japanese-only release, and the old comment's warning still holds.
+    """
+    return os.environ.get("UND_AUDIO_AS_DUB", "") not in ("", "0")
+
+
 def eng_audio_index(video):
     try:
         r = subprocess.run(
@@ -306,7 +332,7 @@ def eng_audio_index(video):
                 "-select_streams",
                 "a",
                 "-show_entries",
-                "stream=index:stream_tags=language",
+                "stream=index:stream_tags=language,title",
                 "-of",
                 "json",
                 video,
@@ -320,13 +346,31 @@ def eng_audio_index(video):
     except Exception as e:
         log("ffprobe failed", video, e)
         return None
-    eng = [s for s in streams if ((s.get("tags") or {}).get("language", "").lower() in ("eng", "en"))]
+    eng = [s for s in streams if _audio_lang(s) in ("eng", "en")]
     if eng:
         return eng[0]["index"]
-    # No English-tagged audio. On a library-wide run this means a sub-only release —
-    # do NOT fall back to stream 0 (that would transcribe the Japanese audio AS English
-    # and produce garbage). Skip it. Set REQUIRE_ENG=0 only for pre-filtered single-audio
-    # English collections (e.g. the One Pace mover already guarantees English audio).
+    # No English-tagged audio. Two pieces of evidence are still worth accepting:
+    #   1. a title that says English/dub, whatever the language tag says;
+    #   2. a single untagged track, but only when the operator opts in (UND_AUDIO_AS_DUB).
+    # Anything else is a sub-only or ambiguous release, and transcribing stream 0 as
+    # English would produce garbage -- the old rule. REQUIRE_ENG=0 remains the blunt
+    # override for a pre-filtered English collection.
+    titled = [
+        s
+        for s in streams
+        if _audio_lang(s) in ("", "und")
+        and DUB_TITLE.search(_audio_title(s))
+        and "commentary" not in _audio_title(s).lower()
+    ]
+    if titled:
+        log(
+            f"no English audio tag; using the title-identified English track "
+            f"(index {titled[0]['index']}, title {_audio_title(titled[0])!r})"
+        )
+        return titled[0]["index"]
+    if _und_as_dub() and len(streams) == 1 and _audio_lang(streams[0]) in ("", "und"):
+        log(f"no English audio tag; using the only untagged audio track (index {streams[0]['index']}) — UND_AUDIO_AS_DUB is on")
+        return streams[0]["index"]
     if os.environ.get("REQUIRE_ENG", "1") == "1":
         return None
     return streams[0]["index"] if streams else None

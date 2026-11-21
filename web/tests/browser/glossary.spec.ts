@@ -397,3 +397,35 @@ test.describe('glossary review queue', () => {
     await expectNoAxeViolations(page);
   });
 });
+
+test.describe('unanchored repair', () => {
+  test('offers the per-show switch and sends the boolean set op', async ({ page }) => {
+    await openGlossary(page);
+    const banner = page
+      .locator('.notice.info-notice')
+      .filter({ hasText: 'no English subtitle to anchor repair' });
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('1 episode has');
+
+    let body: Record<string, unknown> | null = null;
+    await page.route('**/api/glossary', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      body = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, version: 'v2', reapply_hint: true }),
+      });
+    });
+
+    await banner.getByRole('button', { name: 'Enable unanchored repair' }).click();
+    await expect(page.locator('.notice.success').first()).toContainText('Unanchored repair is on');
+    expect(body).toMatchObject({ op: 'set', key: 'unanchored_repair', value: true, show: 'Neon Harbor' });
+  });
+
+  test('the banner has no accessibility violations', async ({ page }) => {
+    await openGlossary(page);
+    await expect(page.locator('.notice.info-notice')).toBeVisible();
+    await expectNoAxeViolations(page);
+  });
+});

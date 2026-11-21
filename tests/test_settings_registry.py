@@ -9,7 +9,15 @@ from dubtitlerr.settings import settings_registry as reg
 
 FIRST_WAVE = {
     "general": ["REVIEW_PORT", "REVIEW_BIND"],
-    "library": ["REQUIRE_ENG", "SKIP_IF_SRT", "KEEP_LANGS", "SUB_LANGS", "MIN_FREE_GB", "REMOTE_PATH_MAPPINGS"],
+    "library": [
+        "REQUIRE_ENG",
+        "UND_AUDIO_AS_DUB",
+        "SKIP_IF_SRT",
+        "KEEP_LANGS",
+        "SUB_LANGS",
+        "MIN_FREE_GB",
+        "REMOTE_PATH_MAPPINGS",
+    ],
     "transcription": [
         "WHISPER_MODEL",
         "COMPUTE_TYPE",
