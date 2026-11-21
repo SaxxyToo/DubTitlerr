@@ -193,6 +193,12 @@ def test_a_flagged_name_missing_from_names_is_not_reported():
     assert "Berry" not in by_name(report())
 
 
+def test_the_legacy_bare_string_flag_form_is_read():
+    """Older files hold `"Kills": "english-word"` rather than a record; the audit must read both."""
+    rep = ga.audit_gloss({"show": "X", "names": ["Kills"], "flagged": {"Kills": "english-word"}}, TITLES)
+    assert by_name(rep)["Kills"]["flag"] == "english-word"
+
+
 def test_a_clean_glossary_reports_nothing():
     rep = ga.audit_gloss({"show": "Frieren", "names": ["Frieren", "Fern"], "flagged": {}}, TITLES)
     assert rep["junk"] == [] and rep["junk_count"] == 0
