@@ -151,7 +151,13 @@ MAX_AUDIT_ATTEMPTS = 20
 #     used to dead-end (the trim-to-first-utterance landed at 0.0 s / 0.82 s). The card
 #     now ends at the end of the repeated run, within the duration budget. Heals 86
 #     S01E22 #15 ("Princess!") and Berserk S01E06 #241 ("Griffith!") on their first pass.
-GATE_FIX_EPOCH = 4
+#   5 (2026-11-21): the scream wrap recognizes punctuation. The run test counted every
+#     character of the token, so a scream that kept its exclamation mark -- Berserk
+#     S01E16 #12, 'A' + 'H'*57 + '!', 59 chars over a 7.0 s card -- had three distinct
+#     characters and was handed back as "a single unbroken token ... no word boundary".
+#     Strays are now counted on letters/digits only and the dominant letter must cover all
+#     but RUN_STRAYS of them, so that card wraps evenly at 30/29 and E16 delivers.
+GATE_FIX_EPOCH = 5
 
 # Outcomes that are PARKED: a deterministic give-up on this exact artifact. `cannot-evaluate`
 # is deliberately absent -- an unreadable artifact can be transient, so it keeps retrying.
@@ -163,10 +169,13 @@ GATE_MAX_CHARS = publish_gate.MAX_CHARS
 GATE_MAX_LINE = publish_gate.MAX_LINE
 GATE_MAX_DUR = publish_gate.MAX_DUR
 
-# A run is one repeated character; this many stray characters are still a run. FMA:B
+# A run is one repeated character; this many stray LETTERS are still a run. FMA:B
 # S01E41's scream ships as 'A' + 'H'*56 -- the normal English spelling of a scream, one
-# leading 'A' then the held letter -- and a break inserted anywhere in it removes no
-# character.
+# leading 'A' then the held letter -- and Berserk S01E16's ships as 'A' + 'H'*57 + '!',
+# the same scream with its exclamation mark still attached. A break inserted anywhere in
+# either removes no character. Punctuation does not count towards the strays: it rides on
+# the run (see `_run_letters`), so one repeated letter with a few stray letters and any
+# amount of punctuation around it is still a run.
 RUN_STRAYS = 2
 
 # How far before its own start a card may claim an ASR word. The assembler puts the card
@@ -251,7 +260,7 @@ def _wrap(text):
     """Lay a card's text out inside the line budget. Not one character changes.
 
     A line the ASR emitted as ONE token that is a run of one letter -- the shipped
-    57-character ``'A' + 'H'*56`` scream, a long laugh, with at most two stray characters
+    57-character ``'A' + 'H'*56`` scream, a long laugh, with at most two stray letters
     anywhere in it -- has no word boundary to wrap at, so :func:`reflow.wrap_balance` hands
     it straight back and the card is unshippable. A break inserted into such a run is pure
     layout: strip the breaks and the string is byte-identical to what came in, which is the
@@ -267,17 +276,32 @@ def _run_counts(text):
     return Counter(c.casefold() for c in text)
 
 
+def _run_letters(text):
+    """Counter of the token's case-folded letters and digits: the characters a run repeats.
+
+    Punctuation is deliberately excluded. A scream is emitted with its exclamation mark
+    welded to the run -- Berserk S01E16 ships ``'A' + 'H'*57 + '!'`` -- and counting the
+    '!' as a competing character made that token unreadable as a run at all, so the P13
+    wrap handed it back and the episode parked forever. A break through punctuation still
+    changes no character, so punctuation must not decide whether a run is wrap-able.
+    """
+    return Counter(c.casefold() for c in text if c.isalnum())
+
+
 def _is_run(text):
-    """One repeated character, with at most ``RUN_STRAYS`` strays elsewhere.
+    """One repeated character, with at most ``RUN_STRAYS`` stray letters elsewhere.
 
     ``'A' + 'H' * 56`` (the shipped FMA:B S01E41 scream) is a run: one 'A', 56 H's.
+    ``'A' + 'H' * 57 + '!'`` (Berserk S01E16) is the same run with punctuation attached.
     ``'Kekekekeke...'`` is not -- it alternates, so its minority is half the token and
     belongs to the word-repair path, not a layout break.
     """
-    counts = _run_counts(text)
-    if len(counts) == 1:
-        return True
-    return len(counts) == 2 and min(counts.values()) <= RUN_STRAYS
+    letters = _run_letters(text)
+    if not letters:
+        # No letter or digit at all: a pure punctuation run is a run when it is one symbol.
+        return len(set(text)) == 1
+    strays = sum(letters.values()) - max(letters.values())
+    return strays <= RUN_STRAYS
 
 
 def _wrap_run(text, max_line=GATE_MAX_LINE):

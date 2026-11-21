@@ -367,6 +367,55 @@ def test_the_live_fmab_s01e41_artifact_is_fixed_in_place(tmp_path):
     assert len(changed) == 1, changed
 
 
+BERSERK_SCREAM = "A" + "H" * 57 + "!"  # Berserk S01E16 #12 as shipped: 59 chars, {'a','h','!'}
+BERSERK_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "berserk_s01e16_conqueror.ass")
+
+
+def test_the_live_berserk_s01e16_scream_is_wrapped_without_touching_a_character():
+    """A scream can carry more than one stray character type: 'A' + 57 H's + '!'.
+
+    FMA:B's shape was 'A' + 'H'*56 -- one repeated letter plus ONE stray letter. Berserk
+    S01E16 ships the same scream with its exclamation mark attached, so the token has three
+    distinct characters and the two-character rule handed it back unwrapped.
+    """
+    assert len(BERSERK_SCREAM) == 59
+    wrapped = gate_fix._wrap_run(BERSERK_SCREAM)
+    assert wrapped is not None
+    assert wrapped.replace("\n", "") == BERSERK_SCREAM, "a break changes no character"
+    first, second = wrapped.split("\n")
+    assert abs(len(first) - len(second)) <= 1, (first, second)
+    assert all(len(ln) <= publish_gate.MAX_LINE for ln in (first, second))
+
+
+def test_the_live_berserk_s01e16_artifact_is_fixed_in_place(tmp_path):
+    """The shipped E16 sidecar, byte for byte: only the scream's Dialogue line changes.
+
+    That artifact also carries the signs/credits lines with their ``\\pos`` overrides; those
+    are signs-track content and must keep their bytes and their length untouched.
+    """
+    d = tmp_path / "Show"
+    d.mkdir(parents=True)
+    stem = str(d / "ep16")
+    shutil.copyfile(BERSERK_FIXTURE, stem + ".eng.dubtitles.ass")
+    before = read(stem + ".eng.dubtitles.ass")
+    assert before.count(BERSERK_SCREAM) == 1
+    assert "line of 59 chars (max 46)" in gate_fails(stem), gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert result["fixes"][0]["action"] == "wrap-run", result["fixes"]
+    assert gate_fails(stem) == []
+    after = read(stem + ".eng.dubtitles.ass")
+    body = next(ln for ln in after.splitlines() if "AHHH" in ln).rsplit(",", 1)[-1]
+    assert body.replace("\\N", "") == BERSERK_SCREAM
+    assert all(len(ln) <= publish_gate.MAX_LINE for ln in body.split("\\N"))
+    old, new = before.splitlines(), after.splitlines()
+    assert len(old) == len(new)
+    changed = [i for i, (a, b) in enumerate(zip(old, new)) if a != b]
+    assert len(changed) == 1, changed
+
+
 def test_a_period_two_run_is_still_refused_unchanged(tmp_path):
     """'Kekekekeke...' has two characters but no tiny minority: it stays unfixable."""
     cues = padded(100.0, 101.32, KEKE)
@@ -515,6 +564,19 @@ def test_wrap_run_minority_boundary_is_two_stray_characters():
     assert gate_fix._wrap_run(three_strays) is None
     assert gate_fix._wrap_run(KEKE) is None, "period-2 run: the minority is large"
     assert gate_fix._wrap_run("Kek" * 30) is None, "three distinct characters"
+
+
+def test_wrap_run_ignores_punctuation_when_counting_strays():
+    """A scream's '!' (or '...') is not part of the run: it never makes it unwrappable.
+
+    The run test counts letters and digits. Berserk S01E16's scream is 'A' + 57 H's + '!',
+    and the exclamation mark is punctuation on the run, not a competing character. Stray
+    LETTERS keep their own limit, so a period-2 token is still refused.
+    """
+    assert gate_fix._wrap_run("A" + "H" * 55 + "!...!") is not None
+    assert gate_fix._wrap_run("A" * 53 + "!...!") is not None
+    assert gate_fix._wrap_run("A" + "H" * 53 + "AAA" + "!!!") is None, "four stray letters"
+    assert gate_fix._wrap_run("Kek" * 15 + "!!!") is None, "punctuation does not launder it"
 
 
 def test_why_unsplittable_stays_accurate_for_a_near_run(tmp_path):
