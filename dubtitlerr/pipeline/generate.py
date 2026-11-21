@@ -75,7 +75,7 @@ from dubtitlerr.core.common import (
     ts_srt,
 )
 from dubtitlerr.glossary import glossary
-from dubtitlerr.pipeline import hallucination, ordering, punctuation, qc, reflow
+from dubtitlerr.pipeline import boilerplate, hallucination, ordering, punctuation, qc, reflow
 
 EXTRA_DIRS = load_extras()  # data/extras.txt is the source (see common.load_extras)
 # V2 C1: where per-show run summaries (<show>.lastrun.json) live -- same GLOSSARY_DIR
@@ -968,8 +968,22 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
             f"{r['repeats']}x{r['period']}-char run -> {r['after']!r} ({len(r['before'])} chars)"
         )
     rec.count("token_runs_reduced", len(token_runs))
+    # Arm #5: unique non-dialogue boilerplate/credit text, which no repetition arm can see.
+    # Position, not text, is the safety property: only a LEADING or TRAILING run is
+    # removed; a mid-file match is counted and audited and stays. Runs are computed on the
+    # pre-drop list, so their indices line up with `loops` above.
+    boiler_drops, boiler_audits = boilerplate.drop_indices(cards, rec=rec)
+    for a in boiler_audits:
+        if a["dropped"]:
+            log(
+                f"  boilerplate {a['run']} cue dropped at {float(a['start'] or 0.0):.3f}s: "
+                f"{a['text']!r}"
+            )
+        else:
+            log(f"  boilerplate mid-file cue KEPT at {float(a['start'] or 0.0):.3f}s: {a['text']!r}")
     for idx, c in enumerate(cards):
-        if idx in loops or hallucination.drop_reason(c, rec=rec):  # repeat-loop / blocklist / repetition -> drop
+        # repeat-loop / boilerplate / blocklist / repetition -> drop
+        if idx in loops or idx in boiler_drops or hallucination.drop_reason(c, rec=rec):
             dropped += 1
             continue
         lines, n = [], 0
@@ -1050,6 +1064,7 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
     collapsed_n = len(kept) - len(collapsed)
     log(
         f"  cards={len(rows)} name-fixes={fixes} dropped-hallucination={dropped} "
+        f"dropped-boilerplate={len(boiler_drops)} "
         f"collapsed={collapsed_n} token-runs={len(token_runs)} flagged={flagged} low-conf={low} "
         f"max_dur={max_dur:.1f}s over_cps={over_cps} violations={bad} "
         f"meanlp={sum(c['avg_logprob'] for c in conf) / max(1, len(conf)):.2f}"
@@ -1059,6 +1074,7 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
         {
             "cards_written": len(rows),
             "dropped_hallucination": dropped,
+            "dropped_boilerplate": len(boiler_drops),
             "collapsed_runs": collapsed_n,
             "token_runs_reduced": len(token_runs),
             "flagged": flagged,
@@ -1800,6 +1816,7 @@ def build_lastrun(show, elapsed_s, episodes_total, transcribed, totals, census, 
         "episodes_transcribed": transcribed,
         "cards_written": totals["cards_written"],
         "dropped_hallucination": totals["dropped_hallucination"],
+        "dropped_boilerplate": totals.get("dropped_boilerplate", 0),
         "collapsed_runs": totals["collapsed_runs"],
         "token_runs_reduced": totals["token_runs_reduced"],
         "flagged": totals["flagged"],

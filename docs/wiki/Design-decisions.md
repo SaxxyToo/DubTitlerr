@@ -534,3 +534,38 @@ Harder, and accepted: a pause is honored at the next boundary, not immediately i
 stem, so a long show keeps one unit of GPU work in flight (the same contract as the soft stop).
 The state is one more small file to keep writable in the config volume; when it is not, the API
 reports a 500 and the app keeps the previous behavior instead of silently processing.
+
+## 8. Boilerplate/credit removal is whole-cue and position-gated
+
+Whisper writes text nobody spoke: platform boilerplate ("Thanks for watching!"), release credits
+("Subtitles by the Amara.org community", "Original Script: Kitsune-HentaiBot [...]") and
+disclaimer blocks. The four repetition arms cannot see it, because the text is unique and nothing
+loops. Afro Samurai S01E01 shipped four such cues before the first spoken line. Arm #5
+(`dubtitlerr/pipeline/boilerplate.py`) removes them.
+
+Two properties are the decision, not the implementation detail:
+
+- **Whole-cue match.** A cue is boilerplate only when its entire text equals a template, edge
+  punctuation aside. The delivered library contains a trailing cue "Thanks for watching him."
+  (Demon Slayer S04E01 cue 292, real dialogue) and mid-scene "Others support us silently."
+  (FMA:B S01E18 cue 108). A substring filter deletes the first and flags the second; an anchored
+  one touches neither. The same anchoring was applied to the blocklist's
+  "thanks for watching"/"thank you for watching"/"thanks for your support" alternatives, which
+  were bare substrings and would have deleted that Demon Slayer line on the next regeneration.
+- **Leading/trailing runs only.** Only the run before the first non-matching cue and the run after
+  the last are dropped. A mid-file match is counted (`boilerplate_midfile`) and audited, never
+  dropped: Vinland Saga S01E13 carries an Amara credit at cue 4 of 400, and removing credits from
+  the middle of an episode is a mux-grade edit a filter should not make on a template's say-so.
+  A run longer than `MAX_RUN` (six) is refused for the same reason -- that shape is a loop, which
+  the repetition arms own, or a template that has drifted too broad.
+
+The template list lives once, in the module, and `tools/artifact_sweep.py` imports it, so the
+offline sweep for already-delivered sidecars and the pipeline cannot disagree about what
+boilerplate is. A VAD speech check was considered and skipped: it is not wired into the
+text-tier stages, and whole-cue matching on unique phrases already keeps precision high.
+
+### What it costs
+
+Harder, and accepted: a boilerplate variant not in the template list survives (conservative by
+construction), and a credit rendered mid-episode is reported but left for an operator. Both are
+cheaper than deleting a line of dialogue, which no counter would ever reveal.

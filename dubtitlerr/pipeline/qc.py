@@ -13,7 +13,9 @@ import json
 import os
 import tempfile
 
-SCHEMA_VERSION = 6  # v6: token_runs_reduced added (arm #4, intra-token reduction; zero in a v5
+SCHEMA_VERSION = 7  # v7: dropped_boilerplate / boilerplate_midfile added (arm #5, the
+# boilerplate/credit cue filter; zero in a v6 sidecar means "not counted", not "none seen").
+# v6: token_runs_reduced added (arm #4, intra-token reduction; zero in a v5
 # sidecar means "not counted", not "no run was reduced"). v5: duration_flags added (null when detector did not run).
 # v4: rule_*_evaluated /
 # rule_*_activated liveness counters. v3: the restore_* counters added (punctuation restoration). Zero
@@ -59,6 +61,8 @@ COUNTERS = (
     "cascade_infeasible",
     "layout_exceptions",
     "token_runs_reduced",  # arm #4: intra-token repetitions reduced before writing
+    "dropped_boilerplate",  # arm #5: leading/trailing boilerplate/credit cues removed
+    "boilerplate_midfile",  # arm #5: matches seen mid-file and deliberately KEPT
     "flagged",
     "low_conf",
     # punctuation restoration (runs on the words, before reflow -- see punctuation.py)
