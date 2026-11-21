@@ -833,14 +833,25 @@ def _internal_host(host: str) -> str:
     return "" if ip.is_global and not ip.is_multicast else "internal host"
 
 
+_API_SUFFIX_RE = re.compile(r"(?:^|/)api\.php$", re.IGNORECASE)
+
+
 def normalize_api(url: str) -> str | None:
-    """Reduce any wiki URL to its `<scheme>://<host>/api.php`; None for anything that is not an http(s) URL with a host and no
+    """Reduce any wiki URL to its MediaWiki api base; None for anything that is not an http(s) URL with a host and no
     credentials (file://, ftp://, javascript:, a bare word): resolve_wiki then finds no wiki. http is accepted here and refused
-    at fetch time unless WIKI_ALLOW_HTTP=1, so a config naming it fails in one place."""
+    at fetch time unless WIKI_ALLOW_HTTP=1, so a config naming it fails in one place.
+
+    A path that already ENDS in api.php is kept: a plain MediaWiki does not necessarily serve the api at the host root
+    (Wikipedia and Bulbapedia use /w/api.php), and reducing those to <host>/api.php would 404 on a valid config.
+    Every other path (/wiki/Spandam, /w/index.php) is dropped, as before."""
     if _wiki_url_problem(url, ("https", "http")):
         return None
     parts = urllib.parse.urlsplit(url.strip())
-    return f"{parts.scheme.lower()}://{parts.netloc}".rstrip("/") + "/api.php"
+    base = f"{parts.scheme.lower()}://{parts.netloc}".rstrip("/")
+    path = parts.path or ""
+    if _API_SUFFIX_RE.search(path):
+        return base + path
+    return base + "/api.php"
 
 
 def allpages_url(api: str, apcontinue: str | None = None) -> str:

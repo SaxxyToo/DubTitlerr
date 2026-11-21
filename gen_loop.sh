@@ -205,6 +205,29 @@ prep_show() {
 			echo "  verify TIMED OUT after ${VERIFY_TIMEOUT:-1200}s (continuing; terms stay unverified)" ||
 			echo "  verify failed rc=$rc (continuing)"; }
 	fi
+	# Names-hygiene audit (P22): cross-references names x flagged x the wiki cache just refreshed by VERIFY above and
+	# REPORTS names that are junk-classified (or a capitalised ordinary word with no exact wiki page) while still being
+	# in `names`. Read-only by design: the cleanup of a legacy file is an owner decision, so this stage never writes.
+	# Failure-swallowed like every prep step; exit 1 means findings were printed, not that the stage broke.
+	if [ -n "$_ps_gloss" ]; then
+		if stop_requested; then
+			echo "gen_loop: soft stop, not starting GLOSSARY AUDIT on $_ps_show"
+			_prep_stopped=1
+			return 0
+		fi
+		echo "#### GLOSSARY AUDIT $_ps_show $(date)"
+		audit_rc=0
+		timeout "${AUDIT_TIMEOUT:-300}" python3 -m dubtitlerr.glossary.glossary_audit "$_ps_gloss" </dev/null 2>&1 || audit_rc=$?
+		if [ "$audit_rc" -eq 0 ]; then
+			echo "  names hygiene: clean"
+		elif [ "$audit_rc" -eq 1 ]; then
+			echo "  names hygiene: junk names reported above (report only, nothing changed)"
+		elif [ "$audit_rc" -eq 124 ]; then
+			echo "  audit TIMED OUT after ${AUDIT_TIMEOUT:-300}s (continuing)"
+		else
+			echo "  audit failed rc=$audit_rc (continuing)"
+		fi
+	fi
 	_prep_gloss="$_ps_gloss"
 	return 0
 }

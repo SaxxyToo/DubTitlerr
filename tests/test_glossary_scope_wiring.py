@@ -172,9 +172,11 @@ def test_a_bad_scope_block_is_ignored_with_a_log_and_never_raises(tmp_path, wiki
     assert "wiki_scope must be" in capsys.readouterr().out
 
 
-def test_a_disallowed_wiki_host_stores_nothing(tmp_path, wiki):
+def test_an_internal_wiki_host_stores_nothing(tmp_path, wiki):
+    """A host the fetch layer refuses never becomes a stored spelling universe (generic MediaWiki still refuses an
+    internal address: this url is fetched)."""
     show = library(tmp_path, {1: [1]})
-    path = gloss(tmp_path, {**ARC_INDEX, "wiki": "https://evilfandom.com/api.php"})
+    path = gloss(tmp_path, {**ARC_INDEX, "wiki": "https://127.0.0.1/api.php"})
     rep = gv.tag_arcs(str(path), str(show))
     saved = json.loads(path.read_text())
     assert "arc_titles" not in saved and saved["arc_titles_missing"] == ["scope:arc_index:1"] and rep["scope_incomplete"] == 1

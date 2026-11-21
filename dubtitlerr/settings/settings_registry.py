@@ -207,6 +207,7 @@ ACQUIRE_TIMEOUT^glossary^int^1800^gen^next_show^-^Acquire timeout (s)^Wall-clock
 ACQUIRE_UNSEEN_SIM^glossary^float^0.98^gen^next_show^-^Acquire unseen similarity^Similarity needed for a name never seen in the transcript.
 ARC_MIN_TITLES^glossary^int^10^gen^next_show^-^Arc minimum titles^Arc titles needed before arc gating applies.
 ARC_TAGS_TIMEOUT^glossary^int^600^gen^next_show^-^Arc tag timeout (s)^Wall-clock limit for arc tagging.
+AUDIT_TIMEOUT^glossary^int^300^gen^next_show^-^Hygiene audit timeout (s)^Wall-clock limit for one show's names-hygiene audit (read-only).
 VERIFY_COMMON_WORD_ARC_RESCUE^glossary^bool^false^gen^next_show^-^Rescue common words by arc^Let an arc match rescue a common word.
 VERIFY_DECISION_BREAKER^glossary^int^5^gen^next_show^-^Decision breaker^Consecutive failures before the decision model is skipped.
 VERIFY_DECISION_FALLBACK^glossary^string^"none"^gen^next_show^-^Decision fallback^none or local: what to do when the decision model fails.

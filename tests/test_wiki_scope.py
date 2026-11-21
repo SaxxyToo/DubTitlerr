@@ -760,7 +760,7 @@ def test_redirect_resolution_failure_sets_complete_false():
     assert res.complete is False
 
 
-def test_host_safety_rejects_insecure_or_disallowed_hosts(monkeypatch):
+def test_host_safety_rejects_insecure_or_internal_hosts():
     # Insecure scheme http://
     res_http = wiki_scope.resolve_scope(
         {"rung": "arc_index", "wiki": "http://naruto.fandom.com/api.php"}, 1, [1], lambda u: {}
@@ -768,15 +768,14 @@ def test_host_safety_rejects_insecure_or_disallowed_hosts(monkeypatch):
     assert res_http.rung == "none"
     assert res_http.complete is False
 
-    # Disallowed host
+    # Internal address (a link-local metadata endpoint must never be fetched, however valid the path)
     res_bad = wiki_scope.resolve_scope(
-        {"rung": "arc_index", "wiki": "https://169.254.169.254/latest"}, 1, [1], lambda u: {}
+        {"rung": "arc_index", "wiki": "https://169.254.169.254/latest/api.php"}, 1, [1], lambda u: {}
     )
     assert res_bad.rung == "none"
     assert res_bad.complete is False
 
-    # Allowed via WIKI_HOST_ALLOW
-    monkeypatch.setenv("WIKI_HOST_ALLOW", "custom.wiki.org,another.org")
+    # Any public https MediaWiki api.php is allowed now (generic MediaWiki, P22): no allowlist entry needed.
     calls = []
     def fake_custom(url):
         calls.append(url)
@@ -785,6 +784,7 @@ def test_host_safety_rejects_insecure_or_disallowed_hosts(monkeypatch):
         {"rung": "arc_index", "wiki": "https://custom.wiki.org/api.php", "index_page": "Index"}, 1, [1], fake_custom
     )
     assert res_allow.rung == "arc_index"
+    assert calls  # the host was actually consulted, not silently dropped
 
 
 def test_season_page_plain_replace_instead_of_str_format():

@@ -7,8 +7,8 @@ glossary_verify.tag_arcs (GLOSSARY_ARC_TAGS=1) calls it for a glossary that carr
 library season (arc_index, season_page) or one for the whole show (whole_wiki), and stores the titles in the glossary's
 ``arc_titles`` / ``arc_coverage`` under the key ``scope:<rung>:<season or all>``. Only COMPLETE results are stored.
 
-The ``wiki_scope`` block (all keys optional except ``rung`` and ``wiki``; ``wiki`` must be an https api.php on fandom.com,
-bulbapedia.bulbagarden.net or a host listed in WIKI_HOST_ALLOW):
+The ``wiki_scope`` block (all keys optional except ``rung`` and ``wiki``; ``wiki`` must be an https MediaWiki ``api.php``
+URL on any public host -- fandom.com, bulbapedia.bulbagarden.net, or a plain MediaWiki such as Wikipedia):
 
     rung             arc_index | season_page | whole_wiki
     wiki             the api.php URL
@@ -36,6 +36,7 @@ Examples (documentation only; they belong in a show's own glossary file, never i
                        "part": "Part II", "season_offsets": {"2": 32, "3": 53}}
     Pokemon           {"rung": "season_page", "wiki": "https://bulbapedia.bulbagarden.net/w/api.php",
                        "season_page": "S{season:02d}"}
+    Wikipedia         {"rung": "whole_wiki", "wiki": "https://en.wikipedia.org/w/api.php"}
     Marriagetoxin     {"rung": "whole_wiki", "wiki": "https://marriagetoxin.fandom.com/api.php"}
     Chainsmoker Cat   {"rung": "whole_wiki", "wiki": "https://chainsmoker-cat.fandom.com/api.php"}
 
@@ -47,7 +48,6 @@ left out of the verify gate's universe (it would contain every page verify can p
 from __future__ import annotations
 
 import html
-import os
 import re
 import urllib.parse
 from typing import Callable, NamedTuple
@@ -87,27 +87,31 @@ DEFAULT_STRUCTURAL_DENY = [
 ]
 
 
+_API_PATH_RE = re.compile(r"(?:^|/)api\.php$", re.IGNORECASE)
+
+
 def _validate_wiki_url(wiki: str) -> tuple[bool, str]:
-    """Validate wiki URL scheme (https) and host against allowed suffixes."""
+    """Validate an explicit wiki url: https, a public host, and a MediaWiki ``api.php`` endpoint.
+
+    Generic MediaWiki on purpose (P22): any host serves, so a show whose spelling universe lives outside Fandom
+    (Wikipedia included) is configurable. What is still refused: a non-https scheme, credentials in the url, an
+    internal/link-local host (this url is fetched, so it must not aim the request at the machine or its network), and
+    anything whose path does not END in api.php -- a wiki PAGE url is not an API endpoint and guessing one would fetch
+    HTML instead of the spelling universe."""
     parsed = urllib.parse.urlsplit(wiki)
-    if parsed.scheme != "https":
+    if parsed.scheme.lower() != "https":
         return False, f"wiki url must use https scheme: {wiki!r}"
     host = (parsed.hostname or "").lower()
     if not host:
         return False, f"missing host in wiki url: {wiki!r}"
-
-    allowed = [".fandom.com", "fandom.com", "bulbapedia.bulbagarden.net"]
-    env_allow = os.environ.get("WIKI_HOST_ALLOW", "")
-    if env_allow:
-        for extra in env_allow.split(","):
-            extra = extra.strip().lower()
-            if extra:
-                allowed.append(extra)
-
-    for a in allowed:
-        if host == a or host.endswith(a if a.startswith(".") else "." + a):
-            return True, ""
-    return False, f"disallowed wiki host {host!r} (not in allowed hosts)"
+    if "@" in parsed.netloc:
+        return False, f"credentials in the wiki url: {wiki!r}"
+    internal = glossary_verify._internal_host(host)
+    if internal:
+        return False, f"disallowed wiki host {host!r} ({internal})"
+    if not _API_PATH_RE.search(parsed.path or ""):
+        return False, f"wiki url must point at a MediaWiki api.php endpoint: {wiki!r}"
+    return True, ""
 
 
 def _resolve_redirects(

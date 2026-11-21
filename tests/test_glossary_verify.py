@@ -141,6 +141,21 @@ def test_normalize_api_handles_bases_and_paths():
     assert gv.normalize_api("https://onepiece.fandom.com/wiki/Spandam").endswith("fandom.com/api.php")
 
 
+def test_normalize_api_keeps_an_explicit_api_path():
+    """A plain MediaWiki may serve the api under a path (Wikipedia/Bulbapedia: /w/api.php). Collapsing that to the host
+    root would turn a valid explicit wiki into a 404."""
+    assert gv.normalize_api("https://en.wikipedia.org/w/api.php") == "https://en.wikipedia.org/w/api.php"
+    assert gv.normalize_api("https://bulbapedia.bulbagarden.net/w/api.php") == "https://bulbapedia.bulbagarden.net/w/api.php"
+    assert gv.normalize_api("https://en.wikipedia.org/wiki/Frieren") == "https://en.wikipedia.org/api.php"
+    assert gv.normalize_api("https://en.wikipedia.org/wiki/Frieren#Cast") == "https://en.wikipedia.org/api.php"
+
+
+def test_wiki_probing_stays_fandom_only():
+    """The DEFAULT suggestion is unchanged: probing still builds fandom.com candidates, never a generic host."""
+    cands = gv.wiki_candidates("Frieren Beyond Journey's End (2023) {tvdbid-424536}")
+    assert cands and all(c.startswith("https://") and c.endswith(".fandom.com/api.php") for c in cands)
+
+
 def test_allpages_url_and_parse():
     u = gv.allpages_url("https://x.fandom.com/api.php")
     assert "list=allpages" in u and "apnamespace=0" in u
