@@ -95,7 +95,7 @@ Which model to point the endpoint at, and what it costs you in accuracy or time,
 
 ## Images
 
-Neither image is published; both are built from this repository.
+Both images are built from this repository; each release publishes them to GHCR (see below).
 
 | Image | Size | Contains | Use |
 | --- | --- | --- | --- |
@@ -103,12 +103,14 @@ Neither image is published; both are built from this repository.
 | `dubtitlerr:lite` (`Dockerfile.lite`) | 936 MB | `python:3.11-slim` + ffmpeg, mkvtoolnix, wamerican, tzdata, pysubs2, jellyfish + the review UI + the pipeline scripts | `ASR_BACKEND=endpoint` |
 
 ```sh
-# full image, local ASR
+# full image, local ASR: pull the published release
+docker compose pull && docker compose up -d
+# ...or build it yourself
 docker compose up -d --build
 
 # lite image, endpoint ASR
 docker build -f Dockerfile.lite -t dubtitlerr:lite .
-docker run -d --name dubtitlerr --network host \
+docker run -d --name dubtitlerr -p 8842:8842 --add-host=host.docker.internal:host-gateway \
   -v /path/to/anime:/media/anime-tv -v /path/to/config:/config \
   -e ANIME_ROOT=/media/anime-tv -e MERGE_ROOTS=/media/anime-tv \
   -e ASR_BACKEND=endpoint -e ASR_URL=https://openrouter.ai/api/v1/audio/transcriptions \
@@ -122,12 +124,12 @@ docker run -d --name dubtitlerr --network host \
 Both images need `mkvtoolnix` — the merge stage shells out to `mkvmerge` to read the video's subtitle streams and attachments. A lite build without it fails at the first merge pass with `FATAL: mkvmerge not found — image is misbuilt`.
 
 **Run the published release, or build your own.** Releases are published to GHCR by the release
-workflow: `ghcr.io/saxxytoo/dubtitlerr:v0.4.0` (and `:latest`) for the full image,
-`ghcr.io/saxxytoo/dubtitlerr:v0.4.0-lite` (and `:latest-lite`) for the lite image. Pull what you
-deploy:
+workflow: `ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z` (and `:latest`) for the full image,
+`ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z-lite` (and `:latest-lite`) for the lite image. Pin a release
+for reproducibility, or follow `:latest`:
 
 ```sh
-docker pull ghcr.io/saxxytoo/dubtitlerr:v0.4.0
+docker pull ghcr.io/saxxytoo/dubtitlerr:latest
 ```
 
 Both images carry OCI labels (`org.opencontainers.image.version`, `…revision`), so `docker inspect`
@@ -150,8 +152,11 @@ The two images install the same runtime packages, serve the same review UI and s
 git clone https://github.com/SaxxyToo/DubTitlerr && cd DubTitlerr
 cp .env.example .env
 # edit .env: MEDIA_ROOT and ANIME_ROOT
-docker compose up -d --build
+docker compose pull && docker compose up -d
 ```
+
+`--build` instead of `pull` builds the full image from source (slow: the CUDA base plus the baked
+Whisper weights).
 
 Then open `http://<host>:8842/review/setup` to create the admin account. You do not need to write an order file first: if `anime_order.txt` is missing, the first sweep queues every show folder under `ANIME_ROOT` that holds a video, newest first. `compose.yaml` and `.env.example` carry the full variable set; [Reference](docs/wiki/Reference.md) explains each one, and [Your first show](docs/wiki/Your-First-Show.md) is the end-to-end walkthrough.
 

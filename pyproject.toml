@@ -1,11 +1,22 @@
 [project]
 name = "dubtitlerr"
+description = "Dubtitles for anime: subtitles that say what the English dub actually says."
+readme = "README.md"
+license = { file = "LICENSE" }
 # The version is NOT repeated here: it is read from dubtitlerr/__init__.py's __version__, the one
 # place it is written (that file stays import-free, so setuptools can read the literal without
 # importing the package). tests/test_version.py fails if this resolution or the lockfile drifts.
 dynamic = ["version"]
 requires-python = ">=3.11"
 dependencies = ["pysubs2>=1.7", "faster-whisper>=1.2", "jellyfish>=1.0"]
+[project.scripts]
+dubtitlerr = "dubtitlerr.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/SaxxyToo/DubTitlerr"
+Repository = "https://github.com/SaxxyToo/DubTitlerr"
+Issues = "https://github.com/SaxxyToo/DubTitlerr/issues"
+
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
 # analysis: tools/ scripts only (timing_compare.py's --vad webrtcvad backend), never
@@ -34,6 +45,9 @@ markers = ["real_accounts: exercises the real review_auth account functions (fir
 
 [tool.ruff]
 line-length = 130
+# Deliberately py39 while the runtime floor is 3.11: raising it turns on 71 pyupgrade
+# suggestions across the tree (zip(strict=), etc.) that need behaviour review. Raise it in a
+# dedicated PR, not a metadata edit.
 target-version = "py39"
 # Design docs hand-align the comments in their illustrative Python blocks; ruff
 # formats code inside Markdown fences by default and collapses that alignment.
