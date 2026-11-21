@@ -163,6 +163,24 @@
         </div>
       {/if}
 
+      {#if p.kind === 'discord'}
+        <div class="field">
+          <label for={`notif-${i}-link-url`}>Review UI URL (optional)</label>
+          <input
+            id={`notif-${i}-link-url`}
+            type="text"
+            value={p.link_url ?? ''}
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="https://dub.example/review"
+            oninput={(e) => update(i, { link_url: e.currentTarget.value })}
+          />
+          {#if fieldError(p, i, 'link_url')}<p class="field-error" role="alert">
+              {fieldError(p, i, 'link_url')}
+            </p>{/if}
+        </div>
+      {/if}
+
       <div class="field">
         {#if secretsWritable && canEdit}
           <label for={`notif-${i}-secret`}>

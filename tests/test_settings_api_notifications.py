@@ -150,6 +150,22 @@ def test_field_validation_names_the_provider_and_the_field(env):
     assert status == 400 and "unknown field" in payload["errors"]["notifications.chat.notification"]
 
 
+def test_a_discord_link_url_is_visible_kept_in_settings_and_validated(env, tmp_path):
+    status, _ = put(env, notifications=[{**DISCORD, "link_url": "https://dub.example.test/review"}])
+    assert status == 200
+    assert listed(env)["chat"]["link_url"] == "https://dub.example.test/review"
+    assert "dub.example.test" in (tmp_path / "settings.json").read_text()
+    assert "dub.example.test" not in (tmp_path / "secrets.json").read_text()
+
+    status, payload = put(env, notifications=[{**DISCORD, "link_url": "http://169.254.169.254/latest"}])
+    assert status == 400 and "link-local" in payload["errors"]["notifications.chat.link_url"]
+
+
+def test_a_link_url_belongs_to_discord_only(env):
+    status, payload = put(env, notifications=[{**NTFY, "link_url": "https://dub.example.test"}])
+    assert status == 400 and "not used by a ntfy" in payload["errors"]["notifications.phone.link_url"]
+
+
 def test_two_notifications_may_not_share_a_name(env):
     status, payload = put(env, notifications=[NTFY, strip_secrets(NTFY)])
     assert status == 400 and "already used" in payload["errors"]["notifications.phone.name"]
@@ -180,7 +196,7 @@ def test_the_schema_route_publishes_the_notification_rules(env):
     assert rules["kinds"] == ["discord", "ntfy", "webhook"]
     assert set(rules["triggers"]) == set(notify_mod.EVENTS)
     assert rules["fields"]["ntfy"] == {"visible": ["server", "topic"], "secret": ["token"]}
-    assert rules["fields"]["discord"] == {"visible": [], "secret": ["url"]}
+    assert rules["fields"]["discord"] == {"visible": ["link_url"], "secret": ["url"]}
 
 
 class Response:

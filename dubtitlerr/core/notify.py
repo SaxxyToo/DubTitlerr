@@ -11,8 +11,11 @@ Config (all optional; absent or empty is a silent no-op):
   secrets.json    {"notifications": {"<name>": {"url"|"token": "<secret>"}}}
 
 Kinds v1: ``discord`` (secret url), ``ntfy`` (visible server + topic, optional secret token) and
-``webhook`` (secret url). A provider sends only when ``enabled`` is true and its ``triggers`` names
-this event. A delivery failure is logged to stderr and returned as ``{"name", "ok", "detail"}`` --
+``webhook`` (secret url). The Discord kind posts one embed per event: a severity colour, a title, the summary
+as its body, the counts and detail as inline fields, a footer, a timestamp, and -- when the provider sets
+``link_url`` -- a click-through to the matching review-workspace view. A provider sends only when ``enabled``
+is true and its ``triggers`` names this event. A delivery failure is logged to stderr and returned as
+``{"name", "ok", "detail"}`` --
 it never raises and never fails a run. The log line names the provider, event and outcome only: a
 secret URL or token must not reach a log, so no message ever includes the URL or the exception text.
 
@@ -226,6 +229,118 @@ def _secret(fields: dict, field: str) -> str:
     return value
 
 
+# --- Discord embeds -------------------------------------------------------------------------------------------------------
+
+# How the Discord kind renders one event: a title, a colour, and the review-workspace view its link points at
+# (web/src/lib/route.js VIEWS). Colours are Discord's decimal ints -- green says done, blurple a request, amber
+# needs a look, red failed.
+EVENT_TITLES: dict[str, str] = {
+    "run.requested": "Run requested",
+    "sweep.completed": "Sweep complete",
+    "merge.completed": "Merge pass complete",
+    "pass.failed": "Pass failed",
+    "review.pending": "Review waiting",
+    "episode.delivered": "Episode delivered",
+    "episode.refused": "Episode parked",
+}
+EVENT_COLORS: dict[str, int] = {
+    "run.requested": 0x5865F2,
+    "sweep.completed": 0x2ECC71,
+    "merge.completed": 0x2ECC71,
+    "episode.delivered": 0x2ECC71,
+    "review.pending": 0xE67E22,
+    "episode.refused": 0xE67E22,
+    "pass.failed": 0xE74C3C,
+}
+EVENT_VIEWS: dict[str, str] = {
+    "run.requested": "runs",
+    "sweep.completed": "dashboard",
+    "merge.completed": "dashboard",
+    "pass.failed": "dashboard",
+    "episode.delivered": "dashboard",
+    "review.pending": "inbox",
+    "episode.refused": "dashboard",
+}
+UNKNOWN_EVENT_COLOR = 0x95A5A6  # the test event, and anything the tables above do not name
+EMBED_TITLE_MAX = 256
+EMBED_DESCRIPTION_MAX = 4096
+EMBED_FIELD_NAME_MAX = 256
+EMBED_FIELD_VALUE_MAX = 1024
+EMBED_FOOTER_MAX = 2048
+EMBED_FIELDS_MAX = 25
+
+
+def _clip(text: str, limit: int) -> str:
+    """``text`` cut to ``limit`` characters; a clipped string ends in an ellipsis rather than mid-token."""
+    return text if len(text) <= limit else text[: limit - 1] + "\u2026"
+
+
+def _field_text(value) -> str:
+    """One scalar as a short embed field value, or "" when it is not a scalar worth showing."""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _embed_fields(counts, detail) -> list:
+    """The embed's inline fields from the counts and detail objects -- the structured data the old renderer dropped.
+    Keys are prettified, only scalars show, and the list stops at Discord's field limit."""
+    fields = []
+    for source in (counts, detail):
+        if not isinstance(source, dict):
+            continue
+        for key, value in source.items():
+            text = _field_text(value)
+            if not isinstance(key, str) or not key or text == "":
+                continue
+            fields.append(
+                {
+                    "name": _clip(key.replace("_", " ").strip().capitalize(), EMBED_FIELD_NAME_MAX),
+                    "value": _clip(text, EMBED_FIELD_VALUE_MAX),
+                    "inline": True,
+                }
+            )
+    return fields[:EMBED_FIELDS_MAX]
+
+
+def _review_link(item: dict, event: str) -> str:
+    """The embed's click-through URL, or "": the configured review base plus the view this event belongs to.
+    Missing or unusable configuration is simply no link -- the message still sends."""
+    base = item.get("link_url")
+    if not isinstance(base, str) or not base.strip():
+        return ""
+    base = base.strip()
+    view = EVENT_VIEWS.get(event)
+    if not view or url_problem(base):
+        return ""
+    return base.rstrip("/") + "/#/" + view
+
+
+def _discord_embed(item: dict, event: str, summary: str, counts=None, loop=None, host=None, detail=None) -> dict:
+    """One Discord embed for one event: severity colour, title, the summary as its body, the counts and detail as
+    inline fields, a footer naming the host and loop, a UTC timestamp, and a link when one is configured."""
+    embed = {
+        "title": _clip(EVENT_TITLES.get(event, event), EMBED_TITLE_MAX),
+        "description": _clip(summary, EMBED_DESCRIPTION_MAX),
+        "color": EVENT_COLORS.get(event, UNKNOWN_EVENT_COLOR),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    fields = _embed_fields(counts, detail)
+    if fields:
+        embed["fields"] = fields
+    footer = " \u00b7 ".join(part for part in ("DubTitlerr", loop, host) if part)
+    if footer:
+        embed["footer"] = {"text": _clip(footer, EMBED_FOOTER_MAX)}
+    link = _review_link(item, event)
+    if link:
+        embed["url"] = link
+    return embed
+
+
 # --- rendering and delivery -----------------------------------------------------------------------------------------------
 
 
@@ -313,8 +428,9 @@ def _deliver(item: dict, secrets: dict, event: str, summary: str, counts, loop, 
         url = _secret(fields, "url")
         if not url:
             return _fail(name, event, "missing url")
+        embed = _discord_embed(item, event, summary, counts, loop, host, detail)
         try:
-            body = json.dumps({"content": summary, "allowed_mentions": {"parse": []}}).encode("utf-8")
+            body = json.dumps({"embeds": [embed], "allowed_mentions": {"parse": []}}).encode("utf-8")
         except (TypeError, ValueError) as exc:
             return _fail(name, event, type(exc).__name__)
         return _send(name, event, url, body, {"Content-Type": "application/json"})

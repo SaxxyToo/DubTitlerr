@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -141,7 +142,7 @@ def test_malformed_settings_is_logged_not_raised(tmp_path, monkeypatch, capsys):
 # --- provider rendering --------------------------------------------------------------------------------------------------
 
 
-def test_discord_posts_content_and_suppresses_mentions(tmp_path, monkeypatch):
+def test_discord_posts_an_embed_and_suppresses_mentions(tmp_path, monkeypatch):
     write_config(tmp_path, [provider()], {"disc": {"url": DISCORD_SECRET}})
     transport = install(monkeypatch, 200)
     results = notify.emit("sweep.completed", "3 produced, 0 failed", config_dir=tmp_path)
@@ -149,8 +150,90 @@ def test_discord_posts_content_and_suppresses_mentions(tmp_path, monkeypatch):
     req = transport.calls[0]
     assert req.full_url == DISCORD_SECRET
     assert req.get_method() == "POST"
-    assert json.loads(req.data) == {"content": "3 produced, 0 failed", "allowed_mentions": {"parse": []}}
+    payload = json.loads(req.data)
+    assert payload["allowed_mentions"] == {"parse": []}
+    assert "content" not in payload
+    embed = payload["embeds"][0]
+    assert embed["title"] == "Sweep complete"
+    assert embed["description"] == "3 produced, 0 failed"
+    assert embed["color"] == 0x2ECC71
     assert req.headers["Content-type"] == "application/json"
+
+
+def test_discord_embed_turns_the_counts_into_inline_fields(tmp_path, monkeypatch):
+    write_config(tmp_path, [provider(triggers=["merge.completed"])], {"disc": {"url": DISCORD_SECRET}})
+    transport = install(monkeypatch, 200)
+    notify.emit(
+        "merge.completed",
+        "merge pass: 3 delivered, 1 failed, 2 parked, 12 total done",
+        counts={"delivered": 3, "failed": 1, "parked": 2, "total_done": 12},
+        loop="merge",
+        host="omarchy",
+        config_dir=tmp_path,
+    )
+    embed = json.loads(transport.calls[0].data)["embeds"][0]
+    assert embed["title"] == "Merge pass complete"
+    assert embed["fields"] == [
+        {"name": "Delivered", "value": "3", "inline": True},
+        {"name": "Failed", "value": "1", "inline": True},
+        {"name": "Parked", "value": "2", "inline": True},
+        {"name": "Total done", "value": "12", "inline": True},
+    ]
+    assert embed["footer"] == {"text": "DubTitlerr · merge · omarchy"}
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", embed["timestamp"])
+
+
+def test_discord_embed_colour_tracks_severity_per_event(tmp_path, monkeypatch):
+    for event, color in {
+        "run.requested": 0x5865F2,
+        "episode.delivered": 0x2ECC71,
+        "review.pending": 0xE67E22,
+        "episode.refused": 0xE67E22,
+        "pass.failed": 0xE74C3C,
+    }.items():
+        write_config(tmp_path, [provider(triggers=[event])], {"disc": {"url": DISCORD_SECRET}})
+        transport = install(monkeypatch, 200)
+        notify.emit(event, "x", config_dir=tmp_path)
+        assert json.loads(transport.calls[0].data)["embeds"][0]["color"] == color, event
+
+
+def test_discord_embed_links_to_the_review_view_when_a_base_is_configured(tmp_path, monkeypatch):
+    write_config(
+        tmp_path,
+        [provider(triggers=["review.pending"], link_url="https://dub.example.test/review")],
+        {"disc": {"url": DISCORD_SECRET}},
+    )
+    transport = install(monkeypatch, 200)
+    notify.emit("review.pending", "2 waiting", config_dir=tmp_path)
+    embed = json.loads(transport.calls[0].data)["embeds"][0]
+    assert embed["url"] == "https://dub.example.test/review/#/inbox"
+
+
+def test_discord_embed_has_no_link_without_a_base(tmp_path, monkeypatch):
+    write_config(tmp_path, [provider(triggers=["review.pending"])], {"disc": {"url": DISCORD_SECRET}})
+    transport = install(monkeypatch, 200)
+    notify.emit("review.pending", "2 waiting", config_dir=tmp_path)
+    assert "url" not in json.loads(transport.calls[0].data)["embeds"][0]
+
+
+def test_discord_embed_drops_an_unsafe_link_but_still_sends(tmp_path, monkeypatch):
+    write_config(
+        tmp_path,
+        [provider(triggers=["review.pending"], link_url="http://169.254.169.254/latest")],
+        {"disc": {"url": DISCORD_SECRET}},
+    )
+    transport = install(monkeypatch, 200)
+    assert notify.emit("review.pending", "2 waiting", config_dir=tmp_path)[0]["ok"] is True
+    assert "url" not in json.loads(transport.calls[0].data)["embeds"][0]
+
+
+def test_discord_embed_clips_an_overlong_description(tmp_path, monkeypatch):
+    write_config(tmp_path, [provider()], {"disc": {"url": DISCORD_SECRET}})
+    transport = install(monkeypatch, 200)
+    notify.emit("sweep.completed", "x" * 5000, config_dir=tmp_path)
+    description = json.loads(transport.calls[0].data)["embeds"][0]["description"]
+    assert len(description) == 4096
+    assert description.endswith("…")
 
 
 def test_ntfy_posts_summary_with_event_headers_and_priority(tmp_path, monkeypatch):
@@ -368,10 +451,9 @@ def test_cli_send_uses_the_config_dir_and_posts(tmp_path, monkeypatch, capsys):
         ]
     )
     assert code == 0
-    assert json.loads(transport.calls[0].data) == {
-        "content": "3 produced",
-        "allowed_mentions": {"parse": []},
-    }
+    payload = json.loads(transport.calls[0].data)
+    assert payload["allowed_mentions"] == {"parse": []}
+    assert payload["embeds"][0]["description"] == "3 produced"
     assert "disc: ok" in capsys.readouterr().out
 
 
@@ -414,7 +496,7 @@ def test_cli_test_sends_to_a_disabled_provider_without_triggers(tmp_path, monkey
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
     assert notify.main(["test", "--name", "disc"]) == 0
     payload = json.loads(transport.calls[0].data)
-    assert "test" in payload["content"].lower()
+    assert "test" in payload["embeds"][0]["description"].lower()
     assert "disc: ok" in capsys.readouterr().out
 
 
