@@ -29,17 +29,18 @@ class Clock:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     clock = Clock()
+    sleeps = []
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("REVIEW_TOKEN", KEY)
     monkeypatch.delenv("REVIEW_AUTH", raising=False)
     monkeypatch.setattr(review_auth, "CLOCK", clock)
     monkeypatch.setattr(review_auth, "SCRYPT_N", 2**4)
-    monkeypatch.setattr(rs, "_THROTTLE", rs.LoginThrottle(clock=clock))
+    monkeypatch.setattr(rs, "_THROTTLE", rs.LoginThrottle(clock=clock, sleeper=sleeps.append))
     monkeypatch.setattr(rs, "ROOTS", [str(tmp_path / "media")])
     monkeypatch.setattr(rs, "_STEMS_CACHE", None)
     monkeypatch.setattr(rs, "_QUEUE_CACHE", {})
     review_auth.create_user("Reviewer", "admin", PASSWORD)
-    return types.SimpleNamespace(clock=clock, tmp=tmp_path)
+    return types.SimpleNamespace(clock=clock, sleeps=sleeps, tmp=tmp_path)
 
 
 def login(user="reviewer", password=PASSWORD, remember=False, client="10.0.0.5", headers=None):
@@ -123,10 +124,25 @@ def test_a_success_resets_the_count_and_clients_are_throttled_separately(env):
     assert login(client="10.0.0.6")[0] == 429 and login(client="10.0.0.5")[0] == 200
 
 
-def test_failures_against_one_username_from_many_addresses_lock_that_username(env):
+def test_failures_against_one_username_from_many_addresses_slow_it_down_instead_of_locking_it_out(env):
+    """An attacker with many addresses must never be able to keep an account's owner out.
+
+    Five wrong guesses for a name from five addresses used to lock the NAME out, so the admin's
+    own address got a 429: repeating that once a minute is a permanent denial of service, and an
+    IPv6 /64 holds enough addresses to do it forever. The name is only SLOWED now (a growing
+    pause, capped), while the addresses that guessed still hit their own lockout.
+    """
     for i in range(5):
         assert login(password="wrong password", client=f"10.0.1.{i}")[0] == 401
-    assert login(client="10.0.1.99")[0] == 429, "behind a proxy the address is shared; the name is counted too"
+    assert env.sleeps == [], "the failures that are being counted are not slowed"
+
+    assert login(client="10.0.1.99")[0] == 200, "the owner is delayed, never refused"
+    assert env.sleeps == [0.5], "from the threshold on, a login for that name pauses"
+
+    for i in range(20):  # each from a fresh address, so no address lockout interferes
+        assert login(password="wrong password", client=f"10.0.2.{i}")[0] == 401
+    assert env.sleeps[1:] == [0.5, 1.0, 2.0, 4.0] + [5.0] * 11, "the pause doubles, then holds at its cap"
+    assert login(client="10.0.1.99")[0] == 200, "still in — a pause never becomes a lockout"
 
 
 def test_a_login_clears_the_legacy_token_cookie_and_never_returns_the_api_key(env):
@@ -203,6 +219,28 @@ def test_tracked_addresses_are_capped_and_the_oldest_is_evicted():
     for i in range(10_000):
         t.failure(f"flood-{i}")
     assert len(t) == 3
+
+
+def test_a_flood_of_addresses_or_usernames_cannot_reset_the_counter_on_a_name():
+    """The username counter lives in its own table, so address diversity (an IPv6 /64) cannot
+    evict it and reset the count -- the old single table dropped `user:admin` after 1,024
+    records, which was the whole bypass."""
+    clock, sleeps = Clock(), []
+    t = rs.LoginThrottle(clock=clock, sleeper=sleeps.append, cap=3, user_cap=3)
+    for _ in range(5):
+        t.user_failure("user:admin")
+    paused = t.user_pause("user:admin")
+    assert paused == 0.5, paused
+
+    for i in range(10_000):
+        t.failure(f"flood-{i}")
+    assert len(t) == 3, "address records are still capped"
+    assert t.user_pause("user:admin") == paused, "an address flood must not reset a username"
+
+    for i in range(10_000):
+        t.user_failure(f"user:ghost-{i}")
+    assert t.user_pause("user:admin") == paused, "a username flood must not evict a name under attack"
+    assert t.user_pause("user:ghost-9999") == 0.0, "the table is bounded: fresh names are the ones that go untracked"
 
 
 @pytest.fixture

@@ -893,12 +893,17 @@ LEGACY_CLEAR = f"{LEGACY_COOKIE}=; Path=/; Max-Age=0; SameSite=Strict"
 def handle_login(body, client: str, throttle, headers=None) -> tuple:
     body = body if isinstance(body, dict) else {}
     name = body.get("username")
-    # Counted per address AND per username: behind a proxy every client shares one address.
-    keys = [client] + (["user:" + name.lower()[:64]] if isinstance(name, str) and name else [])
-    wait = max(throttle.retry_after(k) for k in keys)
+    # Counted per address (locked out) AND per username (only slowed): behind a proxy every client
+    # shares one address, and address diversity must never be able to hold a 429 on an account's owner.
+    user_key = "user:" + name.lower()[:64] if isinstance(name, str) and name else ""
+    wait = throttle.retry_after(client)
     if wait:
         log("review server: login throttled")
         return 429, {"error": "too many failed logins; wait before trying again", "retry_after": wait}, {}
+    pause = throttle.user_pause(user_key) if user_key else 0.0
+    if pause:
+        log(f"review server: login slowed by {pause:g}s (this username is being tried repeatedly)")
+        throttle.sleep(pause)
     try:
         users = read_users()
     except Unreadable as e:
@@ -907,12 +912,13 @@ def handle_login(body, client: str, throttle, headers=None) -> tuple:
         return 409, {"error": "setup required"}, {}
     row = check_login(users, body.get("username"), body.get("password"))
     if row is None:
-        for k in keys:
-            throttle.failure(k)
+        throttle.failure(client)
+        if user_key:
+            throttle.user_failure(user_key)
         log("review server: login refused")  # the same line for a wrong username and a wrong password
         return 401, {"error": "wrong username or password"}, {}
-    for k in keys[1:]:  # the username's counter only: a success must not wipe the address's record of guessing at other names
-        throttle.success(k)
+    if user_key:  # the username's counter only: a success must not wipe the address's record of guessing at other names
+        throttle.user_success(user_key)
     presented = _cookie(headers, SESSION_COOKIE)
     if presented:
         sessions().revoke(presented)  # the browser's old session ends with this login

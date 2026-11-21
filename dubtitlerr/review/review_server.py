@@ -853,18 +853,35 @@ LOGIN_MAX_BODY = 4096  # a username and a password; the generic POST cap (1 MiB)
 
 
 class LoginThrottle:
-    """Per-client failure counter for /api/login, in memory, with an injectable clock.
+    """Failure counters for /api/login, in memory, with an injectable clock.
 
-    After ``max_fail`` consecutive failures inside ``window`` seconds the client is locked out for ``lockout`` seconds (the
-    answer is 429 with Retry-After, and the credentials are not even compared); a success forgets the client. At most ``cap``
-    addresses are tracked: a flood of distinct addresses evicts the OLDEST, so memory is bounded and a real client's record is
-    only lost to a newer flood, which only ever helps the attacker by resetting their own counter."""
+    Two tables, because they defend different things:
 
-    def __init__(self, clock=time.monotonic, max_fail=5, window=300.0, lockout=60.0, cap=1024):
+    * **addresses** -- after ``max_fail`` consecutive failures inside ``window`` seconds the
+      client is locked out for ``lockout`` seconds (429 with Retry-After; the credentials are
+      not even compared). At most ``cap`` addresses are tracked and a flood of distinct
+      addresses evicts the OLDEST, so memory is bounded and a real client only ever loses its
+      OWN record.
+    * **usernames** -- a name being guessed at from many addresses must not be locked out: an
+      IPv6 /64 holds enough addresses to keep a 429 on the account's owner forever, which is a
+      denial of service, not a defence. A name is only SLOWED: from ``max_fail`` failures on,
+      every login for it pauses ``pause`` seconds, doubling per extra failure up to
+      ``pause_cap``. The table is separate from the address one, and a record that has
+      accumulated failures is never evicted by a flood of addresses or of fresh names, so a
+      diverse-guess attack can neither reset nor remove the counter of the name it targets.
+
+    A success forgets the client and the username's counter.
+    """
+
+    def __init__(self, clock=time.monotonic, sleeper=time.sleep, max_fail=5, window=300.0,
+                 lockout=60.0, cap=1024, user_cap=1024, pause=0.5, pause_cap=5.0):
         from collections import OrderedDict
 
-        self.clock, self.max_fail, self.window, self.lockout, self.cap = clock, max_fail, window, lockout, cap
+        self.clock, self.max_fail, self.window, self.lockout = clock, max_fail, window, lockout
+        self.cap, self.user_cap, self.pause, self.pause_cap = cap, user_cap, pause, pause_cap
+        self._sleeper = sleeper
         self._seen: OrderedDict[str, dict] = OrderedDict()
+        self._users: dict[str, dict] = {}
         self._lock = threading.Lock()
 
     def __len__(self):
@@ -896,6 +913,54 @@ class LoginThrottle:
     def success(self, addr: str) -> None:
         with self._lock:
             self._seen.pop(addr, None)
+
+    # --- usernames: slowed, never locked ------------------------------------------------
+
+    def user_pause(self, key: str) -> float:
+        """Seconds a login for ``key`` should wait; 0 below the failure threshold."""
+        with self._lock:
+            rec = self._users.get(key)
+            if rec is None or self.clock() - rec["first"] > self.window:
+                return 0.0
+            extra = rec["fails"] - self.max_fail
+            return min(self.pause_cap, self.pause * 2 ** extra) if extra >= 0 else 0.0
+
+    def user_failure(self, key: str) -> None:
+        with self._lock:
+            now = self.clock()
+            self._prune_users(now)
+            rec = self._users.get(key)
+            if rec is None or now - rec["first"] > self.window:
+                rec = {"fails": 0, "first": now}
+                if not self._remember_user(key, rec):
+                    return  # every slot is held by a name that is being attacked
+            rec["fails"] = min(rec["fails"] + 1, self.max_fail + 16)
+            self._users[key] = rec
+
+    def user_success(self, key: str) -> None:
+        with self._lock:
+            self._users.pop(key, None)
+
+    def sleep(self, seconds: float) -> None:
+        """Wait the pause; injectable so tests record it instead of sleeping."""
+        self._sleeper(seconds)
+
+    def _prune_users(self, now: float) -> None:
+        for key in [k for k, r in self._users.items() if now - r["first"] > self.window]:
+            self._users.pop(key, None)
+
+    def _remember_user(self, key: str, rec: dict) -> bool:
+        if key in self._users or len(self._users) < self.user_cap:
+            self._users[key] = rec
+            return True
+        # Only a name with no accumulated failures is evictable: the point of this table is
+        # that a flood can neither reset nor remove the counter of the name under attack.
+        for old, r in list(self._users.items()):
+            if r["fails"] < self.max_fail:
+                del self._users[old]
+                self._users[key] = rec
+                return True
+        return False
 
 
 _THROTTLE = LoginThrottle()

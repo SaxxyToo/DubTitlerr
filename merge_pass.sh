@@ -229,8 +229,16 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 		_rel=${stem#"$ROOT_ABS"/}
 		_show=${_rel%%/*}
 		park_note=$(python3 -m dubtitlerr.pipeline.gate_fix --parked "$stem" --show "$_show" </dev/null 2>&1)
-		if [ $? -eq 0 ]; then
+		park_rc=$?
+		if [ "$park_rc" -eq 0 ]; then
 			echo "skip: parked $(basename "$stem") — $park_note"
+			continue
+		fi
+		# 3 = the parked RECORD itself is unusable (gate_fix could not trust its fields). That is
+		# not a stale verdict: keep the park, spend no attempt, and say so -- the census below
+		# counts it as a failure until someone fixes or clears the record.
+		if [ "$park_rc" -eq 3 ]; then
+			echo "error: parked $(basename "$stem") — $park_note"
 			continue
 		fi
 		# A note here means a parked verdict exists but no longer stands (stamp changed or a
@@ -371,8 +379,13 @@ for p in sys.argv[1:]:
     if common.failed_stage(stem) is None:
         continue
     # A parked episode is visible but not churning: it is counted on its own line, not as
-    # a failure the pass keeps making no progress on.
-    if gate_fix.parked_state(stem)[0]:
+    # a failure the pass keeps making no progress on. A park record whose fields cannot be
+    # trusted is a FAILURE: it needs a human, so it must never disappear into the quiet line.
+    try:
+        is_parked = gate_fix.parked_state(stem)[0]
+    except gate_fix.ParkRecordError:
+        is_parked = False
+    if is_parked:
         parked += 1
     else:
         failed += 1

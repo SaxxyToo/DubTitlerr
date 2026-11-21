@@ -61,7 +61,7 @@ the outcome the merge pass' census reads (``ok`` or ``refused``).
 
 CLI:
   python3 -m dubtitlerr.pipeline.gate_fix STEM [--dry-run] [--json] [--duration S]
-  python3 -m dubtitlerr.pipeline.gate_fix STEM --parked [--show NAME]   # exit 0 = skip
+  python3 -m dubtitlerr.pipeline.gate_fix STEM --parked [--show NAME]   # exit 0 = skip, 1 = not parked, 3 = unusable
   python3 -m dubtitlerr.pipeline.gate_fix STEM --unpark                  # retry this pass
 
 Exit codes (the merge pass branches on these):
@@ -69,6 +69,12 @@ Exit codes (the merge pass branches on these):
   1  still refused; this exact refusal was already escalated, so do not re-notify
   3  still refused (or not a layout fault at all); this is new -> escalate now
   2  the CLI could not evaluate the episode (bad arguments, unreadable artifact)
+
+``--parked`` answers a different question, so its codes are separate: 0 = the park stands
+(skip the stem), 1 = no park, or one that no longer stands (merge_pass retries it), 3 = the
+park record itself is unusable. 3 exists because 1 used to mean both "not parked" and "the
+check crashed", and the merge pass read any non-zero as a stale verdict: it unparked the
+episode and deleted a record it could not read.
 """
 
 from __future__ import annotations
@@ -76,6 +82,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -652,6 +659,28 @@ def read_park(stem):
         return {}
 
 
+class ParkRecordError(ValueError):
+    """A park file claims a give-up but its fields cannot be trusted (a hand edit, a bad clock)."""
+
+
+def validate_park(doc):
+    """Raise ParkRecordError unless a parked document carries the fields that are read from it.
+
+    Read strictly on purpose: the alternative -- letting a bad ``at`` raise ValueError inside a
+    caller that reads any exception as "the verdict no longer stands" -- silently unparked the
+    episode and deleted the record. A record nobody can vouch for stays parked until a human
+    looks at it.
+    """
+    at = doc.get("at")
+    if isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at) or at < 0:
+        raise ParkRecordError(f"park record has no usable 'at' timestamp: {at!r}")
+    stamp, now = doc.get("attempt_stamp"), attempt_stamp()
+    # Typed against TODAY's stamp, not against int: if a version ever becomes a string the
+    # validator follows it, so a legitimate record is never called unusable.
+    if not isinstance(stamp, dict) or not all(k in stamp and type(stamp[k]) is type(now[k]) for k in now):
+        raise ParkRecordError(f"park record has no usable attempt stamp: {stamp!r}")
+
+
 def _write_park(stem, result, at):
     doc = {
         "parked": True,
@@ -718,6 +747,7 @@ def parked_state(stem, show=None):
     doc = read_park(stem)
     if not doc.get("parked"):
         return False, ""
+    validate_park(doc)
     stamp = doc.get("attempt_stamp")
     if stamp != attempt_stamp():
         return False, "the attempt stamp changed since the park (a fix or version bump)"
@@ -933,7 +963,11 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     if a.parked:
-        parked, note = parked_state(a.stem, show=a.show)
+        try:
+            parked, note = parked_state(a.stem, show=a.show)
+        except ParkRecordError as exc:  # exit 3: "cannot tell" -- never "not parked"
+            print(f"gate_fix: {os.path.basename(a.stem)}: {exc}")
+            return 3
         if note:
             print(note)
         return 0 if parked else 1

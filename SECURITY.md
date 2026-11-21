@@ -58,13 +58,24 @@ that mode outside a trusted network.
 The review token is, and stays, the credential every route checks. `REVIEW_USERNAME` with
 `REVIEW_PASSWORD` or `REVIEW_PASSWORD_FILE` adds `POST /api/login`, which returns that token
 to someone who knows the password; unset (or empty, or half set) it does not exist. Both
-fields are compared in constant time, failures are throttled in memory (five in five
-minutes, then 429 for 60 s per client address) and the password is never logged. The login
-route accepts only small JSON bodies. Use a strong password: the lockout allows 5 guesses per
-minute per client address. Behind a reverse proxy all clients share one address, so repeated
-bad guesses lock password login for everyone for 60 seconds while the token still works. **Over plain HTTP the password is sent in clear
+fields are compared in constant time and the password is never logged. The login route
+accepts only small JSON bodies. Use a strong password: the lockout allows 5 guesses per
+minute per client address. **Over plain HTTP the password is sent in clear
 text**: use it on a trusted LAN or behind TLS. It is a convenience for fetching the token,
 not an additional protection, and `REVIEW_AUTH=off` still disables everything.
+
+Failures are counted two ways, in memory, and they answer differently. Per **client address**
+the sixth failure in five minutes is a 429 for 60 seconds. Per **username** there is no
+lockout on purpose: an IPv6 /64 holds enough addresses to keep a 429 on an account's owner
+forever, which would be a denial of service rather than a defence. From five failures on, a
+login for that name waits a pause that doubles per extra failure (0.5 s to a 5 s cap), whoever
+asks, and a success clears the counter. Behind a reverse proxy all clients share one address,
+so five bad guesses briefly lock the login route for everyone while the token still works.
+
+**Put a request rate limit on the proxy, not only here.** These counters are per process and
+in memory: they reset on restart and see one address behind a proxy. A rule such as 5 requests
+per minute per real client on `/api/login` (nginx `limit_req`, Caddy `rate_limit`, Traefik
+`RateLimit`) is what keeps a distributed guessing attack cheap to refuse.
 
 ## Scope
 

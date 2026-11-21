@@ -176,9 +176,9 @@ def test_container_run_starts_the_review_server_as_a_background_loop():
     assert launches, "the server has to actually be started, not just mentioned"
     assert "exec python3 -m dubtitlerr.review.review_server" in code, "the function ends by becoming the server"
     assert gen and code[gen[0]].endswith("&"), "the generate loop is started in the background and supervised"
-    assert [ln for ln in code if ln.startswith("exec ")] == ["exec python3 -m dubtitlerr.review.review_server"], (
-        "exec would drop the SIGTERM trap (soft stop) anywhere but in the backgrounded server function"
-    )
+    assert [ln for ln in code if ln.startswith("exec ") and not re.match(r"exec \d+[<>]", ln)] == [
+        "exec python3 -m dubtitlerr.review.review_server"
+    ], "exec would drop the SIGTERM trap (soft stop) anywhere but in the backgrounded server function"
     assert 'wait "$gen_pid"' in code, "the supervisor waits on the generate loop, not the review server"
     assert launches[0] < gen[0], "started BEFORE the supervisor's wait, or it never starts at all"
 

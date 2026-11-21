@@ -16,6 +16,8 @@ import shutil
 import sys
 import time
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dubtitlerr.core.atomic_file import atomic_write
@@ -771,6 +773,40 @@ def test_a_park_stops_standing_only_for_a_request_created_after_it(tmp_path, mon
     assert "run request" in note
 
     assert gate_fix.parked_state(stem, show="Another Show")[0] is True
+
+
+def test_an_unusable_park_record_is_an_error_never_a_stale_verdict(tmp_path):
+    """A hand-edited or half-written park file used to raise ValueError, which merge_pass read as
+    "the verdict no longer stands": it unparked the episode and dropped the record. A record it
+    cannot trust must stay parked and be reported (exit 3), not silently deleted."""
+    stem = write_episode(tmp_path, padded(100.0, 101.32, "Kek" * 149))
+    park_path = gate_fix._park_path(stem)
+    atomic_write(park_path, lambda f: f.write(json.dumps(
+        {"parked": True, "at": "yesterday", "outcome": "unfixable", "summary": "old",
+         "attempt_stamp": gate_fix.attempt_stamp()})))
+
+    with pytest.raises(gate_fix.ParkRecordError):
+        gate_fix.parked_state(stem)
+    assert gate_fix.main([stem, "--parked"]) == 3
+    assert os.path.exists(park_path), "the park is kept for a human, not dropped"
+
+
+def test_a_park_record_without_a_usable_attempt_stamp_is_an_error_too(tmp_path):
+    stem = write_episode(tmp_path, padded(100.0, 101.32, "Kek" * 149))
+    park_path = gate_fix._park_path(stem)
+    atomic_write(park_path, lambda f: f.write(json.dumps(
+        {"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old"})))
+
+    with pytest.raises(gate_fix.ParkRecordError):
+        gate_fix.parked_state(stem)
+    assert gate_fix.main([stem, "--parked"]) == 3
+
+
+def test_the_parked_cli_keeps_its_two_happy_exit_codes(tmp_path):
+    stem = write_episode(tmp_path, padded(100.0, 101.32, "Kek" * 149))
+    assert gate_fix.main([stem, "--parked"]) == 1, "not parked: merge_pass takes the normal path"
+    gate_fix.attempt(stem)
+    assert gate_fix.main([stem, "--parked"]) == 0, "parked and the verdict stands: skip the stem"
 
 
 def test_a_fixed_episode_drops_its_parked_record(tmp_path):
