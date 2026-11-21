@@ -335,6 +335,19 @@ at its onset), so the trim still finds the run it was written for. The trade-off
 documented: when the word stream repeats the line later, those later utterances were never part of
 the card's text and stay unsubbed rather than being duplicated onto a card that never displayed them.
 
+**A collapsed repetition run is the same trade-off with one more step.** The hallucination pass
+folds four or more consecutive identical one-word cards into one card spanning the whole run
+(`hallucination.collapse_runs`: first start, last end). A short exclamation therefore ships as a
+single card over its entire run — 86 Eighty-Six S01E22's `Princess!` over 8.35 s (six utterances,
+the first a zero-length word), Berserk S01E06's `Griffith!` over 14.55 s (four shouts, the first
+0.52 s). Ending the card at its first utterance would leave it shorter than the 0.83 s minimum
+display time, which is why that path gave up and parked both episodes. Such a card now ends at the
+end of its **contiguous repeat** instead — the occurrences of its exact words spaced no more than a
+pause (0.5 s) apart, capped at the 7.5 s budget. The text still appears once (a repair may not
+duplicate words), the caption covers the cry it describes, and a repetition separated by real
+silence (Berserk's last shout, 10 s later) stays outside the chain and unsubbed. A card whose
+first utterance is short and *not* repeated is still not repairable: it parks.
+
 `llm-empty` is a name in the code's outcome list, but repair never writes it. When a model
 answers a target with nothing, repair counts it as `llm_empty` in the repair summary, queues the
 line for review, and the stage still records `ok`.
