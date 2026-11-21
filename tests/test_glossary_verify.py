@@ -574,3 +574,98 @@ def test_a_character_named_season_resolves_to_nothing(monkeypatch):
     monkeypatch.setattr(gv, "_http_json", fake)
     assert gv.arc_page_links_checked("https://x/api.php", "Gaimon")[0] == set()
     assert len(seen) == 1
+
+
+# --- bounded flag storage (P24): guard verdicts are counts, not entries ---------
+
+
+GUARD_FLAGS = {
+    "Magic": {"reason": "english-word"},
+    "Northern": "below-floor",
+    "Imperial": {"reason": "sentence-initial-only"},
+    "Blarg": "no-match",
+    "Raftel": {"reason": "respelling-needs-review", "canonical": "Ratel"},
+    "Freeran": {"reason": "unseen-needs-evidence"},
+}
+
+
+def test_finalize_flags_archives_the_guard_classes_and_keeps_the_decisions(tmp_path):
+    g = gl(flagged=dict(GUARD_FLAGS))
+
+    rep = gv.finalize_flags(g, str(tmp_path / "g.json"))
+
+    assert set(g["flagged"]) == {"Raftel", "Freeran"}, "only real decisions stay entry-form"
+    assert g["archived_flags"]["counts"] == {"below-floor": 1, "english-word": 1, "no-match": 1, "sentence-initial-only": 1}
+    assert g["archived_flags"]["total"] == 4
+    assert rep == {
+        "archived": 4,
+        "flagged": 2,
+        "counts": {"below-floor": 1, "english-word": 1, "no-match": 1, "sentence-initial-only": 1},
+    }
+
+    lines = (tmp_path / "g.json.archived.jsonl").read_text().splitlines()
+    assert len(lines) == 4, "every archived entry keeps its evidence"
+    logged = {json.loads(ln)["term"]: json.loads(ln) for ln in lines}
+    assert logged["Magic"]["reason"] == "english-word"
+    assert "Raftel" not in logged, "decision classes are never archived"
+
+
+def test_finalize_flags_rerun_does_not_duplicate_or_grow_the_archive(tmp_path):
+    """Same input twice: counts identical, jsonl unchanged, flagged unchanged."""
+    path = str(tmp_path / "g.json")
+    first = gv.finalize_flags(gl(flagged=dict(GUARD_FLAGS)), path)
+    first_lines = (tmp_path / "g.json.archived.jsonl").read_text().splitlines()
+    second = gv.finalize_flags(gl(flagged=dict(GUARD_FLAGS)), path)
+
+    assert first["counts"] == second["counts"]
+    assert (tmp_path / "g.json.archived.jsonl").read_text().splitlines() == first_lines
+
+
+def test_a_run_that_archives_nothing_keeps_the_previous_counts(tmp_path):
+    """VERIFY never re-adjudicates a `verified` term, so the second sweep sees no guard
+    verdicts at all -- the record must survive that, or the archive vanishes on rerun."""
+    g = gl(flagged={"Magic": "english-word"})
+    gv.finalize_flags(g, str(tmp_path / "g.json"))
+    counts = dict(g["archived_flags"]["counts"])
+
+    gv.finalize_flags(g, str(tmp_path / "g.json"))
+
+    assert g["archived_flags"]["counts"] == counts
+
+
+def _mock_verify(monkeypatch, verdicts):
+    monkeypatch.setattr(gv, "resolve_wiki", lambda show, override=None: "https://x.fandom.com/api.php")
+    monkeypatch.setattr(gv, "fetch_titles", lambda api, show: ["Magic", "Spandam"])
+    monkeypatch.setattr(gv, "candidates", lambda term, titles, k=gv.TOPK: [])
+    monkeypatch.setattr(gv, "adjudicate", lambda term, cands, show: verdicts(term))
+
+
+def test_verify_reruns_leave_flagged_flat_with_counts_archived(monkeypatch, tmp_path):
+    """The 798-item pile: every run re-proposes and re-flags the guard classes. Stored as
+    counts they stay flat, the evidence stays in the .archived.jsonl, and the real review
+    item is the only entry left in `flagged`."""
+    monkeypatch.setenv("VERIFY_QUEUE_NO_MATCH", "1")  # the legacy queue-everything behaviour
+    _mock_verify(monkeypatch, lambda term: {"canonical": "", "confidence": "none", "dub_note": ""})
+    gloss_path = tmp_path / "g.json"
+    gloss_path.write_text(
+        json.dumps(
+            gl(
+                names=["Magic", "Spandom", "Northern"],
+                flagged={"Raftel": {"reason": "respelling-needs-review", "canonical": "Ratel"}},
+            )
+        )
+    )
+
+    rep1 = gv.verify(str(gloss_path), force=True)
+    doc = json.load(open(gloss_path))
+    assert set(doc["flagged"]) == {"Raftel"}, doc["flagged"]
+    assert doc["archived_flags"]["counts"] == {"no-match": 3}
+    assert rep1["flagged"] == 1
+    lines = (tmp_path / "g.json.archived.jsonl").read_text().splitlines()
+    assert len(lines) == 3
+
+    gv.verify(str(gloss_path), force=True)  # a second full sweep, same verdicts
+    doc2 = json.load(open(gloss_path))
+    assert doc2["flagged"] == doc["flagged"], "entry count is flat across reruns"
+    assert doc2["archived_flags"]["counts"] == doc["archived_flags"]["counts"]
+    assert (tmp_path / "g.json.archived.jsonl").read_text().splitlines() == lines

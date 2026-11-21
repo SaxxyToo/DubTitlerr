@@ -37,7 +37,7 @@ MAX_BODY = 64 * 1024
 MAX_WIKI = 300
 _LIMITS = {"names": 80, "phrases": 120, "hard_fixes": 120}
 # Sidecars that live next to a glossary and are not glossaries themselves.
-_SIDECAR = re.compile(r"\.(acquire-cache|lastrun|journal)\.json$|\.review-pending|\.bak-")
+_SIDECAR = re.compile(r"\.(acquire-cache|lastrun|journal|cleanup)\.json$|\.review-pending|\.bak-")
 # Characters no term may carry: controls, format/bidi/zero-width, surrogates, private use, and the line and
 # paragraph separators (which would split an audit log line). A plain space (Zs) is fine.
 _BAD_CATEGORIES = frozenset(("Cc", "Cf", "Cs", "Co", "Zl", "Zp"))
