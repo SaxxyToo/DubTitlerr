@@ -308,6 +308,33 @@ parks. The park's attempt stamp carries a glossary fingerprint, so editing the g
 show's parked episodes exactly once — the same discipline `GATE_FIX_EPOCH` and the version bumps
 already follow.
 
+**Song spans are not dialogue.** A dub re-uses the Japanese OP/ED, and the English ASR renders
+sung Japanese as pseudo-romaji with an occasional English adaptation line (`Osoresu ni susume yo.`
+/ `Holy brave.` / `Furikaereba itsumo.`). `dubtitlerr.core.song_spans` recognises such a region —
+two or more cards that hold no recognised English word *and* whose tokens are all romaji-shaped,
+grouped when they start within 8 s of each other — and the gate leaves the span out of its
+punctuation, layout and mishear checks; `gate_fix` leaves its cards' bytes alone. So the ending-song
+romaji can no longer be reported as a known mishear (a show glossary legitimately carries a
+`Furikaereba -> Frieren` rule admitted from dialogue), and the lyric lines are not measured as
+subtitles. The span is conservative by construction: a terse English line with no function word
+("Confirming ID.", "Weak Kingsley.") is *not* a lyric because its consonant clusters are unspellable
+in romaji; a lone romaji-looking card is still dialogue; and a region covering more than a quarter
+of the file's cards, or running longer than 180 s, is treated as a broken transcript rather than a
+song. Nothing is deleted or rewritten: the release's own lyric and sign events stay where the merge
+put them, and a styled `.ass` still ships them.
+
+The punctuation floor is a **minimum, not a quality bar**: a card counts as punctuated when it ends
+with any punctuation mark, clauses included, because a subtitle cut at a comma is still punctuated
+text continuing a sentence. It sits at 50% of cards, well under the real sidecars measured
+2026-11-21 (the lowest is 60.9%) and well above the unpunctuated raw-ASR band (which tops out at
+27.1%, the 0.0% Death Note control included).
+
+The over-duration trim ends a card where **its own** first utterance ends. A word may start up to a
+second before the card (the assembler places the card boundary at the segment boundary and the word
+at its onset), so the trim still finds the run it was written for. The trade-off is deliberate and
+documented: when the word stream repeats the line later, those later utterances were never part of
+the card's text and stay unsubbed rather than being duplicated onto a card that never displayed them.
+
 `llm-empty` is a name in the code's outcome list, but repair never writes it. When a model
 answers a target with nothing, repair counts it as `llm_empty` in the repair summary, queues the
 line for review, and the stage still records `ok`.
