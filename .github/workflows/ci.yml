@@ -82,6 +82,21 @@ jobs:
         working-directory: web
       - run: npm run test:browser
         working-directory: web
+      # Playwright already retains a trace, a screenshot and the page snapshot on failure
+      # (playwright.config.ts: trace 'retain-on-failure', screenshot 'only-on-failure') and writes
+      # them to web/test-results -- and until now none of it ever left the runner, so a red
+      # review-ui was one error line and a stack frame. The 2026-11-21 flake (a glossary row that
+      # never appeared) could not be diagnosed at all: the run had no artifacts to fetch.
+      # always() rather than failure(): a cancelled run can still hold partial traces, and it also
+      # means this step is exercised and visible on a green run. On a pass there is nothing to
+      # upload, and if-no-files-found: ignore is what keeps that quiet instead of a warning.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: review-ui-artifacts
+          path: web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
   osv-scan:
     runs-on: ubuntu-latest
