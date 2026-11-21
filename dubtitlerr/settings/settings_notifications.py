@@ -19,8 +19,9 @@ KINDS = notify.KINDS
 EVENTS = notify.EVENTS
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 COMMON_FIELDS = ("name", "kind", "enabled", "triggers")
-# Visible per kind: what the page shows and the operator edits.
-VISIBLE_FIELDS = {"discord": (), "ntfy": ("server", "topic"), "webhook": ()}
+# Visible per kind: what the page shows and the operator edits. Discord's link_url is the review UI's base
+# URL (optional); notify turns it into each embed's click-through.
+VISIBLE_FIELDS = {"discord": ("link_url",), "ntfy": ("server", "topic"), "webhook": ()}
 # Write-only per kind: never returned, only reported as set or not set.
 SECRET_FIELDS = {"discord": ("url",), "ntfy": ("token",), "webhook": ("url",)}
 KIND_LABELS = {"discord": "Discord", "ntfy": "ntfy", "webhook": "Webhook"}
@@ -80,6 +81,15 @@ def validate_notification(item):
         topic = item.get("topic")
         if not isinstance(topic, str) or not TOPIC_RE.fullmatch(topic.strip()):
             errors["topic"] = "use letters, digits, _ or - (up to 64 characters)"
+    if kind == "discord":
+        link = item.get("link_url")
+        if isinstance(link, str):
+            if link.strip():
+                problem = notify.url_problem(link.strip())
+                if problem:
+                    errors["link_url"] = problem
+        elif link is not None:
+            errors["link_url"] = "must be text"
     # A secret field sent for a kind that has none is an unknown field: known_fields() already names the field, but the
     # per-kind set is what actually decides, so say so on that field.
     if isinstance(kind, str) and kind in KINDS:
@@ -92,6 +102,8 @@ def validate_notification(item):
         if kind == "ntfy":
             clean["server"] = item["server"].strip()
             clean["topic"] = item["topic"].strip()
+        elif kind == "discord" and isinstance(item.get("link_url"), str) and item["link_url"].strip():
+            clean["link_url"] = item["link_url"].strip()
     return clean, errors
 
 

@@ -437,6 +437,7 @@ export function blankNotification(rules) {
     enabled: true,
     triggers: (rules?.triggers ?? []).filter((t) => !NOTIFICATION_OFF_BY_DEFAULT.includes(t)),
     url: { set: false },
+    link_url: '',
   };
 }
 
@@ -460,6 +461,7 @@ export function withNotificationKind(row, kind) {
     next.token = { set: false };
   } else {
     next.url = { set: false };
+    if (kind === 'discord') next.link_url = '';
   }
   return next;
 }
@@ -469,7 +471,7 @@ export function toggleTrigger(triggers, trigger) {
   return triggers.includes(trigger) ? triggers.filter((t) => t !== trigger) : [...triggers, trigger];
 }
 
-const NOTIFICATION_FIELDS = ['name', 'kind', 'enabled', 'triggers', 'server', 'topic'];
+const NOTIFICATION_FIELDS = ['name', 'kind', 'enabled', 'triggers', 'server', 'topic', 'link_url'];
 
 /**
  * The PUT `notifications` list from the working copies. Visible fields always travel; the secret field travels only when the
@@ -507,6 +509,7 @@ export function notificationsChanged(loaded, working) {
         [...(c.triggers ?? [])].sort(),
         c.server ?? '',
         c.topic ?? '',
+        c.link_url ?? '',
       ]),
     );
   return strip(loaded) !== strip(working);
@@ -532,6 +535,6 @@ export function notificationTestable(row, saved) {
   const prior = saved.find((s) => s.name === row.name);
   if (!prior) return false;
   if (row.secret === CLEAR || (typeof row.secret === 'string' && row.secret !== '')) return false;
-  const visible = (/** @type {any} */ c) => [c.kind, c.server ?? '', c.topic ?? ''];
+  const visible = (/** @type {any} */ c) => [c.kind, c.server ?? '', c.topic ?? '', c.link_url ?? ''];
   return JSON.stringify(visible(prior)) === JSON.stringify(visible(row));
 }

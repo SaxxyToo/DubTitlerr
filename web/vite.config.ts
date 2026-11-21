@@ -5,5 +5,8 @@ export default defineConfig({
   base: '/review/',
   plugins: [svelte()],
   server: { proxy: { '/api': 'http://127.0.0.1:8842', '/healthz': 'http://127.0.0.1:8842' } },
-  build: { sourcemap: false },
+  build: {
+    sourcemap: false,
+    rollupOptions: { input: { review: 'index.html', hero: 'hero.html' } },
+  },
 });

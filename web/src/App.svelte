@@ -90,6 +90,34 @@
   // existing backlog is almost entirely unclassified, and hiding it behind a filter on first
   // open would read as work lost.
   let refFilter = $state('all');
+  // Audio Deck: the band's trace is generated deterministically (the same generator as the
+  // accepted comp build); the playhead and timechip track the real preview element.
+  let audioProgress = $state(0);
+  let audioElapsed = $state('0:00');
+  function waveTrace(w: number, h: number, n: number): string {
+    const mid = h / 2;
+    let d = '';
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const x = t * w;
+      const env =
+        0.16 + 0.74 * Math.abs(Math.sin(t * 8.3 + 0.4)) * (0.5 + 0.5 * Math.abs(Math.sin(t * 1.9 + 0.8)));
+      const j1 = 0.42 + 0.58 * Math.abs(Math.sin(i * 12.9898 + 4.1));
+      const j2 = 0.42 + 0.58 * Math.abs(Math.sin(i * 7.233 + 1.7));
+      const top = mid - env * j1 * mid * 0.98;
+      const bot = mid + env * j2 * mid * 0.98;
+      d += `M${x.toFixed(1)} ${top.toFixed(1)}L${x.toFixed(1)} ${bot.toFixed(1)}`;
+    }
+    return d;
+  }
+  const bandWave = waveTrace(925, 290, 330);
+  function onPreviewTime(): void {
+    const el = player;
+    if (!el || !el.duration || !Number.isFinite(el.duration)) return;
+    audioProgress = (el.currentTime / el.duration) * 100;
+    const s = Math.max(0, Math.floor(el.currentTime));
+    audioElapsed = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
   // Both sort choices are remembered per browser; a stored value this build does not know falls back to the default.
   const EPISODE_SORT_KEY = 'dubtitlerr_episode_sort';
   const LINE_SORT_KEY = 'dubtitlerr_line_sort';
@@ -919,37 +947,55 @@
                     <span class="muted">Line {activeIndex + 1} of {visible.length}</span>
                   </div>
                   {#if 'show' in current}<div class="shared-show">{current.show}</div>{/if}
-                  {#if 'starts' in current && current.starts.length}<div class="audio-row">
-                      <button class="listen" onclick={playClip} disabled={audioLoading}
-                        >{#if audioLoading}<LoaderCircle size={17} class="spin" />{:else}<Play
-                            size={17}
+                  {#if 'starts' in current && current.starts.length}
+                    <section class="audio-band" aria-label="Dub audio for the active line">
+                      <div class="band-grid" aria-hidden="true"></div>
+                      <svg
+                        class="band-wave"
+                        viewBox="0 0 925 290"
+                        preserveAspectRatio="none"
+                        aria-hidden="true"><path d={bandWave} /></svg
+                      >
+                      <div class="band-playhead" aria-hidden="true" style="left: {audioProgress}%">
+                        <i class="band-line"></i><i class="band-handle"></i>
+                      </div>
+                      <span class="band-timechip">{audioElapsed}</span>
+                      <div class="band-ruler" aria-hidden="true"></div>
+                      <button class="listen listen-pill" onclick={playClip} disabled={audioLoading}
+                        >{#if audioLoading}<LoaderCircle size={15} class="spin" />{:else}<Play
+                            size={15}
                           />{/if}{audioLoading ? 'Preparing clip…' : 'Listen to dub'}<kbd>Space</kbd></button
-                      ><span class="timecode"
-                        >{timecode(current.starts[occurrence] ?? current.starts[0])}</span
-                      >{#if current.starts.length > 1}<select
-                          aria-label="Audio occurrence"
-                          value={occurrence}
-                          onchange={(e) => {
-                            stopAudio();
-                            occurrence = Number(e.currentTarget.value);
-                          }}
-                          >{#each current.starts as start, i}<option value={i}
-                              >Occurrence {i + 1} · {timecode(start)}</option
-                            >{/each}</select
-                        >{/if}<small>Up to 20s · English track</small>
-                    </div>{/if}
-                  {#if audioUrl}<audio
-                      bind:this={player}
-                      src={audioUrl}
-                      controls
-                      preload="none"
-                      aria-label="English dub preview"
-                    ></audio>{/if}{#if audioError}<p class="inline-error" role="alert">{audioError}</p>{/if}
+                      >
+                      <div class="listen-row">
+                        {#if audioUrl}<audio
+                            bind:this={player}
+                            src={audioUrl}
+                            controls
+                            preload="none"
+                            aria-label="English dub preview"
+                            ontimeupdate={onPreviewTime}
+                          ></audio>{/if}<span class="timecode"
+                          >{timecode(current.starts[occurrence] ?? current.starts[0])}</span
+                        >{#if current.starts.length > 1}<select
+                            aria-label="Audio occurrence"
+                            value={occurrence}
+                            onchange={(e) => {
+                              stopAudio();
+                              occurrence = Number(e.currentTarget.value);
+                            }}
+                            >{#each current.starts as start, i}<option value={i}
+                                >Occurrence {i + 1} · {timecode(start)}</option
+                              >{/each}</select
+                          >{/if}<small>Up to 20s · English track</small>
+                      </div>
+                    </section>
+                  {/if}
+                  {#if audioError}<p class="inline-error" role="alert">{audioError}</p>{/if}
                   {#if 'context' in current && current.context[occurrence]}<div class="context-line">
                       <span>Before</span>{current.context[occurrence].before.join(' ') || 'Start of episode'}
                     </div>{/if}
-                  <div class="diff-grid">
-                    <div class="diff-box original">
+                  <section class="deck-card" aria-label="Line under review">
+                    <div class="deck-orig">
                       <div class="diff-label"><span class="tiny-dot"></span>Original transcript</div>
                       <p>
                         {#each diffParts(current.original_text, current.proposed_text, 'original') as part}{#if part.removed}<del
@@ -957,7 +1003,8 @@
                             >{:else}{part.value}{/if}{/each}
                       </p>
                     </div>
-                    <div class="diff-box proposed">
+                    <i class="deck-rule" aria-hidden="true"></i>
+                    <div class="deck-repair">
                       <div class="diff-label"><Sparkles size={13} />Proposed repair</div>
                       <p>
                         {#each diffParts(current.original_text, current.proposed_text, 'proposed') as part}{#if part.added}<ins
@@ -965,7 +1012,7 @@
                             >{:else}{part.value}{/if}{/each}
                       </p>
                     </div>
-                  </div>
+                  </section>
                   {#if 'context' in current && current.context[occurrence]}<div class="context-line">
                       <span>After</span>{current.context[occurrence].after.join(' ') || 'End of episode'}
                     </div>{/if}
@@ -989,8 +1036,10 @@
                     <h3>Your verdict</h3>
                     <span>{draft ? 'Choice staged, not saved' : 'Nothing selected yet'}</span>
                   </div>
-                  <div class="verdicts">
-                    {#each current.offered as verdict (verdict)}<button
+                  <div class="transport" role="group" aria-label="Review decisions">
+                    <button class="secondary deck-nav" onclick={() => move(-1)} disabled={visible.length < 2}
+                      ><ChevronLeft size={16} />Previous<kbd>K</kbd></button
+                    >{#each current.offered as verdict (verdict)}<button
                         class:chosen={draft?.verdict === verdict}
                         class="verdict {verdict}"
                         onclick={() => choose(verdict)}
@@ -1011,7 +1060,11 @@
                                 ? 'C'
                                 : '!'}</kbd
                         ></button
-                      >{/each}
+                      >{/each}<button
+                      class="secondary deck-nav"
+                      onclick={() => move(1)}
+                      disabled={visible.length < 2}>Next line<kbd>J</kbd><ChevronRight size={16} /></button
+                    ><span class="transport-remaining">{remaining} still to decide</span>
                   </div>
                   {#if draft?.verdict === 'correct'}<label class="correction-label" for="correction"
                       >Corrected subtitle</label
@@ -1034,15 +1087,6 @@
                         ><X size={14} />Clear choice</button
                       >
                     </div>{/if}
-                  <div class="card-navigation">
-                    <button class="secondary" onclick={() => move(-1)} disabled={visible.length < 2}
-                      ><ChevronLeft size={16} />Previous<kbd>K</kbd></button
-                    ><span>{remaining} still to decide</span><button
-                      class="secondary"
-                      onclick={() => move(1)}
-                      disabled={visible.length < 2}>Next line<kbd>J</kbd><ChevronRight size={16} /></button
-                    >
-                  </div>
                 </div>
               {:else}<div class="empty-state">
                   <Check size={32} aria-hidden="true" />

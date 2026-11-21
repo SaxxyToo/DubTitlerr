@@ -746,7 +746,7 @@ Providers live in `$CONFIG_DIR/settings.json` under `notifications` (visible fie
 
 | Kind      | Visible fields     | Write-only secret | Sends |
 | --------- | ------------------ | ----------------- | ----- |
-| `discord` | _(none)_           | `url` (webhook)   | `POST {"content": summary}` to the webhook URL |
+| `discord` | `link_url` (optional) | `url` (webhook) | `POST` one embed per event (below) to the webhook URL |
 | `ntfy`    | `server`, `topic`  | `token` (optional)| `POST server/topic` with the summary as the body, `Title: <event>`, `Priority: 5` on `pass.failed` and `default` otherwise, `Authorization: Bearer <token>` when a token is set |
 | `webhook` | _(none)_           | `url`             | `POST` the JSON envelope (below) verbatim |
 
@@ -760,8 +760,11 @@ Providers live in `$CONFIG_DIR/settings.json` under `notifications` (visible fie
 | `topic`    | `ntfy`         | required; letters, digits, `_`, `-`; up to 64 characters |
 | `url`      | `discord`, `webhook` | required; http(s), one line, 1 to 512 characters, passing the guards below |
 | `token`    | `ntfy`         | optional; one line without spaces or control characters, 1 to 512 characters |
+| `link_url` | `discord`      | optional; an http(s) URL passing the guards below. Absent (or unusable, if edited by hand) means the embed carries no link |
 
 The webhook envelope is `{"event", "at", "host", "loop", "summary", "counts", "detail"}`. It has no `version` field: the repo exposes no runtime application version, so inventing one would give a consumer nothing it could check.
+
+**The Discord embed.** One embed per event: the event's title, a severity colour (green for a completed sweep, merge or delivery; blurple for `run.requested`; amber for `review.pending` and `episode.refused`; red for `pass.failed`), the summary as its description, the `counts` (and scalar `detail` entries) as inline fields, a footer naming the host and loop, and a UTC timestamp. Every string is clipped to Discord's per-embed limits, and `allowed_mentions` stays empty so a summary can never ping a role. With `link_url` set, the embed's title also links to the review-workspace view the event belongs to — `#/runs` for `run.requested`, `#/inbox` for `review.pending`, `#/dashboard` otherwise. The link names a view, not an episode: the workspace's hash router addresses views only. The `ntfy` and `webhook` kinds are unchanged.
 
 **Triggers.**
 

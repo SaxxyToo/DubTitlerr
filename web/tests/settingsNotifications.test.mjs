@@ -17,7 +17,7 @@ const RULES = {
   kinds: ['discord', 'ntfy', 'webhook'],
   triggers: ['run.requested', 'sweep.completed', 'merge.completed', 'pass.failed', 'review.pending', 'episode.delivered'],
   fields: {
-    discord: { visible: [], secret: ['url'] },
+    discord: { visible: ['link_url'], secret: ['url'] },
     ntfy: { visible: ['server', 'topic'], secret: ['token'] },
     webhook: { visible: [], secret: ['url'] },
   },
@@ -41,6 +41,7 @@ test('a new notification is Discord, enabled, with every trigger except the per-
   assert.equal(blank.enabled, true);
   assert.deepEqual(blank.triggers, ['run.requested', 'sweep.completed', 'merge.completed', 'pass.failed', 'review.pending']);
   assert.deepEqual(blank.url, { set: false });
+  assert.equal(blank.link_url, '');
 });
 
 test('each kind has exactly one write-only secret field', () => {
@@ -55,6 +56,7 @@ test('switching kind drops the old kind field and reports no stored secret', () 
   assert.equal('server' in ntfy, false);
   assert.equal('token' in ntfy, false);
   assert.deepEqual(ntfy.url, { set: false });
+  assert.equal(ntfy.link_url, '');
   assert.equal(ntfy.enabled, false);
 });
 
@@ -70,6 +72,14 @@ test('the body sends visible fields always and a secret only when it was touched
   assert.deepEqual(body[2].token, { clear: true });
   assert.equal('secret' in body[1], false);
   assert.equal('url' in body[0], false, 'the stored URL marker is never echoed back');
+});
+
+test('a discord link_url travels in the body and reads as a change and an untestable edit', () => {
+  const withLink = { ...LOADED[0], link_url: 'https://dub.example.test/review' };
+  assert.equal(notificationsBody([withLink])[0].link_url, 'https://dub.example.test/review');
+  assert.equal(notificationsChanged(LOADED, [withLink, LOADED[1]]), true);
+  assert.equal(notificationTestable(withLink, LOADED.map((p) => ({ ...p }))), false);
+  assert.equal(notificationTestable({ ...LOADED[0] }, LOADED.map((p) => ({ ...p }))), true);
 });
 
 test('changed sees an edited field, a typed secret or a removed provider', () => {
