@@ -237,7 +237,23 @@ def main():
                     return self._send(200, {"ok": True})
                 return super().do_POST()
 
-        srv = rs.BoundedHTTPServer(("127.0.0.1", 18842), FixtureHandler)
+        class FixtureServer(rs.BoundedHTTPServer):
+            """The review server, quiet about clients that hang up mid-response.
+
+            A browser that aborts a request (a `page.route(..., route.abort())`, or leaving the page
+            while a response is in flight) closes its socket, and socketserver then prints a
+            twenty-line BrokenPipeError traceback. It reads like the fixture crashed -- it did not:
+            every other test kept using this server -- and it made a flaky contrast assertion look
+            like a webserver failure (CI 2026-11-21, job 136719511316). The connection is already
+            gone, so dropping it silently is the whole correct handling.
+            """
+
+            def handle_error(self, request, client_address):
+                if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+                    return
+                super().handle_error(request, client_address)
+
+        srv = FixtureServer(("127.0.0.1", 18842), FixtureHandler)
         print("Synthetic review fixture ready on 127.0.0.1:18842", flush=True)
         try:
             srv.serve_forever()
