@@ -97,6 +97,8 @@ test('the risk summary counts every row in the queue, in a fixed order', () => {
     { risk: 'substitution' },
   ];
   assert.equal(riskSummary(rows), '2 words · 1 substitution · 1 punctuation');
+  // Singular counts read as singular; the summary is prose, not a label table.
+  assert.equal(riskSummary([{ risk: 'words' }]), '1 word · 0 substitutions · 0 punctuation');
   // An empty queue still names the three classes, so the line never reads as partial.
   assert.equal(riskSummary([]), '0 words · 0 substitutions · 0 punctuation');
 });

@@ -111,10 +111,16 @@ export function blank(text: string) {
  */
 export function riskSummary(rows: { risk: string }[]): string {
   const order = ['words', 'substitution', 'punctuation'] as const;
-  const short: Record<string, string> = {
-    words: 'words',
-    substitution: 'substitutions',
-    punctuation: 'punctuation',
+  const labels: Record<string, [string, string]> = {
+    words: ['word', 'words'],
+    substitution: ['substitution', 'substitutions'],
+    punctuation: ['punctuation', 'punctuation'],
   };
-  return order.map((k) => `${rows.filter((r) => r.risk === k).length} ${short[k]}`).join(' · ');
+  return order
+    .map((k) => {
+      const n = rows.filter((r) => r.risk === k).length;
+      const [one, many] = labels[k];
+      return `${n} ${n === 1 ? one : many}`;
+    })
+    .join(' · ');
 }
