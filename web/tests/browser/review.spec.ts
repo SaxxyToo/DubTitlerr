@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test';
-import AxeBuilder from '@axe-core/playwright';
-import { signOut } from './helpers';
+import { scanAccessibility, signOut } from './helpers';
 
 test('human review workspace keeps real workflow semantics', async ({ page, request }, testInfo) => {
   // One long journey: three axe scans, audio extraction and a full-page screenshot take 20-26 s on a quiet
@@ -15,9 +14,7 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
   page.on('pageerror', (err) => errors.push(err.message));
   await page.goto('/review');
   await expect(page.getByRole('heading', { name: 'Open your review workspace' })).toBeVisible();
-  const loginAccessibility = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
-    .analyze();
+  const loginAccessibility = await scanAccessibility(page);
   expect(loginAccessibility.violations).toEqual([]);
   // The fixture server imported a username and password as its first admin: the sign-in form is all there is.
   await expect(page.getByLabel('Username')).toBeVisible();
@@ -46,7 +43,11 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
     .toBeGreaterThan(0);
   await page.getByRole('button', { name: /Write correction/ }).click();
   await page.getByLabel('Corrected subtitle').fill('We are looking for the factory.');
-  const accessibility = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+  // The staged edit has to be on the page before the scan: axe skips disabled controls, so a scan
+  // that ran first would silently not measure the Save button at all (it renders #2a292a while
+  // disabled, 1.4:1 against its label, and no rule complains because the control is inert).
+  await expect(page.getByRole('button', { name: /Save 1 choice/ })).toBeEnabled();
+  const accessibility = await scanAccessibility(page);
   expect(accessibility.violations).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath('review-workspace.png'), fullPage: true });
   await page.getByLabel('Search review lines').fill('blue');
@@ -148,9 +149,7 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
   // Signing in again opens the same workspace, and no token was ever put in storage.
   await page.getByLabel('Username').fill('reviewer');
   await page.getByLabel('Password').fill('browser-fixture-password');
-  const passwordAccessibility = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
-    .analyze();
+  const passwordAccessibility = await scanAccessibility(page);
   expect(passwordAccessibility.violations).toEqual([]);
   await page.getByLabel('Password').press('Enter');
   await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
