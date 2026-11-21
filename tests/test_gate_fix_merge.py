@@ -264,6 +264,29 @@ def test_a_run_request_created_after_the_park_retries_it_once(tmp_path):
 
 
 
+def test_an_unusable_park_record_keeps_the_park_and_is_reported_as_an_error(tmp_path):
+    """`gate_fix --parked` used to exit 1 for BOTH "not parked" and "the record is broken", so a
+    park file with a hand-edited `at` was read as a stale verdict, unparked and deleted. Exit 3
+    says "cannot tell": keep the record, spend no attempt, and make it visible."""
+    blob = "Kek" * 149
+    _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="0")
+    stem = str(tmp_path / "library" / "Show" / "ep01")
+    park = tmp_path / "library" / "Show" / "ep01.dubtitles.parked.json"
+    doc = _park(stem)
+    doc["at"] = "yesterday"
+    park.write_text(json.dumps(doc))
+    before = park.read_text()
+
+    res, calls, _, _ = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="0")
+    assert "error: parked ep01" in res.stdout, res.stdout
+    assert "park record has no usable 'at'" in res.stdout, res.stdout
+    assert "skip mux: publish gate failed" not in res.stdout, "the gate was not re-run on it"
+    assert calls == []
+    assert _audit_attempts(stem) == 1, "no attempt was spent on a record it could not trust"
+    assert park.read_text() == before, "the park is kept exactly as it was"
+    assert "MERGE PASS INCOMPLETE" in res.stdout, "an unusable park record must be visible, not quietly parked"
+
+
 def test_no_subscriber_means_no_event_but_the_park_still_happens(tmp_path):
     blob = "Kek" * 149
     res, calls, sent, stem = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="0")
