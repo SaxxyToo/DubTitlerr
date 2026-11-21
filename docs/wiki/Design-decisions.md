@@ -569,3 +569,61 @@ text-tier stages, and whole-cue matching on unique phrases already keeps precisi
 Harder, and accepted: a boilerplate variant not in the template list survives (conservative by
 construction), and a credit rendered mid-episode is reported but left for an operator. Both are
 cheaper than deleting a line of dialogue, which no counter would ever reveal.
+
+---
+
+## 9. Discord renders an embed per event, and its link names a view, not an episode
+
+**Accepted 2026-11-20.** The code is the Discord branch of `dubtitlerr/core/notify.py`
+(`_discord_embed`, with the `EVENT_TITLES` / `EVENT_COLORS` / `EVENT_VIEWS` tables), the visible
+`link_url` field in `dubtitlerr/settings/settings_notifications.py`, and the input in
+`web/src/pages/settings/NotificationsPanel.svelte`.
+
+### The problem
+
+The Discord kind posted `{"content": "<summary>"}`: one grey block of text per event, the same shape
+whether the event was a delivery or a failure, and the renderer discarded the `counts` and `detail`
+the sender was already handed. A screenshot of a live channel showed parked episodes, refusals and
+finished runs that read identically until the sentence was parsed — the structured data was there
+and nothing displayed it.
+
+### The decision
+
+One embed per event. The event's table entry supplies the title and a severity colour: green done
+(`sweep.completed`, `merge.completed`, `episode.delivered`), blurple `run.requested`, amber for the
+two that want a human (`review.pending`, `episode.refused`), red `pass.failed`. The summary becomes
+the description, `counts` and scalar `detail` entries become inline fields, and a footer names the
+host and loop beside a UTC timestamp. Every string is clipped to Discord's per-embed limits and
+`allowed_mentions` stays empty.
+
+The Discord kind gains one visible, non-secret field, `link_url` — the review UI's base URL — and
+the embed's title links to the view its event belongs to. The link names a **view, not an episode**:
+the workspace's hash router addresses views only, so a per-episode permalink would be new SPA work
+and is deliberately not done here. An absent or unusable `link_url` leaves the embed without a link
+rather than failing the send; a hand-edited value that fails the guards is dropped the same way.
+
+Rendering lives in the sender, not the emitters: the loops and the review API already passed
+`counts` and `detail`, so no emitter changed and a new event needs only a table entry.
+
+Rejected alternatives:
+
+- **Keep `content` beside the embed.** Discord renders both, so every message would carry the
+  summary twice.
+- **A global "review UI URL" setting.** More correct in the abstract — there is one workspace — but
+  it is a new top-level settings key threading through the registry, the store, the API and the
+  panel, for a field only the Discord kind reads.
+- **Deriving the base URL from the environment.** There is nothing to derive: notifications are
+  emitted from the shell loops and from the review server, and neither knows the address a phone can
+  reach the UI on. A configured field is the only honest source.
+- **A link straight to the parked episode.** The most useful destination, and it needs deep-link
+  support that does not exist; recorded as a follow-up rather than smuggled in with a renderer.
+- **Refuse the save when `link_url` is unusable.** It is refused when it fails the URL guards, like
+  every other URL in settings; what the sender additionally guarantees is that a value that became
+  unusable on disk degrades to no link instead of losing the message.
+
+### What it costs
+
+Easier: one place to make a new event look right, and the counts an emitter already computed are
+finally visible where an operator reads them. Harder, and accepted: the embed shape is Discord's, so
+a second rich-text kind would want its own table rather than reusing this one, and the view-level
+link is a real destination only once the SPA grows episode deep links.
