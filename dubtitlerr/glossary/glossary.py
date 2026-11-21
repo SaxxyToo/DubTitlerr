@@ -333,6 +333,19 @@ def _one_indel(a: str, b: str) -> bool:
 
 _TOKEN_RE = re.compile(r"^([^\w']*)([\w'][\w'-]*?)([^\w']*)$")
 
+# Possessive suffixes a token hard_fix must survive (P18). When ASR hears a name wrong the
+# apostrophe belongs to the TOKEN -- "Freeran's" -- so the exact-token map keyed on
+# "freeran" never matched, and Frieren S01E27 shipped three such tokens while the same run
+# corrected 16 "Frieren" and 4 "Serie". These four forms only: no stemming, and no bare
+# plural ("Freerans" stays put -- a plural is not what the map was curated for).
+#
+# A separate pattern rather than more characters in _TOKEN_RE, because the curly apostrophe
+# is not \w: "Freeran's" would otherwise split into core "Freeran" + post "'s" (fine) while
+# "Freeran\u2019s" matches NOTHING, so the token comes back untouched. Widening _TOKEN_RE
+# would also hand every "don\u2019t" to name_suspect() as an unknown capitalised proper noun,
+# which is a repair-queue change this fix has no business making.
+_POSSESSIVE_RE = re.compile(r"^([^\w'\u2019]*)([^\W\d_][\w-]*)(['\u2019]s|s['\u2019])([^\w'\u2019]*)$")
+
 
 def _phonetic_match(token: str, names: list[str]) -> str | None:
     """Tier 4 (V2 A4): match ``token`` to a glossary name by Metaphone code when the
@@ -359,12 +372,20 @@ def _phonetic_match(token: str, names: list[str]) -> str | None:
 
 def _fix_token(tok: str, names: list[str], token_fixes: dict) -> tuple[str, int]:
     m = _TOKEN_RE.match(tok)
+    pre, core, post = m.groups() if m else ("", "", "")
+    low = core.lower()
+    # Exact-token first, unchanged: a map key that already spells the whole token keeps
+    # winning over the possessive reading of it.
+    if low and low in token_fixes:
+        return pre + token_fixes[low] + post, 1
+    pm = _POSSESSIVE_RE.match(tok)
+    if pm:
+        p_pre, stem, suffix, p_post = pm.groups()
+        fixed = token_fixes.get(stem.lower())
+        if fixed is not None:
+            return p_pre + fixed + suffix + p_post, 1
     if not m:
         return tok, 0
-    pre, core, post = m.groups()
-    low = core.lower()
-    if low in token_fixes:
-        return pre + token_fixes[low] + post, 1
     if any(low == nm.lower() for nm in names):  # already a correct name -> leave
         return tok, 0
     if len(core) < MIN_FUZZY_LEN or "'" in core or is_english(low):
