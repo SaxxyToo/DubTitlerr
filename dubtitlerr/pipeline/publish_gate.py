@@ -17,6 +17,7 @@ Pure stdlib for parsing; ffprobe is only needed for the duration (skipped with -
 
 Exit codes: 0 pass, 1 below threshold, 2 cannot evaluate (missing artifact).
 """
+
 import argparse
 import json
 import os
@@ -41,7 +42,7 @@ MIN_PUNCT_ENDED = 0.60
 MAX_ORPHAN = 0.15
 MIN_NAME_LEN = 3
 
-END = (".", "!", "?", "\u2026", "\"", "'", "\u201d", "\u2019")
+END = (".", "!", "?", "\u2026", '"', "'", "\u201d", "\u2019")
 GLOSSARY_DIR = os.environ.get("GLOSSARY_DIR", "/config/glossaries")
 
 
@@ -91,8 +92,12 @@ def load_cues(stem):
     merge_pass gates `stem.eng.dubtitles.<ext>`; auditing what is already in the library
     means reading `stem.dub.en.<ext>`, so both names resolve here.
     """
-    for suffix, parser in ((".eng.dubtitles.srt", parse_srt), (".eng.dubtitles.ass", parse_ass),
-                           (".dub.en.srt", parse_srt), (".dub.en.ass", parse_ass)):
+    for suffix, parser in (
+        (".eng.dubtitles.srt", parse_srt),
+        (".eng.dubtitles.ass", parse_ass),
+        (".dub.en.srt", parse_srt),
+        (".dub.en.ass", parse_ass),
+    ):
         path = stem + suffix
         if not os.path.exists(path):
             continue
@@ -113,9 +118,12 @@ def video_duration(stem):
         if not os.path.exists(path):
             continue
         try:
-            out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                                  "-of", "default=nw=1:nk=1", path],
-                                 capture_output=True, text=True, timeout=60)
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
             return float(out.stdout.strip())
         except (OSError, ValueError, subprocess.SubprocessError):
             return None
@@ -136,16 +144,22 @@ def glossary_mishears(path):
     pairs = list((doc.get("hard_fixes") or {}).items())
     try:
         from dubtitlerr.glossary.glossary import load
+
         g = load(path) or {}
         pairs += list((g.get("token_fixes") or {}).items())
         pairs += list((g.get("phrase_fixes") or {}).items())
     except Exception:  # noqa: BLE001 - a glossary import failure must not crash the gate
         pass
-    return sorted({k for k, v in pairs
-                   if len(k) >= MIN_NAME_LEN
-                   and k.strip().casefold() != str(v).strip().casefold()
-                   # an expansion (asuka langley -> Asuka Langley Soryu) is not a mishear
-                   and k.strip().casefold() not in str(v).strip().casefold()})
+    return sorted(
+        {
+            k
+            for k, v in pairs
+            if len(k) >= MIN_NAME_LEN
+            and k.strip().casefold() != str(v).strip().casefold()
+            # an expansion (asuka langley -> Asuka Langley Soryu) is not a mishear
+            and k.strip().casefold() not in str(v).strip().casefold()
+        }
+    )
 
 
 def evaluate(cues, duration=None, mishears=(), max_chars=MAX_CHARS, max_line=MAX_LINE):
@@ -177,8 +191,9 @@ def evaluate(cues, duration=None, mishears=(), max_chars=MAX_CHARS, max_line=MAX
     # unpunctuated card is a sentence split across two cues, which is normal subtitling.
     if cues[0][0] > 290:
         fails.append(f"first cue at {cues[0][0]:.0f}s (cold open missing?)")
-    orphan = sum(1 for i in range(1, len(cues))
-                 if cues[i][2][:1].islower() and cues[i - 1][2].rstrip().endswith((".", "!", "?", "\u2026")))
+    orphan = sum(
+        1 for i in range(1, len(cues)) if cues[i][2][:1].islower() and cues[i - 1][2].rstrip().endswith((".", "!", "?", "\u2026"))
+    )
     if orphan / len(cues) > MAX_ORPHAN:
         fails.append(f"{100 * orphan / len(cues):.0f}% lowercase orphan cards")
     text = " ".join(t.replace("\n", " ") for _, _, t in cues)
@@ -219,8 +234,7 @@ def main(argv=None):
     mishears = glossary_mishears(gloss_path) if gloss_path else []
     fails = evaluate(cues, duration, mishears, max_line=a.max_line)
     if a.json:
-        print(json.dumps({"artifact": path, "cues": len(cues), "duration": duration,
-                          "fails": fails}, indent=1))
+        print(json.dumps({"artifact": path, "cues": len(cues), "duration": duration, "fails": fails}, indent=1))
     elif fails:
         print(f"gate: FAIL {os.path.basename(path)} — {'; '.join(fails)}")
     else:

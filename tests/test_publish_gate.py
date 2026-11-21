@@ -4,6 +4,7 @@ These tests are the shape of the November 2026 NGE failure: 100% unpunctuated ca
 `Oscar` for Asuka, and an E23 that stopped at 11:26 of a 24:30 episode while every stage
 recorded "ok".
 """
+
 import json
 import os
 import sys
@@ -35,9 +36,15 @@ def test_a_clean_sidecar_passes():
 
 
 def test_unpunctuated_cards_fail():
-    cues = g.parse_srt(srt([(1, 4, "The direct cause you mean was the mental breakdown."),
-                            (5, 8, "the result of the contact yes"),
-                            (9, 12, "that doll as if it were her real daughter")]))
+    cues = g.parse_srt(
+        srt(
+            [
+                (1, 4, "The direct cause you mean was the mental breakdown."),
+                (5, 8, "the result of the contact yes"),
+                (9, 12, "that doll as if it were her real daughter"),
+            ]
+        )
+    )
     fails = g.evaluate(cues, duration=13)
     assert any("sentence punctuation" in f for f in fails)
     assert any("orphan" in f for f in fails)
@@ -77,14 +84,20 @@ def test_case_only_fixes_and_expansions_are_not_mishears(tmp_path):
     """`ikari -> Ikari` is normalisation and `asuka langley -> Asuka Langley Soryu` is an
     expansion; neither means the ASR heard a wrong word."""
     p = tmp_path / "show.json"
-    p.write_text(json.dumps({"hard_fixes": {
-        "ikari": "Ikari",
-        "at field": "AT Field",
-        "asuka langley": "Asuka Langley Soryu",
-        "oscar": "Asuka",
-        "sink ratio": "sync ratio",
-        "ava": "Eva",
-    }}))
+    p.write_text(
+        json.dumps(
+            {
+                "hard_fixes": {
+                    "ikari": "Ikari",
+                    "at field": "AT Field",
+                    "asuka langley": "Asuka Langley Soryu",
+                    "oscar": "Asuka",
+                    "sink ratio": "sync ratio",
+                    "ava": "Eva",
+                }
+            }
+        )
+    )
     words = g.glossary_mishears(str(p))
     assert "oscar" in words
     assert "sink ratio" in words
@@ -116,28 +129,36 @@ def test_cli_exit_codes(tmp_path):
 def test_sentence_splits_are_not_punctuation_failures():
     """7 of 10 cards end a sentence; the other three are the first half of a split sentence.
     That is normal subtitling and must pass the floor."""
-    cues = g.parse_srt(srt([
-        (1, 3, "The Evas were created from the"),
-        (4, 6, "angel known as Adam."),
-        (7, 9, "I hate the Evas."),
-        (10, 12, "Is our revenge worth this?"),
-        (13, 15, "Major Katsuragi said the"),
-        (16, 18, "construction is behind schedule."),
-        (19, 21, "We have lost two Evas."),
-        (22, 24, "Two more are damaged."),
-        (25, 27, "The reserve force is"),
-        (28, 30, "not ready yet."),
-    ]))
+    cues = g.parse_srt(
+        srt(
+            [
+                (1, 3, "The Evas were created from the"),
+                (4, 6, "angel known as Adam."),
+                (7, 9, "I hate the Evas."),
+                (10, 12, "Is our revenge worth this?"),
+                (13, 15, "Major Katsuragi said the"),
+                (16, 18, "construction is behind schedule."),
+                (19, 21, "We have lost two Evas."),
+                (22, 24, "Two more are damaged."),
+                (25, 27, "The reserve force is"),
+                (28, 30, "not ready yet."),
+            ]
+        )
+    )
     assert g.evaluate(cues, duration=30) == []
 
 
 def test_a_raw_transcript_fails_the_punctuation_floor():
     """The old NGE shape: every card unpunctuated and lowercase."""
-    cues = g.parse_srt(srt([
-        (1, 4, "the direct cause you mean was the mental breakdown"),
-        (5, 8, "the result of the contact yes"),
-        (9, 12, "oscar sink ratio has dropped an entire eight points"),
-    ]))
+    cues = g.parse_srt(
+        srt(
+            [
+                (1, 4, "the direct cause you mean was the mental breakdown"),
+                (5, 8, "the result of the contact yes"),
+                (9, 12, "oscar sink ratio has dropped an entire eight points"),
+            ]
+        )
+    )
     fails = g.evaluate(cues, duration=13, mishears=["oscar", "sink ratio"])
     assert any("sentence punctuation" in f for f in fails)
     assert any("mishear" in f for f in fails)
@@ -155,8 +176,7 @@ FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", 
 def test_the_live_chainsaw_man_episode_passes_the_punctuation_floor():
     """Real bytes: 159 of 251 cards end a sentence. The floor is a minimum (0.60), not a bar
     every card must clear -- a split sentence leaves its first card bare by design."""
-    text = open(os.path.join(FIXTURES, "csm_s01e01_dubtitles.ass"),
-                encoding="utf-8-sig", errors="replace").read()
+    text = open(os.path.join(FIXTURES, "csm_s01e01_dubtitles.ass"), encoding="utf-8-sig", errors="replace").read()
     cues = g.parse_ass(text, style="Dubtitles")
     ended = sum(1 for _, _, t in cues if t.rstrip().endswith(g.END))
     assert (len(cues), ended) == (251, 159)
@@ -165,9 +185,9 @@ def test_the_live_chainsaw_man_episode_passes_the_punctuation_floor():
 
 def test_a_file_just_under_the_floor_still_fails():
     """Boundary: 60 of 100 ends pass, 59 of 100 fail. One card is the margin."""
+
     def cues_with(ended):
-        return [(1.0 + i, 2.0 + i, "Ends here." if i < ended else "No terminal here")
-                for i in range(100)]
+        return [(1.0 + i, 2.0 + i, "Ends here." if i < ended else "No terminal here") for i in range(100)]
 
     assert g.evaluate(cues_with(60), None) == [], g.evaluate(cues_with(60), None)
     fails = g.evaluate(cues_with(59), None)
@@ -176,8 +196,7 @@ def test_a_file_just_under_the_floor_still_fails():
 
 def test_the_live_zero_percent_raw_file_still_fails_the_floor():
     """Negative control: the 0.0%-era file must not be admitted by the lower line."""
-    text = open(os.path.join(FIXTURES, "death_note_s01e10_raw.srt"),
-                encoding="utf-8-sig", errors="replace").read()
+    text = open(os.path.join(FIXTURES, "death_note_s01e10_raw.srt"), encoding="utf-8-sig", errors="replace").read()
     cues = g.parse_srt(text)
     ended = sum(1 for _, _, t in cues if t.rstrip().endswith(g.END))
     assert (len(cues), ended) == (262, 0)
@@ -191,7 +210,8 @@ def test_a_published_sidecar_is_found_by_its_delivery_name(tmp_path):
     stem = str(tmp_path / "ep")
     (tmp_path / "ep.dub.en.ass").write_text(
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-        "Dialogue: 0,0:00:01.00,0:00:05.80,Dubtitles,,0,0,0,,The Evas were created.\\NFrom Adam.\n")
+        "Dialogue: 0,0:00:01.00,0:00:05.80,Dubtitles,,0,0,0,,The Evas were created.\\NFrom Adam.\n"
+    )
     assert g.main([stem, "--duration", "6"]) == 0
 
 
@@ -203,5 +223,6 @@ def test_signs_and_lyrics_are_not_counted_as_dialogue(tmp_path):
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         "Style: Dubtitles,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2.8,0,2,60,60,49,1\n"
         "Dialogue: 0,0:00:01.00,0:00:05.80,Dubtitles,,0,0,0,,The Evas were created.\\NFrom Adam.\n"
-        "Dialogue: 0,0:00:06.00,0:00:14.00,Signs,,0,0,0,,TITLE CARD THAT RUNS LONG\n")
+        "Dialogue: 0,0:00:06.00,0:00:14.00,Signs,,0,0,0,,TITLE CARD THAT RUNS LONG\n"
+    )
     assert g.main([stem, "--duration", "6"]) == 0

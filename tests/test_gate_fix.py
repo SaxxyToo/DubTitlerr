@@ -99,8 +99,7 @@ def cue_index(stem, text):
 
 # --- the two fault classes the live refusals showed ---------------------------------
 
-LONG_LINE = ("The mitosis process in the left arm of Unit 2 has cleared every "
-             "requirement we set for it now")
+LONG_LINE = "The mitosis process in the left arm of Unit 2 has cleared every requirement we set for it now"
 
 
 def test_an_over_chars_card_is_split_without_touching_a_word(tmp_path):
@@ -120,12 +119,10 @@ def test_every_other_line_is_left_byte_identical(tmp_path):
     """Only the faulty card's own Dialogue line may change; every other line is verbatim."""
     cues = padded(100.0, 107.0, LONG_LINE)
     stem = write_episode(tmp_path, cues)
-    before = [ln for ln in read(stem + ".eng.dubtitles.ass").splitlines()
-              if ln.startswith("Dialogue:")]
+    before = [ln for ln in read(stem + ".eng.dubtitles.ass").splitlines() if ln.startswith("Dialogue:")]
     touched = [ln for ln in before if "mitosis" in ln]
     gate_fix.attempt(stem)
-    after = [ln for ln in read(stem + ".eng.dubtitles.ass").splitlines()
-             if ln.startswith("Dialogue:")]
+    after = [ln for ln in read(stem + ".eng.dubtitles.ass").splitlines() if ln.startswith("Dialogue:")]
     untouched_before = [ln for ln in before if "mitosis" not in ln]
     # every untouched line survives, in order, byte for byte
     it = iter(after)
@@ -139,8 +136,7 @@ def test_an_over_duration_card_is_ended_where_its_own_speech_ends(tmp_path):
     sentence = "I'm not going to let go of my freedom."
     cues = padded(100.0, 116.94, sentence)
     tokens = sentence.split()
-    words = [{"text": w, "start": 100.0 + i * 0.31, "end": 100.31 + i * 0.31, "prob": 0.9}
-             for i, w in enumerate(tokens)]
+    words = [{"text": w, "start": 100.0 + i * 0.31, "end": 100.31 + i * 0.31, "prob": 0.9} for i, w in enumerate(tokens)]
     stem = write_episode(tmp_path, cues, words=words)
     assert gate_fails(stem) == ["1 card(s) over 7.5s (max 16.9s)"], gate_fails(stem)
 
@@ -158,12 +154,10 @@ def test_an_over_duration_card_is_ended_where_its_own_speech_ends(tmp_path):
 
 def test_an_over_duration_card_whose_speech_really_runs_long_is_split(tmp_path):
     """A card whose own words span 14 s is not a linger fault: it becomes several cards."""
-    sentence = ("I am not going to let go of my freedom and that is the end of it "
-                "for now and ever")
+    sentence = "I am not going to let go of my freedom and that is the end of it for now and ever"
     tokens = sentence.split()
     per = 14.0 / len(tokens)
-    words = [{"text": w, "start": 100.0 + i * per, "end": 100.0 + (i + 1) * per,
-              "prob": 0.9} for i, w in enumerate(tokens)]
+    words = [{"text": w, "start": 100.0 + i * per, "end": 100.0 + (i + 1) * per, "prob": 0.9} for i, w in enumerate(tokens)]
     cues = padded(100.0, 114.0, sentence)
     stem = write_episode(tmp_path, cues, words=words)
 
@@ -195,9 +189,11 @@ def test_a_single_unbroken_token_is_reported_unfixable_and_nothing_is_written(tm
 
 def test_a_non_layout_refusal_is_not_attempted(tmp_path):
     """Punctuation is a transcript fault; a layout repair may not pretend to fix it."""
-    cues = [(1.0, 3.0, "the direct cause you mean was the mental breakdown"),
-            (4.0, 6.0, "the result of the contact yes"),
-            (7.0, 9.0, "that doll as if it were her real daughter")]
+    cues = [
+        (1.0, 3.0, "the direct cause you mean was the mental breakdown"),
+        (4.0, 6.0, "the result of the contact yes"),
+        (7.0, 9.0, "that doll as if it were her real daughter"),
+    ]
     stem = write_episode(tmp_path, cues)
     before = read(stem + ".eng.dubtitles.ass")
 
@@ -227,8 +223,7 @@ def test_a_passing_file_is_a_no_op_and_leaves_no_trace(tmp_path):
 def test_re_running_on_the_fixed_file_changes_nothing(tmp_path):
     sentence = "I'm not going to let go of my freedom."
     cues = padded(100.0, 116.94, sentence)
-    words = [{"text": w, "start": 100.0 + i * 0.3, "end": 100.3 + i * 0.3, "prob": 0.9}
-             for i, w in enumerate(sentence.split())]
+    words = [{"text": w, "start": 100.0 + i * 0.3, "end": 100.3 + i * 0.3, "prob": 0.9} for i, w in enumerate(sentence.split())]
     stem = write_episode(tmp_path, cues, words=words)
 
     first = gate_fix.attempt(stem)
@@ -250,6 +245,7 @@ def test_the_attempt_is_recorded_as_a_stage_and_in_the_audit_trail(tmp_path):
     gate_fix.attempt(stem)
 
     from dubtitlerr.core import common
+
     assert common.read_stages(stem)["gate_fix"]["outcome"] == "ok"
     audit = json.load(open(stem + ".dubtitles.gate-fix.json"))
     attempt = audit["attempts"][-1]
@@ -281,9 +277,9 @@ def test_an_over_chars_srt_card_is_split(tmp_path):
     cards = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
     cards.append((100.0, 107.0, LONG_LINE))
     body = "".join(
-        f"{i}\n00:{int(s) // 60:02d}:{int(s) % 60:02d},000 --> "
-        f"00:{int(e) // 60:02d}:{int(e) % 60:02d},000\n{t}\n\n"
-        for i, (s, e, t) in enumerate(cards, 1))
+        f"{i}\n00:{int(s) // 60:02d}:{int(s) % 60:02d},000 --> 00:{int(e) // 60:02d}:{int(e) % 60:02d},000\n{t}\n\n"
+        for i, (s, e, t) in enumerate(cards, 1)
+    )
     (d / "ep01.eng.dubtitles.srt").write_text(body)
     assert gate_fails(stem)
 
@@ -299,13 +295,11 @@ def test_an_over_chars_srt_card_is_split(tmp_path):
 SCREAM = "A" * 57  # the uniform scream the P13 fixture used: one token, 7.1 s, 57 chars
 LIVE_SCREAM = "A" + "H" * 56  # what FMA:B S01E41 actually ships: 57 chars, {'a', 'h'}
 KEKE = "Ke" * 223  # Chainsaw Man S01E07's token: 446 chars, period 2, no uniform run
-FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures",
-                       "fmab_s01e41_abyss.ass")
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "fmab_s01e41_abyss.ass")
 
 
 def dialogue_lines(stem):
-    return [ln for ln in read(stem + ".eng.dubtitles.ass").splitlines()
-            if ln.startswith("Dialogue:")]
+    return [ln for ln in read(stem + ".eng.dubtitles.ass").splitlines() if ln.startswith("Dialogue:")]
 
 
 def test_a_repeated_character_run_is_wrapped_without_touching_a_character(tmp_path):
@@ -487,9 +481,9 @@ def test_an_srt_scream_is_wrapped_with_a_real_line_break(tmp_path):
     cards = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
     cards.append((100.0, 107.1, SCREAM))
     body = "".join(
-        f"{i}\n00:{int(s) // 60:02d}:{int(s) % 60:02d},000 --> "
-        f"00:{int(e) // 60:02d}:{int(e) % 60:02d},000\n{t}\n\n"
-        for i, (s, e, t) in enumerate(cards, 1))
+        f"{i}\n00:{int(s) // 60:02d}:{int(s) % 60:02d},000 --> 00:{int(e) // 60:02d}:{int(e) % 60:02d},000\n{t}\n\n"
+        for i, (s, e, t) in enumerate(cards, 1)
+    )
     (d / "ep01.eng.dubtitles.srt").write_text(body)
 
     result = gate_fix.attempt(stem)
@@ -514,8 +508,8 @@ def test_wrap_run_declines_everything_but_one_run_with_a_tiny_minority():
 
 def test_wrap_run_minority_boundary_is_two_stray_characters():
     """Two distinct letters are fine when the stray one appears at most twice."""
-    two_strays = "A" + "H" * 55 + "A"          # 57 chars, 'a' x2
-    three_strays = "A" + "H" * 53 + "AAA"      # 57 chars, 'a' x3
+    two_strays = "A" + "H" * 55 + "A"  # 57 chars, 'a' x2
+    three_strays = "A" + "H" * 53 + "AAA"  # 57 chars, 'a' x3
     assert len(two_strays) == len(three_strays) == 57
     assert gate_fix._wrap_run(two_strays) is not None
     assert gate_fix._wrap_run(three_strays) is None
@@ -558,14 +552,16 @@ def test_why_unsplittable_blames_duration_when_the_break_would_fit(tmp_path):
 
 
 def test_split_fails_separates_layout_from_everything_else():
-    layout, other = gate_fix.split_fails([
-        "1 card(s) over 7.5s (max 16.9s)",
-        "line of 446 chars (max 46)",
-        "2 card(s) over 88 chars",
-        "coverage 41% (last cue 600.0s of 1450.0s)",
-        "12% of cards carry sentence punctuation",
-        "known mishear(s): oscar",
-    ])
+    layout, other = gate_fix.split_fails(
+        [
+            "1 card(s) over 7.5s (max 16.9s)",
+            "line of 446 chars (max 46)",
+            "2 card(s) over 88 chars",
+            "coverage 41% (last cue 600.0s of 1450.0s)",
+            "12% of cards carry sentence punctuation",
+            "known mishear(s): oscar",
+        ]
+    )
     assert len(layout) == 3
     assert len(other) == 3
 
@@ -579,10 +575,10 @@ def test_cue_faults_is_the_gates_own_budget():
 
 # --- music-symbol cards: a marker is not dialogue -------------------------------------
 
-MUSIC = (os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts",
-                      "blue_eye_s01e02_music.srt"),
-         os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts",
-                      "blue_eye_s01e04_music.srt"))
+MUSIC = (
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts", "blue_eye_s01e02_music.srt"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts", "blue_eye_s01e04_music.srt"),
+)
 
 
 def _copy_episode(tmp_path, fixture, stem="ep01"):
@@ -781,9 +777,20 @@ def test_an_unusable_park_record_is_an_error_never_a_stale_verdict(tmp_path):
     cannot trust must stay parked and be reported (exit 3), not silently deleted."""
     stem = write_episode(tmp_path, padded(100.0, 101.32, "Kek" * 149))
     park_path = gate_fix._park_path(stem)
-    atomic_write(park_path, lambda f: f.write(json.dumps(
-        {"parked": True, "at": "yesterday", "outcome": "unfixable", "summary": "old",
-         "attempt_stamp": gate_fix.attempt_stamp()})))
+    atomic_write(
+        park_path,
+        lambda f: f.write(
+            json.dumps(
+                {
+                    "parked": True,
+                    "at": "yesterday",
+                    "outcome": "unfixable",
+                    "summary": "old",
+                    "attempt_stamp": gate_fix.attempt_stamp(),
+                }
+            )
+        ),
+    )
 
     with pytest.raises(gate_fix.ParkRecordError):
         gate_fix.parked_state(stem)
@@ -794,8 +801,7 @@ def test_an_unusable_park_record_is_an_error_never_a_stale_verdict(tmp_path):
 def test_a_park_record_without_a_usable_attempt_stamp_is_an_error_too(tmp_path):
     stem = write_episode(tmp_path, padded(100.0, 101.32, "Kek" * 149))
     park_path = gate_fix._park_path(stem)
-    atomic_write(park_path, lambda f: f.write(json.dumps(
-        {"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old"})))
+    atomic_write(park_path, lambda f: f.write(json.dumps({"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old"})))
 
     with pytest.raises(gate_fix.ParkRecordError):
         gate_fix.parked_state(stem)
@@ -812,13 +818,19 @@ def test_the_parked_cli_keeps_its_two_happy_exit_codes(tmp_path):
 def test_a_fixed_episode_drops_its_parked_record(tmp_path):
     sentence = "I'm not going to let go of my freedom."
     cues = padded(100.0, 116.94, sentence)
-    words = [{"text": w, "start": 100.0 + i * 0.31, "end": 100.31 + i * 0.31, "prob": 0.9}
-             for i, w in enumerate(sentence.split())]
+    words = [
+        {"text": w, "start": 100.0 + i * 0.31, "end": 100.31 + i * 0.31, "prob": 0.9} for i, w in enumerate(sentence.split())
+    ]
     stem = write_episode(tmp_path, cues, words=words)
     park_path = gate_fix._park_path(stem)
-    atomic_write(park_path, lambda f: f.write(json.dumps(
-        {"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old",
-         "attempt_stamp": gate_fix.attempt_stamp()})))
+    atomic_write(
+        park_path,
+        lambda f: f.write(
+            json.dumps(
+                {"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old", "attempt_stamp": gate_fix.attempt_stamp()}
+            )
+        ),
+    )
 
     result = gate_fix.attempt(stem)
 
@@ -834,8 +846,7 @@ def write_glossary(tmp_path, monkeypatch, hard_fixes=None, names=None, show="Sho
     gdir = tmp_path / "glossaries"
     gdir.mkdir(exist_ok=True)
     path = gdir / f"{show}.json"
-    path.write_text(json.dumps({"show": show, "names": names or [],
-                                "hard_fixes": hard_fixes or {}}))
+    path.write_text(json.dumps({"show": show, "names": names or [], "hard_fixes": hard_fixes or {}}))
     monkeypatch.setattr(publish_gate, "GLOSSARY_DIR", str(gdir))
     return path
 
@@ -844,8 +855,7 @@ def mishear_fails(stem):
     """The gate's findings as gate_fix sees them: its own glossary's mishear list included."""
     path, cues = publish_gate.load_cues(stem)
     mishears = publish_gate.glossary_mishears(publish_gate.glossary_for(stem))
-    return [f for f in publish_gate.evaluate(cues, None, mishears)
-            if f.startswith("known mishear")]
+    return [f for f in publish_gate.evaluate(cues, None, mishears) if f.startswith("known mishear")]
 
 
 def test_a_parked_mishear_heals_by_reapplying_the_glossary(tmp_path, monkeypatch):
@@ -856,8 +866,7 @@ def test_a_parked_mishear_heals_by_reapplying_the_glossary(tmp_path, monkeypatch
     and the file passes -- without a model, a re-transcribe or an operator script.
     """
     stem = write_episode(tmp_path, padded(100.0, 104.0, "Zine's very generous notes."))
-    write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein"},
-                   names=["Frieren", "Fern", "Sein"])
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein"}, names=["Frieren", "Fern", "Sein"])
     assert mishear_fails(stem) == ["known mishear(s): zine"], mishear_fails(stem)
 
     result = gate_fix.attempt(stem)
@@ -880,8 +889,7 @@ def test_a_linebreak_glued_mishear_is_corrected_mid_cue(tmp_path, monkeypatch):
     layout put it and only the token changes.
     """
     stem = write_episode(tmp_path, padded(100.0, 105.0, "and\\NFreeran's patience ran out."))
-    write_glossary(tmp_path, monkeypatch, hard_fixes={"freeran": "Fern"},
-                   names=["Frieren", "Fern"])
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"freeran": "Fern"}, names=["Frieren", "Fern"])
     assert mishear_fails(stem), mishear_fails(stem)
 
     result = gate_fix.attempt(stem)
@@ -895,8 +903,7 @@ def test_a_linebreak_glued_mishear_is_corrected_mid_cue(tmp_path, monkeypatch):
 def test_a_possessive_mishear_heals_through_the_curated_fix(tmp_path, monkeypatch):
     """Frieren S01E26: `Zinza's replica` -> `Sense's replica`."""
     stem = write_episode(tmp_path, padded(100.0, 103.0, "Zinza's replica is perfect."))
-    write_glossary(tmp_path, monkeypatch, hard_fixes={"zinza": "Sense"},
-                   names=["Frieren", "Sense"])
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"zinza": "Sense"}, names=["Frieren", "Sense"])
 
     result = gate_fix.attempt(stem)
 
@@ -910,8 +917,7 @@ def test_the_correction_lane_never_moves_timing_or_structure(tmp_path, monkeypat
     cues = padded(100.0, 104.0, "Zine's very generous notes.")
     cues[3] = (cues[3][0], cues[3][1], "and\\NFreeran's patience ran out.")
     stem = write_episode(tmp_path, cues)
-    write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein", "freeran": "Fern"},
-                   names=["Frieren", "Fern", "Sein"])
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein", "freeran": "Fern"}, names=["Frieren", "Fern", "Sein"])
     _, before = publish_gate.load_cues(stem)
 
     result = gate_fix.attempt(stem)
@@ -982,19 +988,28 @@ def test_a_glossary_change_unparks_a_parked_episode(tmp_path, monkeypatch):
     removes.
     """
     stem = write_episode(tmp_path, padded(100.0, 104.0, "Zine's very generous notes."))
-    gloss_path = write_glossary(tmp_path, monkeypatch, hard_fixes={"zinza": "Sense"},
-                                names=["Sein"])
+    gloss_path = write_glossary(tmp_path, monkeypatch, hard_fixes={"zinza": "Sense"}, names=["Sein"])
     # Stand in for the record an older pass wrote: a real give-up, stamped against THIS
     # glossary. (No plain-text gate finding can park this file until the fix lands, so the
     # record is written the way _write_park writes it.)
-    atomic_write(gate_fix._park_path(stem), lambda f: f.write(json.dumps(
-        {"parked": True, "at": time.time(), "outcome": gate_fix.OUTCOME_UNSUPPORTED,
-         "summary": "known mishear(s): zine", "fails": ["known mishear(s): zine"],
-         "attempt_stamp": gate_fix.attempt_stamp(stem)})))
+    atomic_write(
+        gate_fix._park_path(stem),
+        lambda f: f.write(
+            json.dumps(
+                {
+                    "parked": True,
+                    "at": time.time(),
+                    "outcome": gate_fix.OUTCOME_UNSUPPORTED,
+                    "summary": "known mishear(s): zine",
+                    "fails": ["known mishear(s): zine"],
+                    "attempt_stamp": gate_fix.attempt_stamp(stem),
+                }
+            )
+        ),
+    )
     assert gate_fix.parked_state(stem)[0] is True
 
-    gloss_path.write_text(json.dumps({"show": "Show", "names": ["Sein"],
-                                      "hard_fixes": {"zinza": "Sense", "zine": "Sein"}}))
+    gloss_path.write_text(json.dumps({"show": "Show", "names": ["Sein"], "hard_fixes": {"zinza": "Sense", "zine": "Sein"}}))
 
     parked, note = gate_fix.parked_state(stem)
     assert parked is False, "a glossary edit is the fix; the park must not outlive it"
@@ -1003,4 +1018,3 @@ def test_a_glossary_change_unparks_a_parked_episode(tmp_path, monkeypatch):
     result = gate_fix.attempt(stem)
     assert result["outcome"] == gate_fix.OUTCOME_CORRECTED, result
     assert gate_fix.parked_state(stem)[0] is False
-
