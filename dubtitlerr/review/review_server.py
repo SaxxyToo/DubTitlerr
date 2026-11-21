@@ -1239,6 +1239,13 @@ def _js(value: str) -> str:
     return json.dumps(value).replace("<", "\\u003c")
 
 
+# Mobile Safari lays out at 980px and scales the result down to fit unless the page declares a
+# viewport, so a page without one renders at roughly a third scale on a phone and reads as
+# broken -- which is how these pages were reported on 2026-11-21 (adjudicated from a phone
+# against omarchy's :8842). Desktop stays the shape of this tool; this only stops the shrink.
+_VIEWPORT = '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+
+
 # Shared by both pages, so the shared-lines list and an episode queue cannot drift apart
 # visually -- the risk colours in particular have to mean the same thing in both.
 _CSS = (
@@ -1260,6 +1267,21 @@ _CSS = (
     "button.clear:hover{opacity:1}"
     "li.rwords{border-left-color:#c00}li.rsubstitution{border-left-color:#e90}"
     "li.rpunctuation{border-left-color:#ccc}"
+    # Narrow screens. The viewport above stops the shrink-to-fit; this is what a phone then sees,
+    # and at 390px the fixed 14px/52em desktop shape is still the wrong shape. 16px also stops
+    # iOS zooming the page when a text input takes focus. The sticky bar is bottom-anchored --
+    # exactly where iOS floats its URL pill -- so it has to clear the home indicator itself
+    # (viewport-fit=cover is what makes env() non-zero there).
+    "html{-webkit-text-size-adjust:100%}"
+    "@media (max-width:640px){"
+    "body{font-size:16px;max-width:none;margin:.8em}"
+    "li{margin:.9em 0}"
+    "#filter{width:100%;box-sizing:border-box;padding:.5em}"
+    "label:has(input[type=radio]){display:block;margin:0;padding:.45em 0}"
+    "input[type=radio]{width:1.25em;height:1.25em;vertical-align:-.25em}"
+    "#bar{padding:.7em 0 calc(.7em + env(safe-area-inset-bottom))}"
+    "#bar button{padding:.8em 1em}"
+    "}"
 )
 
 
@@ -1308,7 +1330,7 @@ def render_shared() -> str:
         )
     saved = sum(r["episodes"] - 1 for r in rows)
     return (
-        "<!doctype html><meta charset=utf-8><title>DubTitlerr shared lines</title>"
+        "<!doctype html><meta charset=utf-8>" + _VIEWPORT + "<title>DubTitlerr shared lines</title>"
         f"<style>{_CSS}</style>"
         '<h1>Shared lines</h1><p><a href="/">← all episodes</a></p>'
         '<p><label>Order: <select id="shared-sort">'
@@ -1531,7 +1553,7 @@ def render_page(stem: str = "") -> str:
         else ""
     )
     return (
-        "<!doctype html><meta charset=utf-8><title>DubTitlerr review</title>"
+        "<!doctype html><meta charset=utf-8>" + _VIEWPORT + "<title>DubTitlerr review</title>"
         f"<style>{_CSS}</style>"
         "<h1>Review</h1>"
         f"{controls}"
@@ -1614,7 +1636,7 @@ def render_locked(page_kind: str, setup: bool = False) -> str:
     h1 = "Shared lines" if page_kind == "shared" else "Review"
     back = '<p><a href="/">← all episodes</a></p>' if page_kind == "shared" else ""
     return (
-        "<!doctype html><meta charset=utf-8><title>DubTitlerr review</title>"
+        "<!doctype html><meta charset=utf-8>" + _VIEWPORT + "<title>DubTitlerr review</title>"
         f"<style>{_CSS}</style>"
         f"<h1>{h1}</h1>"
         f"{back}"
