@@ -530,6 +530,12 @@ def correct_cues(cues, gloss):
     ``glossary.correct`` works a line at a time, so the break count never moves. Timing is
     copied through untouched -- this lane changes words, never when they are shown.
 
+    A song-span card is never corrected. A glossary rule is admitted from dialogue, and a
+    lyric that happens to match one (Frieren S02E01's glossary carries
+    ``Furikaereba -> Frieren``) must keep the release's own words: no correction can make
+    a lyric right, and rewriting it ships "Frieren itsumo." where the song sings
+    "Furikaereba itsumo." -- which is exactly what this lane did before song spans existed.
+
     Returns ``(cues, corrections)``; ``corrections`` names every card that changed, with
     the text before/after, so the audit says exactly what was re-applied.
     """
@@ -539,8 +545,12 @@ def correct_cues(cues, gloss):
     if not (names or token_fixes or phrase_fixes):
         return cues, []
     rules = {"names": names, "token_fixes": token_fixes, "phrase_fixes": phrase_fixes}
+    song = song_spans.indexes(cues)
     out, corrections = [], []
     for index, (start, end, text) in enumerate(cues):
+        if index in song:
+            out.append((start, end, text))
+            continue
         lines, changed = [], 0
         for line in text.split("\n"):
             fixed, n = glossary_text.correct(line, rules)

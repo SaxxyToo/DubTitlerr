@@ -1122,3 +1122,31 @@ def test_a_lone_foreign_card_is_dialogue_and_still_has_to_fit(tmp_path):
     cues += [(150.0 + i, 151.0 + i, f"And line {i} again.") for i in range(PAD)]
     stem = write_episode(tmp_path, cues)
     assert any("over 7.5s" in f for f in gate_fails(stem)), gate_fails(stem)
+
+
+def test_the_correction_lane_never_rewrites_a_lyric(tmp_path, monkeypatch):
+    """The deployed lane did exactly that: `Furikaereba itsumo.` -> `Frieren itsumo.`
+
+    A glossary rule is admitted from dialogue, and a lyric can match one by accident
+    (Frieren S02E01's glossary carries `Furikaereba -> Frieren`). The lane must correct
+    the dialogue card that needs it and leave the song span's bytes exactly as they are.
+    """
+    cues = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
+    cues += [
+        (100.0, 103.0, "Zine's very generous notes."),
+        (103.5, 106.5, "Furikaereba itsumo."),
+        (107.0, 110.0, "Osoresu ni susume yo."),
+    ]
+    cues += [(150.0 + i, 151.0 + i, f"And line {i} again.") for i in range(PAD)]
+    stem = write_episode(tmp_path, cues)
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein", "furikaereba": "Frieren"}, names=["Frieren", "Sein"])
+    assert mishear_fails(stem) == ["known mishear(s): zine"], mishear_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_CORRECTED, result
+    bodies = [t for _, _, t in publish_gate.load_cues(stem)[1]]
+    assert "Sein's very generous notes." in bodies
+    assert "Furikaereba itsumo." in bodies, "the lyric keeps the release's own words"
+    assert "Frieren itsumo." not in bodies
+    assert [c["index"] for c in result["corrections"]] == [PAD]
