@@ -36,12 +36,42 @@ LIB = os.path.join(REPO, "shell", "lib.sh")
 CONTAINER_RUN = os.path.join(REPO, "container_run.sh")
 GEN_LOOP = os.path.join(REPO, "gen_loop.sh")
 
+# Every child in this file starts from a SCRUBBED environment. These are the container knobs
+# container_run.sh and gen_loop.sh read; a developer who exports them -- or sources a
+# runtime.env in the shell they run pytest from -- would otherwise leak them into the stubs
+# and change what the test exercises. Measured: with PROCESSING_STATE_FILE pointing at the
+# host's real state file, the stub loops booted paused and five of these tests timed out
+# locally while CI stayed green (CI starts from a clean runner environment). One list, one
+# rule: a harness sets what it needs, it never inherits it.
+_CONTAINER_KNOBS = (
+    "APP_DIR",
+    "STOP_FLAG",
+    "CONFIG_DIR",
+    "PROCESSING_STATE_FILE",
+    "PROCESSING_POLL_INTERVAL",
+    "PROCESSING_BOOT_DEFAULT",
+    "MERGE_INTERVAL",
+    "MERGE_WINDOW",
+    "RESCAN_INTERVAL",
+    "REVIEW_RESTART",
+    "ANIME_ROOT",
+    "ANIME_ORDER",
+    "GLOSSARY_DIR",
+    "WATCH_QUEUE_WINDOW_DAYS",
+    "GEN_DIE",
+    "CALLLOG",
+)
+
+
+def _clean_env():
+    return {k: v for k, v in os.environ.items() if k not in _CONTAINER_KNOBS}
+
 
 # --- (i) helpers --------------------------------------------------------------------------
 
 
 def _sh(script, **env):
-    e = {k: v for k, v in os.environ.items() if k != "STOP_FLAG"}
+    e = _clean_env()
     e.update(env)
     return subprocess.run(["sh", "-c", f". {LIB}; {script}"], env=e, capture_output=True, text=True, timeout=30)
 
@@ -213,7 +243,7 @@ def _supervisor(tmp_path):
     # This harness is about the soft stop, not the boot default: start from the stored state
     # that actually processes, or the loops would (correctly) boot paused and never run.
     (config / "processing.json").write_text('{"state": "running", "by": "test", "at": "x"}')
-    env = dict(os.environ)
+    env = _clean_env()
     env.update(
         APP_DIR=str(app),
         STOP_FLAG=str(flag),
@@ -339,8 +369,7 @@ def _gen_loop_run(tmp_path, stop_after=None):
     order.write_text("Show1\nShow2\n")
     log = tmp_path / "calls.log"
     log.write_text("")
-    env = dict(os.environ)
-    env.pop("WATCH_QUEUE_WINDOW_DAYS", None)
+    env = _clean_env()
     env.update(
         APP_DIR=str(app),
         ANIME_ORDER=str(order),
@@ -379,8 +408,14 @@ def test_gen_loop_without_a_stop_runs_the_whole_sequence_for_both_shows(tmp_path
     res, calls = _gen_loop_run(tmp_path, stop_after="generate:Show2")
     assert res.returncode == 0, (res.stdout, res.stderr)
     assert calls == [
-        "mine Show1", "acquire Show1", "verify Show1", "generate Show1",
-        "mine Show2", "acquire Show2", "verify Show2", "generate Show2",
+        "mine Show1",
+        "acquire Show1",
+        "verify Show1",
+        "generate Show1",
+        "mine Show2",
+        "acquire Show2",
+        "verify Show2",
+        "generate Show2",
     ], calls
 
 
