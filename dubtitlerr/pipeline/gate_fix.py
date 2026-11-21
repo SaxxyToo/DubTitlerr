@@ -67,7 +67,15 @@ Fault classes it can repair, all under the gate's own budget
     TOTAL is over ``MAX_CHARS``. An alternating run (``Kekekekeke...``) is not a run and
     stays refused.
   * ``N card(s) over 7.5s`` -- split the card, recursively, until each piece is inside
-    the duration budget (a 16.9 s card needs three pieces, not two).
+    the duration budget (a 16.9 s card needs three pieces, not two). A card whose own
+    words end sooner than the display does (a repetition/stretch artifact) is not
+    split: it is ENDED at its own speech instead. When that speech is a short utterance
+    repeated -- ``hallucination.collapse_runs`` folds a run of identical one-word cards
+    into one card spanning the whole run -- the first repetition can be too short to
+    read (86 S01E22's "Princess!" starts as a zero-length word; Berserk S01E06's
+    "Griffith!" is 0.52 s). The card then ends at the end of its repeated run, capped at
+    the budget: the text is never duplicated, and repetitions beyond the run stay
+    unsubbed, the same trade-off the one-utterance trim already makes.
 
 Audit trail: every attempt is appended to ``<stem>.dubtitles.gate-fix.json`` with the
 cards it touched, their before/after duration and length, and the attempt outcome, plus a
@@ -137,7 +145,13 @@ MAX_AUDIT_ATTEMPTS = 20
 #     for (Cyberpunk S02E01 #101); song-span cards are recognised and left untouched
 #     (Frieren S02E01's ending lyrics). Every episode parked at an earlier epoch is
 #     re-examined once under this behaviour.
-GATE_FIX_EPOCH = 3
+#   4 (2026-11-21): the repeated-utterance trim. A collapse artifact -- one short
+#     utterance the ASR emitted many times, folded by hallucination.collapse_runs into
+#     one card spanning the whole run -- whose FIRST repetition is shorter than MIN_DUR
+#     used to dead-end (the trim-to-first-utterance landed at 0.0 s / 0.82 s). The card
+#     now ends at the end of the repeated run, within the duration budget. Heals 86
+#     S01E22 #15 ("Princess!") and Berserk S01E06 #241 ("Griffith!") on their first pass.
+GATE_FIX_EPOCH = 4
 
 # Outcomes that are PARKED: a deterministic give-up on this exact artifact. `cannot-evaluate`
 # is deliberately absent -- an unreadable artifact can be transient, so it keeps retrying.
@@ -314,12 +328,62 @@ def _own_speech(words, text):
     return None
 
 
+def _repetition_end(words, text, start):
+    """End of the contiguous repeat of the card's own utterance, or None.
+
+    A card can be a repetition artifact whose FIRST repetition is too short to show: the
+    ASR emitted one word many times and ``hallucination.collapse_runs`` folded the run of
+    identical cards into one, keeping the first card's start and the last card's end. Live:
+    86 Eighty-Six S01E22's "Princess!" is spoken six times inside a card displayed
+    90.50-98.85 s, and its first word is a ZERO-length one (start == end == 90.50); Berserk
+    S01E06's "Griffith!" is shouted four times inside a card displayed 1270.81-1285.36 s,
+    first utterance 0.52 s. :func:`_own_speech` correctly matches the earliest run, but
+    ending the card there lands under ``reflow.MIN_DUR`` (0.0 s and 0.82 s), so the
+    documented trim-to-first-utterance give-up fires and the episode parks forever.
+
+    The card's own speech is not one repetition, it is the chain of them: return the end of
+    the chain that starts at the card's own start. Chain members are the consecutive
+    occurrences of the card's exact token run, each starting no more than ``reflow.GAP_MAX``
+    after the previous one ends -- the pipeline's own definition of "no real pause here".
+    A repetition separated by more silence (Berserk's last shout, 10 s later) is a different
+    utterance and stays outside the chain, exactly as the Cyberpunk trim leaves its later
+    repetitions unsubbed.
+    """
+    tokens = [t.casefold() for t in _flat(text).split()]
+    n = len(tokens)
+    if not words or not n or n > len(words):
+        return None
+    norm = [str(w.get("text", "")).strip().casefold() for w in words]
+    hits = [
+        i
+        for i in range(len(norm) - n + 1)
+        if norm[i : i + n] == tokens
+        and all(words[j].get("start") is not None and words[j].get("end") is not None for j in range(i, i + n))
+        and words[i]["start"] >= start - reflow.EPS
+    ]
+    if len(hits) < 2:
+        return None
+    chain = [hits[0]]
+    for i in hits[1:]:
+        if words[i]["start"] - words[chain[-1]]["end"] > reflow.GAP_MAX + reflow.EPS:
+            break
+        chain.append(i)
+    if len(chain) < 2:
+        return None
+    return max(words[j]["end"] for j in chain)
+
+
 def _trim_to_speech(text, start, end, words, next_start):
     """Where the card should end if its own speech ends sooner than the card does.
 
     Only the END moves, only into silence, and only when the card's text really is spoken
     inside the budget -- a card whose text genuinely runs nine seconds is split instead.
     The result can never run into the next card.
+
+    A repetition artifact whose first utterance is under ``reflow.MIN_DUR`` cannot be
+    trimmed to that utterance (the card would be unreadable), so it is trimmed to the end
+    of its whole repeated run instead, capped at the gate's duration budget. The text is
+    still spoken exactly once on screen; repetitions past the run stay unsubbed.
     """
     span = _own_speech(words, text)
     if span is None:
@@ -333,7 +397,17 @@ def _trim_to_speech(text, start, end, words, next_start):
     if next_start is not None:
         target = min(target, next_start - reflow.MIN_GAP)
     if target - start < reflow.MIN_DUR:
-        return None  # clamped behind the next card or bellow MIN_DUR: not a trim
+        # The first utterance is too short to display on its own. If the card's text is
+        # repeated, its speech is the run, not the first repetition.
+        repeat_end = _repetition_end(words, text, start)
+        if repeat_end is None:
+            return None  # clamped behind the next card or below MIN_DUR: not a trim
+        target = min(end, repeat_end + reflow.LINGER)
+        if next_start is not None:
+            target = min(target, next_start - reflow.MIN_GAP)
+        target = min(target, start + GATE_MAX_DUR - reflow.EPS)
+        if target - start < reflow.MIN_DUR:
+            return None
     if end - target < 0.1:
         return None
     return target
