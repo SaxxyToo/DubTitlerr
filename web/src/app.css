@@ -1,7 +1,30 @@
+@font-face {
+  font-family: Archivo;
+  src: url('/review/assets/archivo-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: Gurajada;
+  src: url('/review/assets/gurajada-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/review/assets/jetbrains-mono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/review/assets/jetbrains-mono-500.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
+}
 :root {
   font-family:
-    Roboto,
-    Inter,
+    Archivo,
     ui-sans-serif,
     system-ui,
     -apple-system,
@@ -15,21 +38,21 @@
   font-synthesis: none;
   color-scheme: dark;
   /* Servarr token table. Every colour below derives from these. */
-  --bg: #202020;
-  --panel: #2a2a2a;
-  --surface: #333333;
-  --border: #3f3f3f;
-  --text: #e9e8f3;
-  --muted: #b4b4b4;
-  --accent: #2e6ea8;
-  --ok: #7cd48a;
-  --warn: #e8b45c;
-  --bad: #f08a8a;
-  --info: #6cb2f0;
-  --focus: #4cc2ff;
-  --on-accent: #ffffff;
+  --bg: #191819;
+  --panel: #222122;
+  --surface: #2a292a;
+  --border: #363537;
+  --text: #f1f2f2;
+  --muted: #b3b3b0;
+  --accent: #e79b32;
+  --ok: #7ac886;
+  --warn: #e0a84f;
+  --bad: #e08a8a;
+  --info: #86d6d2;
+  --focus: #9ff5f5;
+  --on-accent: #1c1a17;
   /* Derived steps: hover states and 12% status tints on a panel, opaque so contrast stays measurable. */
-  --accent-hover: color-mix(in srgb, var(--accent) 85%, black);
+  --accent-hover: color-mix(in srgb, var(--accent) 89%, white);
   --surface-hover: color-mix(in srgb, var(--surface) 85%, var(--text));
   --accent-tint: color-mix(in srgb, var(--accent) 22%, var(--panel));
   --ok-tint: color-mix(in srgb, var(--ok) 12%, var(--panel));
@@ -168,32 +191,36 @@ textarea:disabled {
 }
 .app-shell {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
 .sidebar {
-  width: 224px;
   flex-shrink: 0;
   background: var(--panel);
-  border-right: 1px solid var(--border);
-  position: fixed;
-  inset: 0 auto 0 0;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
   display: flex;
-  flex-direction: column;
-  padding: 20px 12px;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 4px;
+  min-height: 56px;
+  padding: 0 18px;
   z-index: 20;
-  overflow-y: auto;
 }
 .brand {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  padding: 0 8px 22px;
-  font-size: 18px;
-  font-weight: 600;
+  padding: 0 10px 0 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 .brand-icon {
-  height: 32px;
-  width: 32px;
+  height: 26px;
+  width: 26px;
   display: grid;
   place-items: center;
   border-radius: var(--radius);
@@ -201,22 +228,24 @@ textarea:disabled {
   color: var(--on-accent);
 }
 .sidebar nav {
-  display: grid;
+  display: flex;
+  align-items: stretch;
   gap: 2px;
+  flex-wrap: wrap;
 }
 .sidebar nav button {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 6px 10px;
   border: 0;
-  border-left: 3px solid transparent;
+  border-bottom: 2px solid transparent;
   background: transparent;
-  border-radius: 0 var(--radius) var(--radius) 0;
   text-align: left;
   font-size: 14px;
   font-weight: 500;
   color: var(--muted);
+  white-space: nowrap;
 }
 .sidebar nav button:hover:not(:disabled) {
   background: var(--surface);
@@ -224,11 +253,11 @@ textarea:disabled {
 }
 .sidebar nav .nav-active {
   color: var(--text);
-  background: var(--surface);
-  border-left-color: var(--accent);
+  background: transparent;
+  border-bottom-color: var(--accent);
 }
 .nav-count {
-  margin-left: auto;
+  margin-left: 2px;
   border-radius: var(--radius);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -237,10 +266,11 @@ textarea:disabled {
   font-variant-numeric: tabular-nums;
 }
 .sidebar-bottom {
-  margin-top: auto;
-  padding: 22px 8px 0;
-  display: grid;
-  gap: 12px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0;
 }
 .classic-link {
   display: flex;
@@ -269,8 +299,8 @@ textarea:disabled {
   background: var(--warn);
 }
 .main-shell {
-  margin-left: 224px;
-  width: calc(100% - 224px);
+  margin-left: 0;
+  width: 100%;
 }
 .topbar {
   height: 56px;
@@ -1296,14 +1326,6 @@ textarea {
   }
 }
 @media (max-width: 1200px) {
-  .sidebar {
-    width: 200px;
-    padding: 20px 10px;
-  }
-  .main-shell {
-    margin-left: 200px;
-    width: calc(100% - 200px);
-  }
   main {
     padding: 22px 20px;
   }
@@ -1338,13 +1360,6 @@ textarea {
   }
 }
 @media (max-width: 960px) {
-  .sidebar {
-    width: 190px;
-  }
-  .main-shell {
-    margin-left: 190px;
-    width: calc(100% - 190px);
-  }
   .stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1373,9 +1388,51 @@ textarea {
    tweaks below stay at 650px. Sidebar.svelte marks the closed drawer inert so Tab cannot reach it. */
 @media (max-width: 768px) {
   .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: 0;
+    min-height: 0;
+    height: auto;
+    width: 240px;
+    padding: 20px 12px;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+    overflow-y: auto;
     transform: translateX(-100%);
     transition: transform 0.2s;
-    width: 240px;
+  }
+  .sidebar nav {
+    display: grid;
+    gap: 2px;
+  }
+  .sidebar nav button {
+    justify-content: flex-start;
+    padding: 10px 12px;
+    border-left: 3px solid transparent;
+    border-bottom: 0;
+    border-radius: 0 var(--radius) var(--radius) 0;
+  }
+  .sidebar nav .nav-active {
+    background: var(--surface);
+    border-left-color: var(--accent);
+  }
+  .sidebar-bottom {
+    margin-left: 0;
+    margin-top: auto;
+    display: grid;
+    gap: 12px;
+    padding: 22px 8px 0;
+  }
+  .brand {
+    padding: 0 8px 22px;
+    font-size: 18px;
+  }
+  .brand-icon {
+    height: 32px;
+    width: 32px;
   }
   .sidebar.mobile-open {
     transform: translateX(0);
@@ -1507,4 +1564,254 @@ textarea {
   font-size: 13px;
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* ===== Audio Deck editor (accepted first-viewport composition, fluid) ===== */
+.audio-band {
+  position: relative;
+  aspect-ratio: 925 / 260;
+  max-height: 240px;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 64px), #171617;
+  border-radius: 6px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+.band-wave {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  top: 6%;
+  height: 74%;
+  width: 92%;
+}
+.band-wave path {
+  stroke: #a5f6f5;
+  stroke-width: 1.15;
+  fill: none;
+  opacity: 0.95;
+}
+.band-playhead {
+  position: absolute;
+  top: 6%;
+  bottom: 18%;
+  width: 2px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.band-line {
+  position: absolute;
+  inset: 0;
+  background: #e8a33d;
+  width: 2px;
+}
+.band-handle {
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  border-radius: 50%;
+  background: #f7f7f4;
+  border: 2.5px solid #e8a33d;
+  box-sizing: border-box;
+}
+.band-timechip {
+  position: absolute;
+  left: 14px;
+  bottom: 34px;
+  font:
+    500 13px 'JetBrains Mono',
+    monospace;
+  color: #ffffff;
+  background: rgba(8, 8, 8, 0.72);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+.band-ruler {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: 16px;
+  height: 5px;
+  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.2) 0 1px, transparent 1px 28.6px);
+}
+.audio-band .listen-pill {
+  position: absolute;
+  right: 14px;
+  bottom: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(10, 10, 10, 0.8);
+  color: #f2f2f2;
+  font-size: 13px;
+  font-weight: 500;
+}
+.audio-band .listen-pill kbd {
+  color: rgba(255, 255, 255, 0.65);
+}
+.listen-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 10px 0 2px;
+}
+.listen-row audio {
+  max-width: 320px;
+  height: 34px;
+}
+.listen-row .timecode {
+  font:
+    500 13px 'JetBrains Mono',
+    monospace;
+  color: var(--muted);
+}
+.listen-row small {
+  color: var(--muted);
+}
+.deck-card {
+  margin: 12px 0 4px;
+  padding: 16px 22px;
+  background: rgba(46, 52, 51, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+.deck-orig p {
+  margin: 4px 0 0;
+  font-size: 23px;
+  line-height: 1.25;
+  color: #9b9a99;
+}
+.deck-orig del,
+.deck-repair del {
+  text-decoration-color: #b9543f;
+  text-decoration-thickness: 2px;
+}
+.deck-repair p {
+  margin: 4px 0 0;
+  font-family: Gurajada, Archivo, sans-serif;
+  font-weight: 700;
+  font-size: 27px;
+  line-height: 1.2;
+  color: #f7f7f7;
+}
+.deck-repair ins,
+.deck-orig ins {
+  color: #d9fbfa;
+  text-decoration: none;
+}
+.deck-rule {
+  display: block;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 12px 0;
+}
+.transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.transport .deck-nav {
+  font-size: 13px;
+}
+.transport .verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid #3d3f44;
+  border-radius: 5px;
+  background: #3a3c40;
+  color: #f2f2f0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.transport .verdict:hover:not(:disabled) {
+  background: #44464b;
+}
+.transport .verdict.accept {
+  background: #e99b2f;
+  border-color: #e99b2f;
+  color: #1c1a17;
+  font-weight: 600;
+}
+.transport .verdict.accept:hover:not(:disabled) {
+  background: #f0a53c;
+}
+.transport .verdict.chosen {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.transport .verdict kbd {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+}
+.transport .verdict.accept kbd {
+  color: rgba(28, 26, 23, 0.7);
+}
+.transport-remaining {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.band-playhead {
+  transition: left 0.12s linear;
+}
+.transport .verdict,
+.transport .deck-nav {
+  transition: background 0.12s ease;
+}
+@media (max-width: 960px) {
+  .audio-band {
+    max-height: 200px;
+  }
+  .listen-row audio {
+    max-width: 100%;
+  }
+}
+@media (max-width: 650px) {
+  .audio-band {
+    aspect-ratio: 925 / 330;
+    max-height: 170px;
+  }
+  .band-timechip {
+    left: 8px;
+    bottom: 30px;
+    font-size: 11px;
+    padding: 2px 6px;
+  }
+  .audio-band .listen-pill {
+    right: 8px;
+    bottom: 26px;
+    font-size: 12px;
+    padding: 6px 9px;
+  }
+  .deck-card {
+    padding: 14px 16px;
+  }
+  .deck-orig p {
+    font-size: 20px;
+  }
+  .deck-repair p {
+    font-size: 23px;
+  }
+  .transport .verdict,
+  .transport .deck-nav {
+    padding: 7px 10px;
+    font-size: 12.5px;
+  }
+  .transport-remaining {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
 }
