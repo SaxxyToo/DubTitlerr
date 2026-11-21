@@ -1,0 +1,6 @@
+{
+  "streams": [
+    {"index": 1, "codec_type": "audio", "tags": {"language": "und", "title": "Japanese 2.0"}},
+    {"index": 2, "codec_type": "audio", "tags": {"language": "und", "title": "English Dub"}}
+  ]
+}

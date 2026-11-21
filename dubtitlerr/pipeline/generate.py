@@ -296,12 +296,62 @@ def _no_glossary_warning(show, episode) -> int:
     return 1
 
 
-# A title that names the English dub. Some muxes leave the audio language tag empty or
-# `und` but keep "English 5.1" / "English Dub" in the title; the title is evidence, and
-# without it the episode is skipped as a sub-only release. Deliberately narrow: a title
-# saying only a channel layout ("2.0") is not evidence, and the opt-in below is what
-# covers a truly untagged mux.
-DUB_TITLE = re.compile(r"\b(eng(?:lish)?|dub(?:bed)?)\b", re.I)
+# A title is evidence only when it names ENGLISH AUDIO. Some muxes leave the audio language
+# tag empty or `und` but keep "English 5.1" / "English Dub" in the title; without that the
+# episode is skipped as a sub-only release.
+#
+# The accept condition is an explicit English token. "dub"/"dubbed" is supporting evidence
+# only: it never tells us WHICH language the dub is in, so a bare-dub title is accepted only
+# when it names no other language. An external review (2026-11-20, v0.4.11) showed the old
+# single regex accepting "Spanish Dub" and, first-match-wins, choosing it over "English Dub"
+# while English ASR transcribed the Spanish track; "Japanese (Eng subs) stereo" was picked
+# for the same reason. Both paths produced subtitles that could pass the gates silently.
+ENGLISH_TITLE = re.compile(r"\beng(?:lish)?\b", re.I)
+DUB_TITLE = re.compile(r"\bdub(?:bed)?\b", re.I)
+
+# A title that names subtitles describes the subtitle mux, not the audio behind it, so
+# "English subs" is not evidence that a track is the English dub.
+SUBTITLE_TITLE = re.compile(r"\b(?:subs?|subbed|subtitles?|subtitled|closed captions?|cc)\b", re.I)
+
+# Titles that name another language are evidence AGAINST this being the English dub. Kept as
+# one maintainable tuple: add a language here, not another regex at a call site. Covers the
+# tag vocabulary measured across 173 files of the anime library on 2026-11-20 (jpn/eng/spa
+# tags with "Japanese (Korean Names)" style titles) plus the usual dub markets.
+OTHER_LANGUAGE_NAMES = (
+    "arabic", "bengali", "cantonese", "castilian", "chinese", "czech", "danish",
+    "dutch", "filipino", "finnish", "french", "farsi", "german", "greek", "hebrew",
+    "hindi", "hungarian", "indonesian", "italian", "japanese", "korean", "latin",
+    "malay", "mandarin", "norwegian", "persian", "polish", "portuguese", "romanian",
+    "russian", "spanish", "swedish", "tagalog", "tamil", "telugu", "thai", "turkish",
+    "ukrainian", "urdu", "vietnamese",
+)
+OTHER_LANGUAGE_TITLE = re.compile(
+    r"\b(?:" + "|".join(OTHER_LANGUAGE_NAMES) + r")\b", re.I
+)
+
+
+def _title_english_evidence(title):
+    """(accept, reason) for an untagged audio stream's title.
+
+    Explicit English audio wins; a bare "dub"/"dubbed" is accepted only when the title names
+    no other language and does not describe subtitles. Everything else is refused, which
+    leaves the stream to the opt-in lone-untagged path or a sub-only skip.
+    """
+    if not title or not title.strip():
+        return False, "no title"
+    other = OTHER_LANGUAGE_TITLE.search(title)
+    if other:
+        return False, f"title names another language ({other.group(0)!r})"
+    names_subtitles = SUBTITLE_TITLE.search(title) is not None
+    if ENGLISH_TITLE.search(title):
+        if names_subtitles and not DUB_TITLE.search(title):
+            return False, "title names subtitles, not audio"
+        return True, "title names English audio"
+    if DUB_TITLE.search(title):
+        if names_subtitles:
+            return False, "title names subtitles, not audio"
+        return True, "bare dub title naming no other language"
+    return False, "title names no English audio or dub"
 
 
 def _audio_lang(stream):
@@ -354,24 +404,31 @@ def eng_audio_index(video):
     if eng:
         return eng[0]["index"]
     # No English-tagged audio. Two pieces of evidence are still worth accepting:
-    #   1. a title that says English/dub, whatever the language tag says;
+    #   1. a title that names English audio (or a bare dub naming no other language);
     #   2. a single untagged track, but only when the operator opts in (UND_AUDIO_AS_DUB).
     # Anything else is a sub-only or ambiguous release, and transcribing stream 0 as
     # English would produce garbage -- the old rule. REQUIRE_ENG=0 remains the blunt
     # override for a pre-filtered English collection.
-    titled = [
-        s
-        for s in streams
-        if _audio_lang(s) in ("", "und")
-        and DUB_TITLE.search(_audio_title(s))
-        and "commentary" not in _audio_title(s).lower()
-    ]
-    if titled:
+    candidates = []
+    for s in streams:
+        title = _audio_title(s)
+        if _audio_lang(s) not in ("", "und") or "commentary" in title.lower():
+            continue
+        accept, why = _title_english_evidence(title)
+        if accept:
+            candidates.append((s, title, why, ENGLISH_TITLE.search(title) is not None))
+    if candidates:
+        # Several title matches: the explicitly-English one wins, whatever stream order says.
+        explicit = [c for c in candidates if c[3]]
+        chosen, title, why, _ = (explicit or candidates)[0]
+        skipped = [f"index {c[0]['index']} {c[1]!r}" for c in candidates if c[0] is not chosen]
         log(
             f"no English audio tag; using the title-identified English track "
-            f"(index {titled[0]['index']}, title {_audio_title(titled[0])!r})"
+            f"(index {chosen['index']}, title {title!r}; {why}"
+            + (f"; not preferred: {', '.join(skipped)}" if skipped else "")
+            + ")"
         )
-        return titled[0]["index"]
+        return chosen["index"]
     if _und_as_dub() and len(streams) == 1 and _audio_lang(streams[0]) in ("", "und"):
         log(f"no English audio tag; using the only untagged audio track (index {streams[0]['index']}) — UND_AUDIO_AS_DUB is on")
         return streams[0]["index"]

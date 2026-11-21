@@ -71,11 +71,16 @@ ffprobe -v error -select_streams a \
   -of default=noprint_wrappers=1 "Show - S01E01.mkv"
 ```
 
-A track whose **title** says English or Dub is accepted automatically, even when the language
-tag is missing — the title is evidence. A track with neither a tag nor a titled language is a
-guess: set **Settings > Library > Use a lone untagged track** (`UND_AUDIO_AS_DUB=1`) only when
-the release is dub-only. A Japanese-only file would be transcribed as English and produce
-garbage.
+A track whose **title** names English audio (`English`, `Eng 5.1`, `English Dub`) is accepted
+automatically, even when the language tag is missing — the title is evidence. A title that only
+says **Dub**/`Dubbed` is accepted only when it names no other language: `Spanish Dub`, `German
+Dubbed` and `Japanese (Eng subs) stereo` are all refused, because a title is evidence about one
+track, never about which language it carries. Several titled tracks: the explicitly-English one
+wins and the log line says which index it picked and why.
+
+A track with neither a tag nor a titled language is a guess: set **Settings > Library > Use a
+lone untagged track** (`UND_AUDIO_AS_DUB=1`) only when the release is dub-only. A Japanese-only
+file would be transcribed as English and produce garbage.
 
 `REQUIRE_ENG=0` remains the blunt override: it takes the first audio stream whatever its tag.
 Prefer the setting above, which fires only when there is exactly one audio track.

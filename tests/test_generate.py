@@ -17,6 +17,7 @@ test_process_no_longer_skips_on_an_embedded_dubtitles_track.
 import json
 import math
 import os
+import pathlib
 import sys
 import types
 
@@ -3000,5 +3001,116 @@ def test_eng_audio_index_refuses_an_all_commentary_english_set(monkeypatch):
     _run_recording_kwargs(
         monkeypatch,
         stdout=_streams({"index": 1, "tags": {"language": "eng", "title": "English Commentary"}}),
+    )
+    assert generate.eng_audio_index("ep.mkv") is None
+
+
+# --- the title fallback must require English ---------------------------------
+# External review (2026-11-20, v0.4.11 container): DUB_TITLE matched a bare "dub", so
+# "Spanish Dub" on an untagged track was transcribed as English, and titled[0] was
+# first-match-wins with no English preference. A title is evidence about ONE track; it
+# is never evidence about WHICH language the audio is when it names another language.
+# Fixtures are ffprobe stream lists (`-show_entries stream=index:stream_tags=language,title`)
+# taken from the shapes reported plus the tag vocabulary measured across 173 files of
+# /mnt/saxro-media/anime-tv on 2026-11-20.
+
+_FFPROBE_FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "ffprobe"
+
+
+def _ffprobe_fixture(name, monkeypatch):
+    return _run_recording_kwargs(
+        monkeypatch, stdout=(_FFPROBE_FIXTURES / f"{name}.json").read_text()
+    )
+
+
+def test_eng_audio_index_rejects_a_spanish_dub_next_to_japanese(monkeypatch):
+    # Review row 1: jpn + und "Spanish Dub". A bare "Dub" token is not English evidence.
+    monkeypatch.setenv("REQUIRE_ENG", "1")
+    _ffprobe_fixture("und_spanish_dub", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") is None
+
+
+def test_eng_audio_index_prefers_english_over_spanish_when_both_untagged(monkeypatch):
+    # Review row 2: two untagged dub titles, Spanish listed first. First-match-wins used to
+    # pick Spanish; the explicitly-English one must win.
+    _ffprobe_fixture("und_spanish_and_english_dub", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") == 2
+
+
+def test_eng_audio_index_rejects_a_japanese_track_whose_title_mentions_eng_subs(monkeypatch):
+    # Review row 3: jpn + und "Japanese (Eng subs) stereo". "Eng subs" describes subtitles,
+    # and the title names Japanese, so the track is not the English dub.
+    monkeypatch.setenv("REQUIRE_ENG", "1")
+    _ffprobe_fixture("und_japanese_eng_subs_stereo", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") is None
+
+
+def test_eng_audio_index_accepts_a_title_identified_english_dub(monkeypatch):
+    # Review row 4 (control): the one behaviour that must not regress.
+    _ffprobe_fixture("und_english_dub_only", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") == 2
+
+
+def test_eng_audio_index_rejects_a_german_dubbed_title(monkeypatch):
+    monkeypatch.setenv("REQUIRE_ENG", "1")
+    _ffprobe_fixture("und_german_dubbed", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") is None
+
+
+def test_eng_audio_index_accepts_a_plain_dub_title_when_no_other_language_is_named(monkeypatch):
+    # Review row 6: a bare "Dub" title names no language, so it stays accepted as before.
+    _ffprobe_fixture("und_plain_dub", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") == 2
+
+
+def test_eng_audio_index_logs_which_title_track_it_picked_and_why(monkeypatch, capsys):
+    # Real release titles: an untagged "Japanese 2.0" ahead of an untagged "English Dub".
+    # The log line has to say which index and why, so a wrong pick is visible in lastrun.
+    _ffprobe_fixture("und_real_release_titles", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") == 2
+    out = capsys.readouterr().out
+    assert "English" in out and "index 2" in out
+
+
+def test_eng_audio_index_keeps_eng_tagged_libraries_unchanged(monkeypatch):
+    # Acceptance guard: with a real eng tag the selector still takes the tagged track,
+    # whatever the titles say (measured shape: Chainsaw Man JA+EN+ES mux).
+    _ffprobe_fixture("eng_tagged_dual_audio", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") == 2
+
+
+def test_eng_audio_index_still_skips_a_tagged_english_commentary(monkeypatch):
+    # Acceptance guard: the commentary exclusion has to survive the title rework.
+    _ffprobe_fixture("eng_commentary_plus_dub", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") == 2
+
+
+def test_eng_audio_index_ignores_zxx_and_untagged_tracks(monkeypatch):
+    # zxx is "no linguistic content" (music/sfx); a bare untagged track is the opt-in path,
+    # never the title path. Neither is English evidence.
+    monkeypatch.delenv("UND_AUDIO_AS_DUB", raising=False)
+    monkeypatch.setenv("REQUIRE_ENG", "1")
+    _ffprobe_fixture("und_zxx_and_untagged", monkeypatch)
+    assert generate.eng_audio_index("ep.mkv") is None
+
+
+def test_eng_audio_index_rejects_an_untagged_latin_american_spanish_title(monkeypatch):
+    # "Latin" alone is a language word; a title naming it is not the English dub.
+    monkeypatch.setenv("REQUIRE_ENG", "1")
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams(
+            {"index": 1, "tags": {"language": "und", "title": "Latin American Spanish Dub"}},
+        ),
+    )
+    assert generate.eng_audio_index("ep.mkv") is None
+
+
+def test_eng_audio_index_rejects_a_title_that_only_names_subtitles(monkeypatch):
+    # "English (soft subs)" on an untagged track describes a subtitle mux, not English audio.
+    monkeypatch.setenv("REQUIRE_ENG", "1")
+    _run_recording_kwargs(
+        monkeypatch,
+        stdout=_streams({"index": 1, "tags": {"language": "und", "title": "English (soft subs)"}}),
     )
     assert generate.eng_audio_index("ep.mkv") is None

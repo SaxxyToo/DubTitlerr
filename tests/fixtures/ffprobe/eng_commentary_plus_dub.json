@@ -1,0 +1,7 @@
+{
+  "streams": [
+    {"index": 1, "codec_type": "audio", "tags": {"language": "eng", "title": "English Commentary"}},
+    {"index": 2, "codec_type": "audio", "tags": {"language": "eng", "title": "English 5.1"}},
+    {"index": 3, "codec_type": "audio", "tags": {"language": "jpn", "title": "Japanese 2.0"}}
+  ]
+}
