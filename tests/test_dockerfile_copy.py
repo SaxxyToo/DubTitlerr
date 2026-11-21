@@ -183,6 +183,18 @@ def test_container_run_starts_the_review_server_as_a_background_loop():
     assert launches[0] < gen[0], "started BEFORE the supervisor's wait, or it never starts at all"
 
 
+def test_neither_image_drops_root_without_replacing_the_chown_contract():
+    """Both images deliberately run as root, and the reason is executable, not cosmetic:
+    generate.py chowns every sidecar to MEDIA_UID:MEDIA_GID inside a bind-mounted library
+    (CAP_CHOWN), and the mounts carry host ownership the image cannot know at build time.
+    A `USER` line added to look hardened would silently break writes or ownership, so this
+    test has to fail first and the replacement mechanism arrive with it."""
+    for name in ("Dockerfile.builder", "Dockerfile.lite"):
+        body = open(os.path.join(ROOT, name)).read()
+        assert not re.search(r"^USER\s", body, re.M), f"{name} runs as a non-root USER; see the NO `USER` comment"
+        assert "NO `USER` ON PURPOSE" in body, f"{name} lost the documented reason root is required"
+
+
 def test_the_review_server_loop_cannot_end_the_container():
     """A crashed or unstartable server -- port in use, unwritable token dir -- is a logged
     annoyance, not an outage. It is wrapped in a restart loop inside a background subshell,

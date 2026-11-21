@@ -112,4 +112,16 @@ RUN chmod +x /app/*.sh
 
 # Bypass subgen's init (we only want its runtime); run our two-loop supervisor as root so
 # generate.py can chown sidecars to MEDIA_UID:MEDIA_GID.
+# NO `USER` ON PURPOSE. This image runs as root, and that is a requirement, not an oversight:
+#   * generate.py chowns every sidecar it writes to MEDIA_UID:MEDIA_GID (default 1000:100)
+#     inside a bind-mounted media library. chown needs CAP_CHOWN, which a non-root USER does
+#     not have; a fixed image user would either fail to set the ownership Plex and the host
+#     need, or require the library to be world-writable.
+#   * the media and config bind mounts carry host ownership the image cannot know at build
+#     time. The operator pins the result with MEDIA_UID/GID, not with a passwd entry.
+#   * the review server writes decisions, accounts and its token under the config volume as
+#     the same user that owns the sidecars.
+# Dropping to USER would trade a working chown for a per-deployment rebuild. A deployment
+# whose mounts are already owned by one fixed uid can run the container as that uid itself
+# (`docker run --user`); the pipeline honours MEDIA_UID/GID for everything it creates.
 ENTRYPOINT ["sh", "/app/container_run.sh"]
