@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test';
-import AxeBuilder from '@axe-core/playwright';
-import { openSignedIn, reset } from './helpers';
+import { openSignedIn, reset, scanAccessibility } from './helpers';
 
 // R5: the reviewer has to be able to tell a dub-caption anchor (the dub's own words, a
 // near-certain repair) from a translation anchor (a judgement call) from no anchor at all.
@@ -31,7 +30,7 @@ test('the queue labels what each repair was anchored on and filters by it', asyn
   await expect(chip).toHaveText('Dub-anchored · native');
   await expect(chip).toHaveAttribute('title', /track: English Dub/);
   await expect(page.getByTestId('evidence')).toContainText('Captions of the dub itself');
-  const accessibility = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+  const accessibility = await scanAccessibility(page);
   expect(accessibility.violations).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath('review-anchor-dub.png'), fullPage: true });
 

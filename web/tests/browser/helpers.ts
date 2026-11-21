@@ -1,6 +1,9 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 
+/** What AxeBuilder.analyze() resolves to, without importing axe-core (a transitive dependency). */
+export type AxeResults = Awaited<ReturnType<AxeBuilder['analyze']>>;
+
 export const USERNAME = 'reviewer';
 export const PASSWORD = 'browser-fixture-password';
 export const API_KEY = 'browser-fixture-token';
@@ -47,6 +50,34 @@ export async function navTo(page: Page, name: string | RegExp) {
 
 /** WCAG 2.x A/AA scan of the whole page, expecting zero violations. */
 export async function expectNoAxeViolations(page: Page) {
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+  const results = await scanAccessibility(page);
   expect(results.violations).toEqual([]);
+}
+
+/**
+ * WCAG 2.x A/AA scan of the whole page, with motion switched off first.
+ *
+ * The app honours `@media (prefers-reduced-motion: reduce)` (src/app.css), which drops every
+ * transition and shortens every animation, so a scan reads resting colours rather than a frame
+ * caught in the middle of one. Scanning live motion made this suite flaky for real: the review
+ * workspace's Save button is disabled until a choice is staged, and enabling it fades
+ * `--surface` (#2a292a) to `--accent` (#e79b32) over 150 ms (`transition: background 0.15s`,
+ * src/app.css). For roughly the first 60 ms of that fade the button renders a brown in between
+ * (axe measured #976b2f, 3.68:1 against the #1c1a17 label) and every intermediate below ~#b67e30
+ * fails the 4.5:1 rule. Whether axe sampled inside that window depended on machine load, so the
+ * same assertion passed and failed on identical code (CI 2026-11-21, review.spec.ts on both
+ * viewports, jobs 136719511316 and 136728162440).
+ *
+ * Switching motion off does not weaken coverage: axe judges a rendered state, WCAG's contrast
+ * rule is not about transient animation frames, and reduced motion is a state real users run in,
+ * so the scan still exercises the same DOM, markup and palette it always did.
+ */
+export async function scanAccessibility(page: Page): Promise<AxeResults> {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  // The media switch is applied on the next style recalc; a frame of the old colour can still be
+  // in flight, so let two frames pass before axe samples computed styles.
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  return new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
 }
