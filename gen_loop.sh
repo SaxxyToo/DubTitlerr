@@ -205,10 +205,11 @@ prep_show() {
 			echo "  verify TIMED OUT after ${VERIFY_TIMEOUT:-1200}s (continuing; terms stay unverified)" ||
 			echo "  verify failed rc=$rc (continuing)"; }
 	fi
-	# Names-hygiene audit (P22): cross-references names x flagged x the wiki cache just refreshed by VERIFY above and
-	# REPORTS names that are junk-classified (or a capitalised ordinary word with no exact wiki page) while still being
-	# in `names`. Read-only by design: the cleanup of a legacy file is an owner decision, so this stage never writes.
-	# Failure-swallowed like every prep step; exit 1 means findings were printed, not that the stage broke.
+	# Names-hygiene act (P24): cross-references names x flagged x the wiki cache just refreshed by VERIFY above and
+	# REMOVES names the audit deterministically classifies as junk (guard-classified, or a capitalised ordinary word
+	# with no exact wiki page) -- the exact-title check protects real cast, and with no cached wiki nothing is removed.
+	# The removal is logged to <glossary>.cleanup.json. Failure-swallowed like every prep step; exit 1 means junk was
+	# reported that could NOT be removed (no wiki to decide on), not that the stage broke.
 	if [ -n "$_ps_gloss" ]; then
 		if stop_requested; then
 			echo "gen_loop: soft stop, not starting GLOSSARY AUDIT on $_ps_show"
@@ -217,11 +218,11 @@ prep_show() {
 		fi
 		echo "#### GLOSSARY AUDIT $_ps_show $(date)"
 		audit_rc=0
-		timeout "${AUDIT_TIMEOUT:-300}" python3 -m dubtitlerr.glossary.glossary_audit "$_ps_gloss" </dev/null 2>&1 || audit_rc=$?
+		timeout "${AUDIT_TIMEOUT:-300}" python3 -m dubtitlerr.glossary.glossary_audit "$_ps_gloss" --fix </dev/null 2>&1 || audit_rc=$?
 		if [ "$audit_rc" -eq 0 ]; then
-			echo "  names hygiene: clean"
+			echo "  names hygiene: clean (junk removed above, logged to .cleanup.json)"
 		elif [ "$audit_rc" -eq 1 ]; then
-			echo "  names hygiene: junk names reported above (report only, nothing changed)"
+			echo "  names hygiene: junk reported above, not removed (no cached wiki titles to protect real names)"
 		elif [ "$audit_rc" -eq 124 ]; then
 			echo "  audit TIMED OUT after ${AUDIT_TIMEOUT:-300}s (continuing)"
 		else

@@ -277,12 +277,19 @@ def test_an_undecodable_reply_is_unavailable_never_journaled_and_retried(run, re
 
 
 def test_an_undecodable_reply_gives_the_same_glossary_as_before_the_journal(run, monkeypatch):
-    """For the run itself it is still a plain no-match: only the journaling and the 'unavailable' flag differ."""
+    """For the run itself it is still a plain no-match: only the journaling and the 'unavailable' flag differ.
+
+    P24: a no-match is a guard class, so it is stored as a count plus .archived.jsonl evidence
+    instead of a review entry -- the observations are identical, the queue just stays bounded."""
     monkeypatch.setenv("VERIFY_QUEUE_NO_MATCH", "1")
     run.state["llm"] = lambda prompt: "{canonical: Zoro}"
     run(force=False)
-    flagged = json.loads(run.path.read_text()).get("flagged", {})
-    assert set(flagged) == set(TERMS) and set(flagged.values()) == {"no-match"}
+    doc = json.loads(run.path.read_text())
+    assert doc["archived_flags"]["counts"] == {"no-match": len(TERMS)}
+    archived = [json.loads(ln) for ln in (run.tmp / "S.json.archived.jsonl").read_text().splitlines()]
+    assert {e["term"] for e in archived} == set(TERMS)
+    assert all(e["reason"] == "no-match" for e in archived)
+    assert not doc.get("flagged"), "guard verdicts are not review entries any more"
     adj = gv._adjudicate_llm("Zoro", ["Zorro"], "S", "llamacpp")
     assert adj["unavailable"] is True and adj["confidence"] == "none" and adj["canonical"] == ""
     assert gv.clean_adjudication(adj) == ({"canonical": "", "confidence": "none"}, False)

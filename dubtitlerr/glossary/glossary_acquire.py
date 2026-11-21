@@ -1400,6 +1400,7 @@ def _acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str 
         "|".join(f"{p['variant']}>{p['canonical']}" for p in sorted(proposals, key=lambda p: p["variant"])).encode()
     ).hexdigest()[:8]
     run_id = f"{show}:{len(titles)}:{files}:{digest}"
+    archived = {"archived": 0, "counts": {}}
     if apply and (proposals or tier_b):
         # [S-9]: one stem -> SxxExx map, built once, reused by apply_proposals' episode
         # tagging -- same pattern as `stem_admission` above (resolve once, thread through).
@@ -1425,6 +1426,9 @@ def _acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str 
                         "context": tctx.get(term, []),
                         **_provenance(cands.get(term, {}), files),
                     }
+            # P24: guard verdicts become counts, not entries; the full evidence is appended
+            # to <glossary>.archived.jsonl beside the file.
+            archived = glossary_verify.finalize_flags(out, gloss_path)
             _write_json(gloss_path, out)
         except Exception as e:
             try:
@@ -1443,6 +1447,7 @@ def _acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str 
         "applied": len(applied),
         "known": len(known),
         "flagged": len(flag_props),
+        **({"archived_flags": archived["counts"]} if archived["archived"] else {}),
         "dry_run": not apply,
         "scope": len(scope),
         "scope_episodes": [os.path.basename(s) for s in scope],

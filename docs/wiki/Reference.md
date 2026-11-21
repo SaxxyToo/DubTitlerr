@@ -297,9 +297,16 @@ text is byte-identical, and its timing does not move. The audit records it as
 446-character run is over even wrapped), and a token that *alternates* rather than repeats
 (`Kekekekeke…`, whose minority is half the token) is not a run — both of those refusals stand.
 
-Faults a repair may not fix without changing words or the transcript — coverage, punctuation, a
-cold open, a known mishear, a single unbroken token that is not a run — are
-reported as unsupported rather than attempted.
+Faults that need a transcript edit rather than a layout one — coverage, punctuation, a cold open, a
+single unbroken token that is not a run — are reported as unsupported rather than attempted. A
+**known mishear** is the exception: the product may have been assembled before the glossary's own fix
+landed, so `gate_fix` re-applies the show's `glossary.correct()` rules to the stored cues' parsed text
+(one physical line at a time, so breaks and timing never move), re-gates the result in memory and
+writes it only if it now passes. The audit records it as `outcome: "corrected"` with the before/after
+text per card. An uncorrectable mishear, or a partial correction that leaves another finding, still
+parks. The park's attempt stamp carries a glossary fingerprint, so editing the glossary retries that
+show's parked episodes exactly once — the same discipline `GATE_FIX_EPOCH` and the version bumps
+already follow.
 
 `llm-empty` is a name in the code's outcome list, but repair never writes it. When a model
 answers a target with nothing, repair counts it as `llm_empty` in the repair summary, queues the
@@ -900,19 +907,34 @@ non-https URL, or an internal/link-local host is refused before any request.
 ### Names-hygiene audit
 
 `glossary_audit` cross-references a glossary's `names` against its own `flagged` map and the wiki
-cache, and **reports** entries that are junk-classified yet still listed as names: a flag reason
+cache, and **acts on** entries that are junk-classified yet still listed as names: a flag reason
 (`english-word`, `sentence-initial-only`, `common-word`, `no-match`, `no-wiki-match`, `below-floor`)
 or a capitalised ordinary English word with no exact wiki page. An exact wiki title protects a name
 however ordinary it looks (`Fern`, `Hero`, `Land`), and a lowercase entry (`mana`, `mage`) is treated
-as curated prompt vocabulary, never junk. It never writes: cleaning a legacy file is a human
-decision. It runs in the nightly sweep right after VERIFY, and by hand:
+as curated prompt vocabulary, never junk. It runs in the nightly sweep right after VERIFY with
+`--fix`, which removes what it reported and logs the removal to `<glossary>.cleanup.json` (newest 20
+runs); a second sweep finds nothing and writes no new log entry. Without a cached wiki index nothing
+is removed: the entries are listed as `unevaluated` rather than guessed, because the exact-title
+check is what protects real cast. By hand:
 
 ```sh
-python3 -m dubtitlerr.glossary.glossary_audit "/config/glossaries/<Show>.json"
+python3 -m dubtitlerr.glossary.glossary_audit "/config/glossaries/<Show>.json" [--titles FILE] [--fix]
 ```
 
-Exit `0` = clean, `1` = junk reported (nothing changed), `2` = the glossary could not be read.
-Without a cached wiki index the entries are listed as `unevaluated` rather than guessed.
+Exit `0` = nothing left to fix (clean, or clean after `--fix`), `1` = junk reported but not removed
+(`--fix` had no wiki to decide on, or the report-only mode was used), `2` = the glossary could not be
+read.
+
+### Bounded flag storage
+
+VERIFY and ACQUIRE re-classify the same unsettled terms every sweep, so guard verdicts used to pile
+up as review entries (Frieren: ~666 of 798). They now land in `archived_flags` as counts by class
+(`{"counts": {"english-word": 412, "below-floor": 180, ...}, "total": 666}`), recomputed on each
+write and therefore stable across reruns, while their full entries are appended (deduplicated by
+term+reason) to `<glossary>.archived.jsonl`. Entry-form `flagged` is kept for the classes a human
+actually decides: `respelling-needs-review`, `low-confidence`, `unseen-needs-evidence`,
+`conflicts-with-curated-fix`, `possessive_floor_crossing`, `transcript-new-term` (and acquire's
+`share-too-close`/`not-in-arc-pages`/`expansion-guarded`).
 
 `glossary_verify` can be run by hand:
 

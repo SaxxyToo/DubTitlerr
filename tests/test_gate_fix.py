@@ -734,7 +734,7 @@ def test_a_give_up_is_parked_with_the_code_that_produced_it(tmp_path):
     assert doc["parked"] is True, doc
     assert doc["outcome"] == gate_fix.OUTCOME_UNFIXABLE
     assert doc["fails"], "the parked record keeps the refusal it stands for"
-    assert doc["attempt_stamp"] == gate_fix.attempt_stamp()
+    assert doc["attempt_stamp"] == gate_fix.attempt_stamp(stem)
     assert doc["attempt_stamp"]["gate_fix_epoch"] == gate_fix.GATE_FIX_EPOCH
     assert gate_fix.parked_state(stem)[0] is True
 
@@ -824,4 +824,183 @@ def test_a_fixed_episode_drops_its_parked_record(tmp_path):
 
     assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
     assert not os.path.exists(park_path), "a healed episode must not stay parked"
+
+
+# --- the correction lane (P24): the glossary heals what it flagged --------------------
+
+
+def write_glossary(tmp_path, monkeypatch, hard_fixes=None, names=None, show="Show"):
+    """A fixture glossary where ``glossary_for`` will find it, plus its path."""
+    gdir = tmp_path / "glossaries"
+    gdir.mkdir(exist_ok=True)
+    path = gdir / f"{show}.json"
+    path.write_text(json.dumps({"show": show, "names": names or [],
+                                "hard_fixes": hard_fixes or {}}))
+    monkeypatch.setattr(publish_gate, "GLOSSARY_DIR", str(gdir))
+    return path
+
+
+def mishear_fails(stem):
+    """The gate's findings as gate_fix sees them: its own glossary's mishear list included."""
+    path, cues = publish_gate.load_cues(stem)
+    mishears = publish_gate.glossary_mishears(publish_gate.glossary_for(stem))
+    return [f for f in publish_gate.evaluate(cues, None, mishears)
+            if f.startswith("known mishear")]
+
+
+def test_a_parked_mishear_heals_by_reapplying_the_glossary(tmp_path, monkeypatch):
+    """Frieren S01E17: `Zine's very generous notes` -> `Sein's ...` (real case, 2026-11-21).
+
+    The product was assembled before the hard_fix existed, so the gate's own mishear list
+    flagged a word the same glossary already knows how to correct. The lane re-applies it
+    and the file passes -- without a model, a re-transcribe or an operator script.
+    """
+    stem = write_episode(tmp_path, padded(100.0, 104.0, "Zine's very generous notes."))
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein"},
+                   names=["Frieren", "Fern", "Sein"])
+    assert mishear_fails(stem) == ["known mishear(s): zine"], mishear_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_CORRECTED, result
+    assert gate_fails(stem) == [], gate_fails(stem)
+    bodies = [t for _, _, t in publish_gate.load_cues(stem)[1]]
+    assert "Sein's very generous notes." in bodies
+    assert not any("Zine" in t for t in bodies)
+    assert result["corrections"][0]["before"] == "Zine's very generous notes."
+    assert result["corrections"][0]["after"] == "Sein's very generous notes."
+    audit = json.load(open(stem + ".dubtitles.gate-fix.json"))
+    assert audit["attempts"][-1]["corrections"] == result["corrections"]
+
+
+def test_a_linebreak_glued_mishear_is_corrected_mid_cue(tmp_path, monkeypatch):
+    """Frieren S01E17: `and\\NFreeran's` -- the mishear sits after a break, mid-cue.
+
+    Correcting a cue is done one physical line at a time, so the break stays where the
+    layout put it and only the token changes.
+    """
+    stem = write_episode(tmp_path, padded(100.0, 105.0, "and\\NFreeran's patience ran out."))
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"freeran": "Fern"},
+                   names=["Frieren", "Fern"])
+    assert mishear_fails(stem), mishear_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_CORRECTED, result
+    bodies = [t for _, _, t in publish_gate.load_cues(stem)[1]]
+    assert "and\nFern's patience ran out." in bodies
+    assert "Freeran's" not in " ".join(bodies)
+
+
+def test_a_possessive_mishear_heals_through_the_curated_fix(tmp_path, monkeypatch):
+    """Frieren S01E26: `Zinza's replica` -> `Sense's replica`."""
+    stem = write_episode(tmp_path, padded(100.0, 103.0, "Zinza's replica is perfect."))
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"zinza": "Sense"},
+                   names=["Frieren", "Sense"])
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_CORRECTED, result
+    bodies = [t for _, _, t in publish_gate.load_cues(stem)[1]]
+    assert "Sense's replica is perfect." in bodies
+
+
+def test_the_correction_lane_never_moves_timing_or_structure(tmp_path, monkeypatch):
+    """Words may change; the card count, spans and break count must not."""
+    cues = padded(100.0, 104.0, "Zine's very generous notes.")
+    cues[3] = (cues[3][0], cues[3][1], "and\\NFreeran's patience ran out.")
+    stem = write_episode(tmp_path, cues)
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein", "freeran": "Fern"},
+                   names=["Frieren", "Fern", "Sein"])
+    _, before = publish_gate.load_cues(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_CORRECTED, result
+    _, after = publish_gate.load_cues(stem)
+    assert [(s, e) for s, e, _ in after] == [(s, e) for s, e, _ in before]
+    assert [t.count("\n") for _, _, t in after] == [t.count("\n") for _, _, t in before]
+
+
+def test_a_dry_run_reports_the_correction_and_writes_nothing(tmp_path, monkeypatch):
+    stem = write_episode(tmp_path, padded(100.0, 104.0, "Zine's very generous notes."))
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein"}, names=["Sein"])
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem, dry_run=True)
+
+    assert result["outcome"] == gate_fix.OUTCOME_CORRECTED, result
+    assert result["code"] == 0
+    assert read(stem + ".eng.dubtitles.ass") == before
+    assert not os.path.exists(stem + gate_fix.BACKUP_SUFFIX)
+
+
+def test_an_uncorrectable_refusal_still_parks(tmp_path, monkeypatch):
+    """`Furikaereba itsumo.` -- a JP lyric and an unpunctuated block the glossary cannot fix.
+
+    Nothing changed, so the give-up is still a give-up: the product is untouched and the
+    park record stands.
+    """
+    cues = [(float(i), float(i) + 1.0, "Ends here.") for i in range(30)]
+    cues += [(100.0 + i, 101.0 + i, "Linya, linya") for i in range(40)]
+    cues += [(200.0, 203.0, "Furikaereba itsumo.")]
+    stem = write_episode(tmp_path, cues)
+    write_glossary(tmp_path, monkeypatch, hard_fixes={}, names=["Linea", "Frieren"])
+    before = read(stem + ".eng.dubtitles.ass")
+    assert any("sentence punctuation" in f for f in gate_fails(stem)), gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNSUPPORTED, result
+    assert read(stem + ".eng.dubtitles.ass") == before
+    assert gate_fix.parked_state(stem)[0] is True
+
+
+def test_a_partial_correction_is_never_written(tmp_path, monkeypatch):
+    """A healed mishear plus a still-unfixable finding writes nothing at all."""
+    cues = [(float(i), float(i) + 1.0, "Ends here.") for i in range(30)]
+    cues += [(100.0 + i, 101.0 + i, "No terminal here") for i in range(40)]
+    cues.append((200.0, 204.0, "Zine's very generous notes."))
+    stem = write_episode(tmp_path, cues)
+    write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein"}, names=["Sein"])
+    before = read(stem + ".eng.dubtitles.ass")
+    assert any("sentence punctuation" in f for f in gate_fails(stem)), gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNSUPPORTED, result
+    assert "corrections" in result, "the lane ran; it just did not heal the file"
+    assert read(stem + ".eng.dubtitles.ass") == before
+    assert gate_fix.parked_state(stem)[0] is True
+
+
+def test_a_glossary_change_unparks_a_parked_episode(tmp_path, monkeypatch):
+    """The stamp carries the glossary fingerprint: editing the glossary retries the park.
+
+    That edit is exactly what heals a `known mishear(s)` refusal, so a park that outlived
+    its own fix would have to wait for a human (or a run request) -- the operator step P24
+    removes.
+    """
+    stem = write_episode(tmp_path, padded(100.0, 104.0, "Zine's very generous notes."))
+    gloss_path = write_glossary(tmp_path, monkeypatch, hard_fixes={"zinza": "Sense"},
+                                names=["Sein"])
+    # Stand in for the record an older pass wrote: a real give-up, stamped against THIS
+    # glossary. (No plain-text gate finding can park this file until the fix lands, so the
+    # record is written the way _write_park writes it.)
+    atomic_write(gate_fix._park_path(stem), lambda f: f.write(json.dumps(
+        {"parked": True, "at": time.time(), "outcome": gate_fix.OUTCOME_UNSUPPORTED,
+         "summary": "known mishear(s): zine", "fails": ["known mishear(s): zine"],
+         "attempt_stamp": gate_fix.attempt_stamp(stem)})))
+    assert gate_fix.parked_state(stem)[0] is True
+
+    gloss_path.write_text(json.dumps({"show": "Show", "names": ["Sein"],
+                                      "hard_fixes": {"zinza": "Sense", "zine": "Sein"}}))
+
+    parked, note = gate_fix.parked_state(stem)
+    assert parked is False, "a glossary edit is the fix; the park must not outlive it"
+    assert "attempt stamp" in note
+
+    result = gate_fix.attempt(stem)
+    assert result["outcome"] == gate_fix.OUTCOME_CORRECTED, result
+    assert gate_fix.parked_state(stem)[0] is False
 

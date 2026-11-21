@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Names-hygiene audit: REPORT junk names that legacy intake left in a glossary. Never fixes anything.
+"""Names-hygiene: REPORT junk names a legacy intake left in a glossary, and (--fix) REMOVE them.
 
 Why this exists (P22). Glossary VERIFY/ACQUIRE already CLASSIFY a bad term -- `flagged` holds it as english-word,
 sentence-initial-only, common-word, no-match or below-floor -- but nothing ever removed the matching entry from
@@ -18,13 +18,15 @@ words AND exact wiki pages, so they are protected. "Continental" is an ordinary 
 title, so it is reported. A lowercase entry is never reported by the ordinary-word class: `mana`/`mage` in a curated
 names list are a deliberate whisper-prompt vocabulary, not a mis-acquired proper noun.
 
-Read-only. The wiki is never fetched here -- a stale/absent cache downgrades entries to `unevaluated` instead of
-guessing (an unknown wiki must not turn a real name into a report). The nightly sweep runs this right after VERIFY,
-which has just refreshed the cache.
+ACTING (P24). `--fix` removes the reported entries from `names` and writes `<glossary>.cleanup.json` beside the file
+with what moved and why; the sweep runs this right after VERIFY, so the loop needs no human step. Without cached wiki
+titles NOTHING is removed: the exact-title exemption cannot be applied, so entries stay under `unevaluated` and the
+stage reports them instead of guessing. The wiki is never fetched here -- VERIFY has just refreshed the cache.
 
-    python3 -m dubtitlerr.glossary.glossary_audit <glossary.json> [--titles FILE]
+    python3 -m dubtitlerr.glossary.glossary_audit <glossary.json> [--titles FILE] [--fix]
 
-Exit code 0 = no junk, 1 = junk reported (nothing written), 2 = the glossary could not be read.
+Exit code 0 = nothing left to fix (clean, or clean after --fix), 1 = junk remains (reported; without --fix nothing is
+written, with --fix there was no wiki to decide on), 2 = the glossary could not be read.
 """
 
 from __future__ import annotations
@@ -34,24 +36,19 @@ import json
 import os
 import re
 import sys
+import time
 
 from dubtitlerr.glossary import glossary, glossary_verify
 
 # Flag reasons that mean "this term is not a name". Everything else in `flagged` is a REAL review item the human
 # queue must keep (respelling-needs-review, unseen-needs-evidence, conflicts-with-curated-fix, ...), so it is
 # deliberately absent here: a respelling flag says the term exists but is spelled wrong, not that it is junk.
-JUNK_FLAG_REASONS = frozenset(
-    {
-        "english-word",
-        "common-word",
-        "sentence-initial-only",
-        "no-match",
-        "no-wiki-match",
-        "below-floor",
-    }
-)
+# One list, shared with the verifier's bounded flag storage: an entry archived there as junk is exactly one this
+# audit may remove, so the two must never drift.
+JUNK_FLAG_REASONS = glossary_verify.ARCHIVED_FLAG_REASONS
 
 MAX_NEAR_TITLES = 3
+MAX_CLEANUP_RUNS = 20
 
 
 def cache_path(show_key: str) -> str:
@@ -181,10 +178,92 @@ def audit(gloss_path: str, titles: list[str] | None = None) -> dict:
     return rep
 
 
+def cleanup_path(gloss_path: str) -> str:
+    """The audit log of what the acting mode removed, beside the glossary."""
+    return gloss_path + ".cleanup.json"
+
+
+def apply_cleanup(gloss: dict, junk: list) -> tuple[dict, list]:
+    """Remove the audit's junk entries from ``names`` (in place). Returns (gloss, removed names).
+
+    Only entries the audit actually reported are removed -- it already applied the exact-wiki-title
+    exemption, so a real name the wiki has a page for can never be in this list. Keyed
+    case-insensitively on the stripped entry.
+    """
+    drop = {str(j.get("name", "")).strip().lower() for j in junk if str(j.get("name", "")).strip()}
+    if not drop:
+        return gloss, []
+    removed = [n for n in (gloss.get("names") or []) if isinstance(n, str) and n.strip().lower() in drop]
+    gloss["names"] = [n for n in (gloss.get("names") or []) if not (isinstance(n, str) and n.strip().lower() in drop)]
+    return gloss, removed
+
+
+def _write_cleanup(path: str, run: dict) -> str:
+    """Append ``run`` to the cleanup log (newest 20 kept), atomically. Returns the path."""
+    doc = {"runs": []}
+    try:
+        loaded = json.load(open(path))
+        if isinstance(loaded, dict) and isinstance(loaded.get("runs"), list):
+            doc = loaded
+    except (OSError, ValueError):
+        pass
+    doc["runs"] = (doc["runs"] + [run])[-MAX_CLEANUP_RUNS:]
+    from dubtitlerr.glossary.glossary_acquire import _write_json  # call time: acquire imports verify
+
+    _write_json(path, doc)
+    return path
+
+
+def fix(gloss_path: str, titles: list[str] | None = None) -> dict:
+    """Audit the glossary and REMOVE what the audit reported; log it. Never raises for bad content.
+
+    Returns the audit report plus ``cleanup`` (``{"removed": n, "log": path}``). With no cached
+    wiki titles nothing is removed -- the exact-title exemption is the protection, and a guess
+    must never delete a name.
+    """
+    rep = audit(gloss_path, titles)
+    rep.setdefault("cleanup", {"removed": 0, "log": None})
+    if rep.get("junk_count"):
+        try:
+            doc = json.load(open(gloss_path))
+        except (OSError, ValueError) as e:
+            rep["cleanup"] = {"removed": 0, "log": None, "note": f"load-failed: {e}"}
+            return rep
+        if not isinstance(doc, dict):
+            return rep
+        before = len(doc.get("names") or [])
+        doc, removed = apply_cleanup(doc, rep["junk"])
+        if removed:
+            try:
+                from dubtitlerr.glossary.glossary_acquire import _write_json
+
+                _write_json(gloss_path, doc)
+            except OSError as e:
+                rep["cleanup"] = {"removed": 0, "log": None, "note": f"write-failed: {e}"}
+                return rep
+            log = _write_cleanup(
+                cleanup_path(gloss_path),
+                {
+                    "at": round(time.time(), 3),
+                    "show": rep.get("show", ""),
+                    "wiki": rep.get("wiki", ""),
+                    "titles": rep.get("titles", 0),
+                    "names_before": before,
+                    "names_after": len(doc.get("names") or []),
+                    "removed_count": len(removed),
+                    "removed": rep["junk"],
+                },
+            )
+            rep["cleanup"] = {"removed": len(removed), "log": log}
+        rep["names"] = len(doc.get("names") or [])
+    return rep
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Report junk names in a DubTitlerr glossary (read-only).")
+    ap = argparse.ArgumentParser(description="Report (and with --fix remove) junk names in a DubTitlerr glossary.")
     ap.add_argument("glossary", help="path to <show>.json")
     ap.add_argument("--titles", metavar="FILE", help="JSON list of wiki titles to check instead of the cache")
+    ap.add_argument("--fix", action="store_true", help="remove the reported entries from `names` (logs .cleanup.json)")
     a = ap.parse_args()
     titles = None
     if a.titles:
@@ -197,11 +276,13 @@ def main() -> None:
         if not isinstance(titles, list):
             print(json.dumps({"note": "titles-unreadable: expected a JSON list"}), flush=True)
             sys.exit(2)
-    rep = audit(a.glossary, titles)
+    rep = fix(a.glossary, titles) if a.fix else audit(a.glossary, titles)
     print(json.dumps(rep, ensure_ascii=False), flush=True)
     if rep.get("note", "").startswith("load-failed"):
         sys.exit(2)
-    sys.exit(1 if rep.get("junk_count") else 0)
+    if a.fix and (rep.get("cleanup") or {}).get("removed"):
+        sys.exit(0)  # the junk that was reported is gone: the stage is clean
+    sys.exit(1 if (rep.get("junk_count") or rep.get("unevaluated")) else 0)
 
 
 if __name__ == "__main__":

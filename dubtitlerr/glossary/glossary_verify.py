@@ -774,6 +774,107 @@ def apply_results(gloss: dict, results: dict) -> dict:
     return g
 
 
+# --- bounded flag storage (P24) -------------------------------------------------------
+#
+# VERIFY/ACQUIRE re-run every sweep, and any term the wiki still cannot settle is proposed
+# and flagged again: Frieren reached 798 queued entries of which ~666 were guard verdicts
+# (english-word, below-floor, sentence-initial-only, ...). Those classes carry NO human
+# decision -- they say "this is not a name", they are recomputed deterministically every
+# run, and nobody can act on them. Kept as entries they bury the ~30 real review items and
+# grow without bound.
+#
+# So on WRITE (not in apply_results, which stays pure and cheap) the guard classes are moved
+# out of `flagged` into `archived_flags`: counts per class plus a total, recomputed each run
+# so a steady state is stable. The full entries are appended to `<glossary>.archived.jsonl`
+# beside the file, deduplicated by term+reason, so the evidence the queue used to hold is
+# preserved without the pile. Entry-form `flagged` is left for the classes a human decides.
+ARCHIVED_FLAG_REASONS = frozenset(
+    {
+        "english-word",
+        "sentence-initial-only",
+        "common-word",
+        "below-floor",
+        "no-match",
+        "no-wiki-match",
+    }
+)
+
+
+def flag_reason(meta) -> str:
+    """The reason of a `flagged` entry, tolerating the legacy bare-string form."""
+    return meta if isinstance(meta, str) else str((meta or {}).get("reason") or "")
+
+
+def _archived_entries_by_key(path: str) -> set:
+    """(term, reason) pairs already in the archive log, so a rerun appends nothing twice."""
+    keys = set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    doc = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(doc, dict):
+                    keys.add((str(doc.get("term", "")).lower(), str(doc.get("reason", ""))))
+    except OSError:
+        pass
+    return keys
+
+
+def finalize_flags(gloss: dict, gloss_path: str | None = None) -> dict:
+    """Route guard-classified flags into ``archived_flags`` counts; keep decisions as entries.
+
+    Mutates ``gloss`` in place (guard entries move into ``archived_flags``; decision
+    entries stay in ``flagged``) and returns the report ``{"archived": n, "counts": {...},
+    "flagged": n}``. With ``gloss_path`` the full entries are appended to
+    ``<glossary>.archived.jsonl`` -- every distinct term+reason once -- so the archive stays
+    bounded while the evidence is preserved.
+    """
+    flagged = gloss.get("flagged")
+    counts: dict[str, int] = {}
+    if not isinstance(flagged, dict):
+        flagged = {}
+    kept, archived = {}, []
+    for term, meta in flagged.items():
+        reason = flag_reason(meta)
+        if reason in ARCHIVED_FLAG_REASONS:
+            counts[reason] = counts.get(reason, 0) + 1
+            entry = {"term": term}
+            entry.update(meta if isinstance(meta, dict) else {"reason": meta})
+            entry["reason"] = reason
+            archived.append(entry)
+        else:
+            kept[term] = meta
+    if kept:
+        gloss["flagged"] = kept
+    else:
+        gloss.pop("flagged", None)
+    if archived:
+        gloss["archived_flags"] = {"counts": dict(sorted(counts.items())), "total": len(archived)}
+        if gloss_path:
+            _append_archived(gloss_path + ".archived.jsonl", archived)
+    # An earlier run's counts are KEPT when this run archives nothing: VERIFY marks a term
+    # `verified` and never re-adjudicates it, so a rerun sees no guard verdicts at all and
+    # dropping the record would make the archive vanish on the second sweep.
+    return {"archived": len(archived), "counts": dict(sorted(counts.items())), "flagged": len(kept)}
+
+
+def _append_archived(path: str, entries: list) -> None:
+    """Append archive evidence, one JSON object per line, skipping pairs already logged."""
+    seen = _archived_entries_by_key(path)
+    fresh = [e for e in entries if (str(e.get("term", "")).lower(), str(e.get("reason", ""))) not in seen]
+    if not fresh:
+        return
+    at = round(time.time(), 3)
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            for entry in fresh:
+                f.write(json.dumps({"at": at, **entry}, ensure_ascii=False, sort_keys=True) + "\n")
+    except OSError:
+        pass  # the counts still record what moved; a lost audit line must not fail the write
+
+
 def _clean_title(title: str) -> str:
     return re.sub(r"\s*\(\d{4}\)|\s*\{[^}]*\}", "", title).strip()
 
@@ -1671,6 +1772,8 @@ def _verify(gloss_path: str, override: str | None = None, force: bool = False) -
         malformed += bad
     new = apply_results(gloss, results)
     new.setdefault("wiki", api)
+    # P24: guard verdicts become counts, not entries (evidence moves to .archived.jsonl).
+    archived = finalize_flags(new, gloss_path)
     # Imported at call time for the same cycle reason as is_expansion below.
     from dubtitlerr.glossary.glossary_acquire import _write_json
 
@@ -1706,6 +1809,7 @@ def _verify(gloss_path: str, override: str | None = None, force: bool = False) -
         **_blocked_report(changed, results, universe),
         **({"common_word": _common_word_block(common_word_blocked)} if cw_on else {}),
         "flagged": len(new.get("flagged", {})),
+        **({"archived_flags": archived["counts"]} if archived["archived"] else {}),
         **({"pending": pending} if pending else {}),
         **({"malformed": malformed} if malformed else {}),
         **({"note": "stopped"} if stopped else {}),
