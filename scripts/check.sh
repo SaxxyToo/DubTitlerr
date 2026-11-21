@@ -1,7 +1,7 @@
 #!/bin/sh
 # The checks a change must pass before it is pushed -- the same ones CI runs.
 #
-#   scripts/check.sh          ruff, then the full Python suite
+#   scripts/check.sh          ruff lint + format, then the full Python suite
 #   scripts/check.sh --fast   ruff only (what the pre-commit hook runs)
 #   scripts/check.sh --dash   also the shell-loop tests under dash, the image's /bin/sh, in a
 #                             throwaway Debian container (needs docker; CI's Ubuntu runner is
@@ -21,8 +21,10 @@ PY=${CHECK_PYTHON:-3.13}
 run_ruff() {
 	if command -v uv >/dev/null 2>&1; then
 		uv run -q --with "ruff==$RUFF_VERSION" --no-project ruff check .
+		uv run -q --with "ruff==$RUFF_VERSION" --no-project ruff format --check .
 	else
 		python3 -m ruff check .
+		python3 -m ruff format --check .
 	fi
 }
 
