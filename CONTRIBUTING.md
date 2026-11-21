@@ -11,6 +11,8 @@ GPL-3.0. Keep the upstream credit.
 ## Setup
 
 - **Python 3.11 or newer.** `uv` is what the checks use; `pip install -e ".[dev]"` works too.
+  In-process ASR (`ASR_BACKEND=local`) needs the `local` extra, so a machine that runs the
+  pipeline locally installs `.[dev,local]`; endpoint-only work and the test suite do not.
 - **ffmpeg and mkvtoolnix** if you are exercising the pipeline (the images bake both in).
 - **Docker** only if you are testing the images or the shell loops under dash.
 - The repair stage calls an OpenAI-compatible chat endpoint; tests mock every model call and need

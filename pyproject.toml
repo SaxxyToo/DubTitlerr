@@ -8,7 +8,11 @@ license = { file = "LICENSE" }
 # importing the package). tests/test_version.py fails if this resolution or the lockfile drifts.
 dynamic = ["version"]
 requires-python = ">=3.11"
-dependencies = ["pysubs2>=1.7", "faster-whisper>=1.2", "jellyfish>=1.0"]
+# Local ASR (faster-whisper -> CTranslate2) is deliberately NOT a base dependency: the
+# pipeline imports it lazily (ASR_BACKEND=local only) and the endpoint-only lite image, CI
+# and most contributors never need the multi-hundred-MB native stack. Install it with the
+# `local` extra: pip install -e ".[dev,local]".
+dependencies = ["pysubs2>=1.7", "jellyfish>=1.0"]
 [project.scripts]
 dubtitlerr = "dubtitlerr.__main__:main"
 
@@ -19,6 +23,10 @@ Issues = "https://github.com/SaxxyToo/DubTitlerr/issues"
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+# faster-whisper for ASR_BACKEND=local (in-process transcription). The lite image and a
+# contributor's first `pip install -e ".[dev]"` skip it; a machine that runs the local
+# backend installs `.[local]` (or the builder image, which ships it already).
+local = ["faster-whisper>=1.2"]
 # analysis: tools/ scripts only (timing_compare.py's --vad webrtcvad backend), never
 # imported by the live pipeline. Split out because webrtcvad is a C-extension with no
 # prebuilt wheel for this repo's py3.14 dev venv (see tools/vad.py's module docstring) --
@@ -59,3 +67,70 @@ select = ["E", "F", "I", "W", "UP", "B"]
 # The existing scripts use a deliberate terse one-liner house style
 # (`if x: return`, `a; b`). Keep the real-bug rules; don't fight the style.
 ignore = ["E701", "E702"]
+
+[tool.ruff.format]
+# `ruff format --check .` is a gate in CI and scripts/check.sh. This exclude list is a
+# BASELINE, not policy: these files predate the gate and wait for a dedicated reformat PR
+# (2013 changed lines -- a mechanical sweep that size would collide with every open branch).
+# Shrink it, never grow it: format a file you are already editing and delete its line here.
+# A new file must be formatted.
+exclude = [
+    "dubtitlerr/core/atomic_file.py",
+    "dubtitlerr/core/common.py",
+    "dubtitlerr/core/heartbeat.py",
+    "dubtitlerr/core/notify.py",
+    "dubtitlerr/core/unresolved.py",
+    "dubtitlerr/glossary/glossary_acquire.py",
+    "dubtitlerr/glossary/mine_glossary.py",
+    "dubtitlerr/pipeline/boilerplate.py",
+    "dubtitlerr/pipeline/dub_signs_merge.py",
+    "dubtitlerr/pipeline/gate_fix.py",
+    "dubtitlerr/pipeline/mux.py",
+    "dubtitlerr/pipeline/publish_gate.py",
+    "dubtitlerr/pipeline/reflow.py",
+    "dubtitlerr/pipeline/repair.py",
+    "dubtitlerr/review/review_apply.py",
+    "dubtitlerr/review/review_auth.py",
+    "dubtitlerr/review/review_requests.py",
+    "dubtitlerr/review/review_status.py",
+    "dubtitlerr/review/review_webhooks.py",
+    "dubtitlerr/settings/settings_api.py",
+    "dubtitlerr/settings/settings_notifications.py",
+    "tests/test_acquire_cache.py",
+    "tests/test_asr_bakeoff.py",
+    "tests/test_boilerplate.py",
+    "tests/test_decisions.py",
+    "tests/test_dub_signs_merge.py",
+    "tests/test_gate_fix.py",
+    "tests/test_gate_fix_merge.py",
+    "tests/test_generate.py",
+    "tests/test_generate_only_re.py",
+    "tests/test_gen_loop_requests.py",
+    "tests/test_gen_loop_runtime_env.py",
+    "tests/test_gen_loop_set_e.py",
+    "tests/test_glossary_acquire.py",
+    "tests/test_glossary_consequences.py",
+    "tests/test_merge_pass.py",
+    "tests/test_merge_pass_runtime_env.py",
+    "tests/test_mine_glossary.py",
+    "tests/test_mux.py",
+    "tests/test_public_repo_hygiene.py",
+    "tests/test_publish_gate.py",
+    "tests/test_references_report.py",
+    "tests/test_reftracks.py",
+    "tests/test_render_readme_table.py",
+    "tests/test_repair.py",
+    "tests/test_repair_dub_vouched.py",
+    "tests/test_repair_transport_retry.py",
+    "tests/test_review_requests.py",
+    "tests/test_review_settings.py",
+    "tests/test_review_webhooks.py",
+    "tests/test_settings_secret_leaks.py",
+    "tests/test_wiki_scope.py",
+    "tools/asr_bakeoff.py",
+    "tools/bakeoff.py",
+    "tools/glossary_score.py",
+    "tools/references_report.py",
+    "tools/timing_compare.py",
+    "tools/vad.py",
+]
