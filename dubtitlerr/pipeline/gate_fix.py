@@ -144,6 +144,14 @@ GATE_MAX_DUR = publish_gate.MAX_DUR
 # character.
 RUN_STRAYS = 2
 
+# How far before its own start a card may claim an ASR word. The assembler puts the card
+# boundary at the segment boundary and a word at its own onset, so the two disagree by a
+# few frames: Cyberpunk S02E01's card #101 ("I need you." over 22.1 s) starts at 395.70 s
+# while its first word "I" starts at 395.12 s. Without that word the card's text matches no
+# word run at all, the repetition trim cannot fire, and the card was reported unfixable
+# forever. A word starting more than a second before its card is a different card's word.
+WORDS_LEAD = 1.0
+
 # `publish_gate.evaluate` reports faults as prose. These are the ones a layout repair can
 # address; anything else is a different failure class and must not be attempted.
 _LAYOUT_FAIL = re.compile(
@@ -442,7 +450,7 @@ def fix_cues(cues, words_doc=None, max_line=GATE_MAX_LINE):
                 }
             )
             continue
-        words = card_split.card_words(words_doc, start, end) if words_doc else None
+        words = card_split.card_words(words_doc, start - WORDS_LEAD, end) if words_doc else None
         next_start = cues[index + 1][0] if index + 1 < len(cues) else None
         pieces = _pieces(text, start, end, words, next_start, is_last=index == len(cues) - 1)
         if pieces is None:

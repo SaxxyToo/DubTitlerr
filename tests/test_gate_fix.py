@@ -1061,3 +1061,26 @@ def test_the_live_86_eighty_six_scream_is_wrapped_and_the_episode_ships(tmp_path
     assert "\n" in scream[0], "the break is a line break, not a split card"
     assert scream[0].replace("\n", "") == "No" + "o" * 56, scream[0]
     assert max(len(ln) for ln in scream[0].split("\n")) <= publish_gate.MAX_LINE
+
+
+def test_the_live_cyberpunk_over_duration_card_is_ended_at_its_own_speech(tmp_path):
+    """Card #101, "I need you." displayed 22.13 s: the word stream says it four times.
+
+    There is no boundary to split at (two words) and a 22 s card is not shippable, so the
+    documented trade-off applies -- the card ends where its own first utterance ends. Text
+    unchanged; the later repetitions the card never carried stay unsubbed rather than
+    duplicating a word.
+    """
+    stem = _live_episode(tmp_path, "cyberpunk_s02e01_dubtitles.srt", words="cyberpunk_s02e01_words.json")
+    before_words = words_of(stem)
+    assert gate_fails(stem) == ["1 card(s) over 7.5s (max 22.1s)"], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["trim-end"]
+    fix = result["fixes"][0]
+    assert (round(fix["before"]["start"], 2), round(fix["before"]["dur"], 2)) == (395.7, 22.13)
+    assert round(fix["after"][0]["end"], 2) == 398.3, fix
+    assert gate_fails(stem) == []
+    assert words_of(stem) == before_words, "a trim may not change a word"
