@@ -220,6 +220,27 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 		echo "skip: already delivered $stem"
 		continue
 	fi
+	# A give-up is PARKED, not re-attempted every pass (gate_fix owns the record and the
+	# predicate). The verdict carries the code that produced it (tier versions +
+	# GATE_FIX_EPOCH), so an ordinary pass skips it and a deployed fix retries it exactly
+	# once. An explicit run request created after the park also retries it once. Saying
+	# "skip" here is what makes a parked episode visible without churning it.
+	if [ "${PUBLISH_GATE:-1}" != "0" ] && [ "${GATE_FIX:-1}" != "0" ]; then
+		_rel=${stem#"$ROOT_ABS"/}
+		_show=${_rel%%/*}
+		park_note=$(python3 -m dubtitlerr.pipeline.gate_fix --parked "$stem" --show "$_show" </dev/null 2>&1)
+		if [ $? -eq 0 ]; then
+			echo "skip: parked $(basename "$stem") — $park_note"
+			continue
+		fi
+		# A note here means a parked verdict exists but no longer stands (stamp changed or a
+		# newer run request): drop it so THIS pass's outcome decides -- deliver, or re-park
+		# under the current stamp.
+		if [ -n "$park_note" ]; then
+			echo "retry: parked $(basename "$stem") — $park_note"
+			python3 -m dubtitlerr.pipeline.gate_fix --unpark "$stem" </dev/null >/dev/null 2>&1 || true
+		fi
+	fi
 	if [ ! -f "$stem.eng.dubtitles.ass" ] && [ -f "$stem.eng.dubtitles.srt" ]; then
 		echo "### assemble $stem"
 		# Drop records from older runs so the crash fallbacks and the gates below only ever see
@@ -343,16 +364,24 @@ scan_out=$(find "$@" -type f -name "*.dubtitles.stages.json" -print0 |
 	xargs -0 -r python3 -c "
 import sys
 from dubtitlerr.core import common
-n = 0
+from dubtitlerr.pipeline import gate_fix
+failed = parked = 0
 for p in sys.argv[1:]:
     stem = p[: -len(common.STAGES_SUFFIX)]
-    if common.failed_stage(stem) is not None:
-        n += 1
-print(n)
+    if common.failed_stage(stem) is None:
+        continue
+    # A parked episode is visible but not churning: it is counted on its own line, not as
+    # a failure the pass keeps making no progress on.
+    if gate_fix.parked_state(stem)[0]:
+        parked += 1
+    else:
+        failed += 1
+print(failed, parked)
 " 2>/dev/null)
 scan_rc=$?
-# xargs may split a big library into several python runs, one count line each: sum them.
+# xargs may split a big library into several python runs, one count pair each: sum them.
 failed_count=$(printf '%s\n' "$scan_out" | awk '{ n += $1 } END { print n + 0 }')
+parked_count=$(printf '%s\n' "$scan_out" | awk '{ n += $2 } END { print n + 0 }')
 if [ "$scan_rc" -eq 0 ] && [ "${failed_count:-0}" -eq 0 ] && stop_requested; then
 	# stems skipped by a soft stop have no failure record, so COMPLETE would be misleading.
 	# Real failures win over this line: a count is more useful than "stopped" (see below).
@@ -361,17 +390,25 @@ elif [ "$scan_rc" -ne 0 ]; then
 	# never claim COMPLETE when the scan could not run (a broken `import common` used to
 	# fall through to a count of 0)
 	echo "MERGE PASS INCOMPLETE: failed-stage scan error"
+elif [ "${failed_count:-0}" -eq 0 ] && [ "${parked_count:-0}" -gt 0 ]; then
+	# Nothing is left to retry: the only open episodes gave up deterministically. They stay
+	# visible here and are retried by a version/epoch change or a run request -- never by
+	# the timer.
+	echo "MERGE PASS COMPLETE: $parked_count episode(s) parked (gate_fix gave up; a version bump or a run request retries them)"
 elif [ "${failed_count:-0}" -eq 0 ]; then
 	echo "MERGE PASS COMPLETE"
 else
-	echo "MERGE PASS INCOMPLETE: $failed_count episodes with a failed stage"
+	parked_note=""
+	[ "${parked_count:-0}" -gt 0 ] && parked_note=", $parked_count parked"
+	echo "MERGE PASS INCOMPLETE: $failed_count episodes with a failed stage$parked_note"
 fi
 echo "MERGE_PASS_DONE new=$((after - before)) total_done=$after $(date)"
 # Pass boundary report. Counts are the ones this pass already printed above (new stamps = delivered,
-# the failed-stage census, and the library-wide delivered total); reporting only, after the work.
+# the failed-stage census, the library-wide delivered total); reporting only, after the work.
 merge_new=$((after - before))
 merge_failed=${failed_count:-0}
-heartbeat_note merge-end --delivered "$merge_new" --failed "$merge_failed"
+merge_parked=${parked_count:-0}
+heartbeat_note merge-end --delivered "$merge_new" --failed "$merge_failed" --parked "$merge_parked"
 notify_send --event merge.completed \
-	--summary "merge pass: $merge_new delivered, $merge_failed failed, $after total done" \
-	--loop merge --counts "{\"delivered\": $merge_new, \"failed\": $merge_failed, \"total_done\": $after}"
+	--summary "merge pass: $merge_new delivered, $merge_failed failed, $merge_parked parked, $after total done" \
+	--loop merge --counts "{\"delivered\": $merge_new, \"failed\": $merge_failed, \"parked\": $merge_parked, \"total_done\": $after}"

@@ -132,6 +132,8 @@ def _fields(args):
             fields["merge_delivered"] = args.delivered
         if args.failed is not None:
             fields["merge_failed"] = args.failed
+        if args.parked is not None:
+            fields["merge_parked"] = args.parked
     return fields
 
 
@@ -147,6 +149,8 @@ def _parser():
     parser.add_argument("--shows", type=int, help="sweep-end: shows this sweep ran")
     parser.add_argument("--failed", type=int, help="sweep-end/merge-end: failures this pass recorded")
     parser.add_argument("--delivered", type=int, help="merge-end: episodes this pass delivered")
+    parser.add_argument("--parked", type=int,
+                        help="merge-end: episodes whose gate_fix give-up still stands")
     parser.add_argument("--loop", choices=["generate", "merge"], help="who is reporting (default: from the event)")
     return parser
 

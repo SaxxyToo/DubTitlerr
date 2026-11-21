@@ -53,7 +53,13 @@ def harness(tmp_path):
     config.mkdir()
     root = tmp_path / "library"
     (root / "Show").mkdir(parents=True)
-    (root / "Show" / "ep01.eng.dubtitles.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+    # A sidecar that PASSES the publish gate: these tests are about the environment a repair
+    # run sees, and a refused episode is now parked (so a later pass would skip it before
+    # repair ever starts, which is correct behaviour but not what this harness measures).
+    (root / "Show" / "ep01.eng.dubtitles.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello there.\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\nGood to see you.\n\n"
+        "3\n00:00:04,000 --> 00:00:05,000\nLet us begin.\n")
     bindir = tmp_path / "fakebin"
     bindir.mkdir()
     for tool in ("ffmpeg", "mkvmerge"):

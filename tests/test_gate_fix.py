@@ -6,7 +6,7 @@ pass otherwise parks it and forgets it. Every test here asserts the two properti
 the attempt safe to run automatically: the words never change, and nothing is written unless
 the result passes the gate.
 
-The padding cards are load-bearing: the gate also requires 65% of cards to carry sentence
+The padding cards are load-bearing: the gate also requires 60% of cards to carry sentence
 punctuation, so a five-cue fixture cannot absorb a split the way a 400-cue episode can.
 """
 
@@ -14,9 +14,11 @@ import json
 import os
 import shutil
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dubtitlerr.core.atomic_file import atomic_write
 from dubtitlerr.pipeline import gate_fix, publish_gate
 
 ASS_HEAD = (
@@ -571,3 +573,219 @@ def test_cue_faults_is_the_gates_own_budget():
     assert gate_fix.cue_faults("x" * 89, 3.0) == ["89 chars", "89-char line"]
     assert gate_fix.cue_faults("x", 8.0) == ["8.00s card"]
     assert gate_fix.cue_faults("Unseen\n" + "y" * 50, 3.0), "second line too long"
+
+
+# --- music-symbol cards: a marker is not dialogue -------------------------------------
+
+MUSIC = (os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts",
+                      "blue_eye_s01e02_music.srt"),
+         os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts",
+                      "blue_eye_s01e04_music.srt"))
+
+
+def _copy_episode(tmp_path, fixture, stem="ep01"):
+    d = tmp_path / "Show"
+    d.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(fixture, str(d / f"{stem}.eng.dubtitles.srt"))
+    return str(d / stem)
+
+
+def test_is_music_marker_only_accepts_text_with_no_word_character():
+    assert gate_fix.is_music_marker("♪")
+    assert gate_fix.is_music_marker("♪♪♪")
+    assert gate_fix.is_music_marker("♪ ♪")
+    assert gate_fix.is_music_marker("...")
+    assert not gate_fix.is_music_marker("42"), "a number is content"
+    assert not gate_fix.is_music_marker("♪ oh ♪"), "a word makes it dialogue"
+    assert not gate_fix.is_music_marker("")
+
+
+def test_the_live_blue_eye_files_pass_once_their_music_cards_are_dropped(tmp_path):
+    """The real 2026-11-20 refusals: E02's 29.9 s '♪' + 37.0 s '♪♪♪', E04's 37.0 s '♪♪♪'.
+
+    Real bytes from the library: the gate refuses each on the over-duration finding, and
+    the drop must remove exactly those cards and nothing else.
+    """
+    expected = ((MUSIC[0], 2), (MUSIC[1], 1))
+    for i, (fixture, drops) in enumerate(expected):
+        stem = _copy_episode(tmp_path / f"case{i}", fixture)
+        _, before = publish_gate.load_cues(stem)
+        assert gate_fails(stem) and "card(s) over 7.5s" in gate_fails(stem)[0], gate_fails(stem)
+
+        result = gate_fix.attempt(stem)
+
+        assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+        assert gate_fails(stem) == [], gate_fails(stem)
+        _, after = publish_gate.load_cues(stem)
+        assert len(after) == len(before) - drops
+        gone = [c for c in before if c not in after]
+        assert len(gone) == drops
+        assert all(not any(ch.isalnum() for ch in t) and (e - s) > 7.5 for s, e, t in gone)
+        assert [a["action"] for a in result["fixes"]] == ["drop-music"] * drops
+        audit = json.load(open(stem + ".dubtitles.gate-fix.json"))
+        assert audit["music_cues_dropped"] == drops, audit
+        assert "dropped" in audit["attempts"][-1]["summary"]
+
+
+def test_a_music_card_inside_the_duration_budget_is_left_alone(tmp_path):
+    """A short '♪♪' is harmless and ships; only an over-duration marker is dropped."""
+    cues = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
+    cues.append((50.0, 52.0, "♪♪"))
+    cues += [(60.0 + i, 61.0 + i, f"And line {i} again.") for i in range(PAD)]
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+    assert gate_fails(stem) == [], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_NOOP, result
+    assert read(stem + ".eng.dubtitles.ass") == before
+
+
+def test_an_over_duration_music_marker_is_dropped_through_the_song_policy(tmp_path):
+    """Two markers over the screen budget, in a file with nothing else wrong."""
+    cues = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
+    cues.append((100.0, 129.94, "♪"))
+    cues.append((130.0, 167.0, "♪♪♪"))
+    cues += [(180.0 + i, 181.0 + i, f"And line {i} again.") for i in range(PAD)]
+    stem = write_episode(tmp_path, cues)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["drop-music", "drop-music"]
+    assert gate_fails(stem) == []
+    bodies = [t for _, _, t in publish_gate.load_cues(stem)[1]]
+    assert "♪" not in bodies and "♪♪♪" not in bodies
+    assert "Line number 0 is spoken here." in bodies
+
+
+def test_a_music_drop_can_lift_a_file_over_the_punctuation_floor(tmp_path):
+    """Blue Eye S01E06's shape: 58.8% punctuated with two over-duration '♪♪' cards.
+
+    The punctuation finding is not a layout fault and is normally not attempted -- but when
+    the file also carries music markers, dropping them removes non-dialogue cards and the
+    honest ratio is recomputed. 60/100 after the drop clears the floor; the in-memory
+    re-gate is what decides, so a file that still fails writes nothing.
+    """
+    cues = [(float(i), float(i) + 1.0, "Ends here.") for i in range(60)]
+    cues += [(100.0 + i, 101.0 + i, "No terminal here") for i in range(40)]
+    cues.append((200.0, 237.0, "♪♪"))
+    cues.append((240.0, 277.0, "♪♪"))
+    assert len(cues) == 102
+    stem = write_episode(tmp_path, cues)
+    fails = gate_fails(stem)
+    assert any("card(s) over 7.5s" in f for f in fails), fails
+    assert any("sentence punctuation" in f for f in fails), fails
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["drop-music", "drop-music"]
+    assert gate_fails(stem) == []
+
+
+def test_a_music_drop_that_leaves_an_unfixable_card_writes_nothing(tmp_path):
+    """Drop candidates do not license a partial fix: one unfixable card scopes the pass out."""
+    cues = [(float(i), float(i) + 1.0, "Ends here.") for i in range(60)]
+    cues += [(100.0, 137.0, "♪♪")]
+    cues += [(150.0, 151.32, "Kek" * 149)]
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert read(stem + ".eng.dubtitles.ass") == before
+
+
+def test_an_ass_music_marker_is_deleted_from_its_dialogue_line(tmp_path):
+    """The mkv path: the marker's Dialogue line is removed and every other line is intact."""
+    cues = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
+    cues.append((100.0, 137.0, "♪♪♪"))
+    cues += [(150.0 + i, 151.0 + i, f"And line {i} again.") for i in range(PAD)]
+    stem = write_episode(tmp_path, cues)
+    before = dialogue_lines(stem)
+    assert len(before) == len(cues)
+    assert gate_fails(stem) == ["1 card(s) over 7.5s (max 37.0s)"], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    after = dialogue_lines(stem)
+    assert len(after) == len(before) - 1
+    assert not any("♪" in ln for ln in after)
+    assert gate_fails(stem) == []
+
+
+# --- a give-up is parked, not retried every pass --------------------------------------
+
+
+def test_a_give_up_is_parked_with_the_code_that_produced_it(tmp_path):
+    blob = "Kek" * 149
+    stem = write_episode(tmp_path, padded(100.0, 101.32, blob))
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE
+    doc = gate_fix.read_park(stem)
+    assert doc["parked"] is True, doc
+    assert doc["outcome"] == gate_fix.OUTCOME_UNFIXABLE
+    assert doc["fails"], "the parked record keeps the refusal it stands for"
+    assert doc["attempt_stamp"] == gate_fix.attempt_stamp()
+    assert doc["attempt_stamp"]["gate_fix_epoch"] == gate_fix.GATE_FIX_EPOCH
+    assert gate_fix.parked_state(stem)[0] is True
+
+
+def test_a_park_stops_standing_when_the_gate_fix_epoch_moves(tmp_path, monkeypatch):
+    """A deployed gate_fix change retries parked episodes exactly once."""
+    stem = write_episode(tmp_path, padded(100.0, 101.32, "Kek" * 149))
+    gate_fix.attempt(stem)
+    assert gate_fix.parked_state(stem)[0] is True
+
+    monkeypatch.setattr(gate_fix, "GATE_FIX_EPOCH", gate_fix.GATE_FIX_EPOCH + 1)
+
+    parked, note = gate_fix.parked_state(stem)
+    assert parked is False
+    assert "attempt stamp" in note
+
+
+def test_a_park_stops_standing_only_for_a_request_created_after_it(tmp_path, monkeypatch):
+    stem = write_episode(tmp_path, padded(100.0, 101.32, "Kek" * 149))
+    gate_fix.attempt(stem)
+    rdir = tmp_path / "requests"
+    rdir.mkdir()
+    monkeypatch.setenv("REQUESTS_DIR", str(rdir))
+    now = time.time()
+
+    old = rdir / "old.json"
+    old.write_text(json.dumps({"show": "Show"}))
+    os.utime(old, (now - 3600, now - 3600))
+    assert gate_fix.parked_state(stem, show="Show")[0] is True, "an older request changes nothing"
+
+    new = rdir / "new.json"
+    new.write_text(json.dumps({"show": "Show"}))
+    os.utime(new, (now + 120, now + 120))
+    parked, note = gate_fix.parked_state(stem, show="Show")
+    assert parked is False, "an explicit run request retries it"
+    assert "run request" in note
+
+    assert gate_fix.parked_state(stem, show="Another Show")[0] is True
+
+
+def test_a_fixed_episode_drops_its_parked_record(tmp_path):
+    sentence = "I'm not going to let go of my freedom."
+    cues = padded(100.0, 116.94, sentence)
+    words = [{"text": w, "start": 100.0 + i * 0.31, "end": 100.31 + i * 0.31, "prob": 0.9}
+             for i, w in enumerate(sentence.split())]
+    stem = write_episode(tmp_path, cues, words=words)
+    park_path = gate_fix._park_path(stem)
+    atomic_write(park_path, lambda f: f.write(json.dumps(
+        {"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old",
+         "attempt_stamp": gate_fix.attempt_stamp()})))
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert not os.path.exists(park_path), "a healed episode must not stay parked"
+
