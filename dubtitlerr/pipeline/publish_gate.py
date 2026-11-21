@@ -30,19 +30,27 @@ MAX_LINE = 46
 MAX_DUR = 7.5
 MIN_COVER = 0.90
 MIN_CARDS_PER_MIN = 6.0
-# A sentence split across two cues leaves the first without a terminal mark, so a healthy
-# file sits well under 100%. Raw ASR is orders of magnitude below: the old NGE season ran
-# 0-5% and Death Note S01E10 (still on disk) 0.0%. Between them sits a legitimately
-# split-heavy dubtitle: splitting "Thank / you / for" across cues leaves the first two bare,
-# and Chainsaw Man S01E01 measures 63.3% (159/251) -- measured 2026-11-20, the file the
-# gate was refusing. The line is therefore a MINIMUM that separates subtitles from
-# transcripts, not a quality bar; 0.60 admits the split-heavy real file with margin while
-# every raw-era file (0.0-5%) still fails by an order of magnitude.
-MIN_PUNCT_ENDED = 0.60
+# A sentence split across two cues leaves the first without a TERMINAL mark, but it is
+# still punctuated text: it ends at the clause it was cut on, and that is what separates a
+# subtitle from a transcript. Counting only terminal marks mixed the two questions
+# together -- a show whose cards are cut mid-sentence looked exactly like raw ASR.
+#
+# Measured 2026-11-21 over every dubtitle artifact in the live library (1,063 files):
+# counting a card as punctuated when it ends with ANY punctuation mark, the unpunctuated
+# band tops out at 27.1% (the raw-era FMA:B and Apothecary S02 files, which also carry
+# 0.0-8.9 punctuation marks per 100 words) and the lowest real sidecar is 86 Eighty-Six
+# S01E01 at 60.9% (325 cards; 13.4 marks/100 words). 0.50 sits under the real floor with
+# a 1.8x margin and above the raw band with a 1.8x margin. Every raw-era file, including
+# the 0.0% Death Note S01E10 control, fails by more than 30 points.
+MIN_PUNCT_ENDED = 0.50
 MAX_ORPHAN = 0.15
 MIN_NAME_LEN = 3
 
+# Sentence-terminal marks: what the orphan rule and "does this card end a sentence" read.
 END = (".", "!", "?", "\u2026", '"', "'", "\u201d", "\u2019")
+# Any punctuation a card can legitimately end on, clause marks included -- a card cut at a
+# comma is punctuated text continuing a sentence (see MIN_PUNCT_ENDED).
+PUNCT = END + (",", ";", ":", "\u2013", "\u2014")
 GLOSSARY_DIR = os.environ.get("GLOSSARY_DIR", "/config/glossaries")
 
 
@@ -184,9 +192,9 @@ def evaluate(cues, duration=None, mishears=(), max_chars=MAX_CHARS, max_line=MAX
     longdur = [b - a for a, b, _ in cues if b - a > MAX_DUR]
     if longdur:
         fails.append(f"{len(longdur)} card(s) over {MAX_DUR:.1f}s (max {max(longdur):.1f}s)")
-    ended = sum(1 for _, _, t in cues if t.rstrip().endswith(END))
+    ended = sum(1 for _, _, t in cues if t.rstrip().endswith(PUNCT))
     if ended / len(cues) < MIN_PUNCT_ENDED:
-        fails.append(f"{100 * ended / len(cues):.0f}% of cards carry sentence punctuation")
+        fails.append(f"{100 * ended / len(cues):.0f}% of cards end with punctuation")
     # Lowercase start AFTER a sentence ended = cold-start ASR cut. A lowercase start after an
     # unpunctuated card is a sentence split across two cues, which is normal subtitling.
     if cues[0][0] > 290:

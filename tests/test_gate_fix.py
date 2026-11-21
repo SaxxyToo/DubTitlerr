@@ -200,7 +200,7 @@ def test_a_non_layout_refusal_is_not_attempted(tmp_path):
     result = gate_fix.attempt(stem)
 
     assert result["outcome"] == gate_fix.OUTCOME_UNSUPPORTED, result
-    assert "sentence punctuation" in result["summary"]
+    assert "end with punctuation" in result["summary"]
     assert read(stem + ".eng.dubtitles.ass") == before
 
 
@@ -558,7 +558,7 @@ def test_split_fails_separates_layout_from_everything_else():
             "line of 446 chars (max 46)",
             "2 card(s) over 88 chars",
             "coverage 41% (last cue 600.0s of 1450.0s)",
-            "12% of cards carry sentence punctuation",
+            "12% of cards end with punctuation",
             "known mishear(s): oscar",
         ]
     )
@@ -659,22 +659,22 @@ def test_an_over_duration_music_marker_is_dropped_through_the_song_policy(tmp_pa
 
 
 def test_a_music_drop_can_lift_a_file_over_the_punctuation_floor(tmp_path):
-    """Blue Eye S01E06's shape: 58.8% punctuated with two over-duration '♪♪' cards.
+    """Blue Eye S01E06's shape: just under the floor, with two over-duration '♪♪' cards.
 
     The punctuation finding is not a layout fault and is normally not attempted -- but when
     the file also carries music markers, dropping them removes non-dialogue cards and the
-    honest ratio is recomputed. 60/100 after the drop clears the floor; the in-memory
-    re-gate is what decides, so a file that still fails writes nothing.
+    honest ratio is recomputed. 50/102 is 49%, 50/100 after the drop is 50% and clears the
+    floor; the in-memory re-gate is what decides, so a file that still fails writes nothing.
     """
-    cues = [(float(i), float(i) + 1.0, "Ends here.") for i in range(60)]
-    cues += [(100.0 + i, 101.0 + i, "No terminal here") for i in range(40)]
+    cues = [(float(i), float(i) + 1.0, "Ends here.") for i in range(50)]
+    cues += [(100.0 + i, 101.0 + i, "No terminal here") for i in range(50)]
     cues.append((200.0, 237.0, "♪♪"))
     cues.append((240.0, 277.0, "♪♪"))
     assert len(cues) == 102
     stem = write_episode(tmp_path, cues)
     fails = gate_fails(stem)
     assert any("card(s) over 7.5s" in f for f in fails), fails
-    assert any("sentence punctuation" in f for f in fails), fails
+    assert any("end with punctuation" in f for f in fails), fails
 
     result = gate_fix.attempt(stem)
 
@@ -953,7 +953,7 @@ def test_an_uncorrectable_refusal_still_parks(tmp_path, monkeypatch):
     stem = write_episode(tmp_path, cues)
     write_glossary(tmp_path, monkeypatch, hard_fixes={}, names=["Linea", "Frieren"])
     before = read(stem + ".eng.dubtitles.ass")
-    assert any("sentence punctuation" in f for f in gate_fails(stem)), gate_fails(stem)
+    assert any("end with punctuation" in f for f in gate_fails(stem)), gate_fails(stem)
 
     result = gate_fix.attempt(stem)
 
@@ -970,7 +970,7 @@ def test_a_partial_correction_is_never_written(tmp_path, monkeypatch):
     stem = write_episode(tmp_path, cues)
     write_glossary(tmp_path, monkeypatch, hard_fixes={"zine": "Sein"}, names=["Sein"])
     before = read(stem + ".eng.dubtitles.ass")
-    assert any("sentence punctuation" in f for f in gate_fails(stem)), gate_fails(stem)
+    assert any("end with punctuation" in f for f in gate_fails(stem)), gate_fails(stem)
 
     result = gate_fix.attempt(stem)
 
@@ -1018,3 +1018,46 @@ def test_a_glossary_change_unparks_a_parked_episode(tmp_path, monkeypatch):
     result = gate_fix.attempt(stem)
     assert result["outcome"] == gate_fix.OUTCOME_CORRECTED, result
     assert gate_fix.parked_state(stem)[0] is False
+
+
+# --- the three 2026-11-21 parks, on the library's own bytes ---------------------------
+#
+# Each of these files was parked on a real episode and could not be resolved by code:
+# 86 Eighty-Six S01E01 (punctuation + a 58-character scream), Cyberpunk S02E01 (a 22.1 s
+# two-word card with no boundary to split at), Frieren S02E01 (romaji ending-song lyrics
+# reported as a known mishear). They are the exact artifacts, trimmed only where a file is
+# a byproduct (the Cyberpunk word list is its 340-460 s window, verbatim).
+
+LIVE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts")
+
+
+def _live_episode(tmp_path, fixture, words=None):
+    d = tmp_path / "Show"
+    d.mkdir(parents=True, exist_ok=True)
+    ext = ".ass" if fixture.endswith(".ass") else ".srt"
+    dest = str(d / f"ep01.eng.dubtitles{ext}")
+    shutil.copyfile(os.path.join(LIVE, fixture), dest)
+    if words:
+        shutil.copyfile(os.path.join(LIVE, words), str(d / "ep01.dubtitles.words.json"))
+    return str(d / "ep01")
+
+
+def test_the_live_86_eighty_six_scream_is_wrapped_and_the_episode_ships(tmp_path):
+    """The park: `line of 58 chars` plus a punctuation refusal. The punctuation measure was
+    wrong (it counted only terminal marks on a file cut at commas); the line is a
+    repeated-character run the gate_fix wrap exists for. Both now resolve without a model.
+    """
+    stem = _live_episode(tmp_path, "e86_s01e01_dubtitles.ass")
+    assert gate_fails(stem) == ["line of 58 chars (max 46)"], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["wrap-run"]
+    assert gate_fails(stem) == []
+    _, after = publish_gate.load_cues(stem)
+    scream = [t for _, _, t in after if t.startswith("Noooo")]
+    assert len(scream) == 1
+    assert "\n" in scream[0], "the break is a line break, not a split card"
+    assert scream[0].replace("\n", "") == "No" + "o" * 56, scream[0]
+    assert max(len(ln) for ln in scream[0].split("\n")) <= publish_gate.MAX_LINE
