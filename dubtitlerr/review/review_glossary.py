@@ -26,7 +26,7 @@ import re
 import shutil
 import unicodedata
 
-from dubtitlerr.core import decisions
+from dubtitlerr.core import decisions, unanchored
 from dubtitlerr.core.common import MODE_KEEP, atomic_write_bytes, log
 from dubtitlerr.glossary import glossary_acquire, glossary_lock, glossary_verify
 
@@ -155,6 +155,12 @@ def read_show(show):
         "wiki": cfg["wiki"] if isinstance(cfg.get("wiki"), str) else "",
         "flagged": queue,
         "flagged_total": len(queue),
+        # The one-click reply to "every target was skipped for want of a reference":
+        # repair.record_unanchored() appends the affected episodes, and this is the read
+        # side the Glossary page turns into a banner. An enabled show keeps its history
+        # but renders no banner.
+        "unanchored_repair": bool(cfg.get("unanchored_repair")),
+        "unanchored": unanchored.read(show),
     }
 
 
@@ -221,6 +227,16 @@ def apply_op(cfg, req):
 
     ``term`` and ``value`` are the validated (trimmed, NFC) strings; ``value`` is None unless the op carries one."""
     op, key = req.get("op"), req.get("key")
+    # A whole-show switch, not a term edit: no term, no list, exactly one boolean. It lives
+    # beside the term ops because it is the same glossary file under the same lock and
+    # version chain, and because the UI's banner is one click away from this payload.
+    if op == "set" and key == "unanchored_repair":
+        value = req.get("value")
+        if not isinstance(value, bool):
+            raise _Refused(400, "unanchored_repair must be true or false")
+        new = dict(cfg)
+        new["unanchored_repair"] = value
+        return new, None, value
     if op not in OPS:
         raise _Refused(400, "op must be add, update or delete")
     if key not in EDITABLE:
@@ -352,12 +368,14 @@ def write_show(body, operator, role="user"):
             raw, cfg = _load(show)  # re-read under the lock: the version check and the write see one file
             if _version(raw) != expected:
                 return 409, {"error": "version conflict", "version": _version(raw)}
-            new, term, value, decided, wiki = cfg, None, None, None, None
+            new, term, value, decided, wiki, flag = cfg, None, None, None, None, None
             if review_op:
                 new, term, decided = apply_review(cfg, body)
             else:
                 if "op" in body or "wiki" not in body:
                     new, term, value = apply_op(cfg, body)
+                    if body.get("op") == "set" and body.get("key") == "unanchored_repair":
+                        flag = bool(value)
                 if "wiki" in body:
                     wiki = _wiki(body["wiki"])
                     new = dict(new)
@@ -388,6 +406,11 @@ def write_show(body, operator, role="user"):
         log(
             f"glossary edit: at={at} operator={operator} show={json.dumps(show)} op={'set' if wiki else 'delete'} "
             f"key=wiki value={json.dumps(wiki, ensure_ascii=False)} backup={backup}"
+        )
+    if flag is not None:
+        log(
+            f"glossary edit: at={at} operator={operator} show={json.dumps(show)} op=set "
+            f"key=unanchored_repair value={json.dumps(flag)} backup={backup}"
         )
     return 200, {
         "ok": True,

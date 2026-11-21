@@ -12,7 +12,7 @@ import os
 import pytest
 import repair_ref_stub
 
-from dubtitlerr.core import common, decisions, unresolved
+from dubtitlerr.core import common, decisions, unanchored, unresolved
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import reflow, repair
 
@@ -170,6 +170,7 @@ def test_glossary_for_finds_show_glossary_by_walking_up(tmp_path):
     ep.write_text("x")
     g = repair.glossary_for(str(ep), str(gdir))
     assert g["names"] == ["Luffy"]
+    assert g["glossary_id"] == "One Pace"
 
 
 def test_glossary_for_missing_is_noop(tmp_path):
@@ -2648,6 +2649,66 @@ def test_the_refusal_is_narrow_and_a_quiet_episode_still_rewrites(tmp_path, monk
     assert repair.process(conf_path) == "repaired"
     summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
     assert summary["repaired"] == 0 and summary["skipped_no_ref"] == 1
+
+
+def test_an_unanchored_episode_records_the_show_for_the_ui(tmp_path, monkeypatch):
+    """The log warning's remedy must be one click away in the review UI.
+
+    Breaks if process() stops calling record_unanchored() when every target was skipped
+    for want of a reference, or if the record omits the show/episode the banner needs.
+    """
+    stem = str(tmp_path / "ep_dubonly")
+    conf_path = stem + repair.CONF_SUFFIX
+    srt_path = stem + repair.SRT_SUFFIX
+    _write_conf(
+        conf_path,
+        srt_path,
+        [{"start": 0.0, "end": 2.0, "text": "misheard lyne", "avg_logprob": -0.9, "no_speech_prob": 0.1}],
+    )
+    g = glossary.load_dict({"show": "Frieren: Beyond Journey's End"})
+    # The review UI lists shows by the glossary FILE stem, not the display title; the record
+    # must use the same id or the banner lands on a row that does not exist.
+    gid = "Frieren Beyond Journey's End (2023) [tvdbid-424536]"
+    g["glossary_id"] = gid
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
+    monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_dubonly.mkv"))
+    monkeypatch.setattr(repair, "glossary_for", lambda video: g)
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
+
+    def no_llm(*a, **k):
+        raise AssertionError("an unanchored target must be skipped before the LLM")
+
+    monkeypatch.setattr(repair, "llm", no_llm)
+
+    assert repair.process(conf_path) == "repaired"
+    got = unanchored.read(gid)
+    assert got["episodes"] == 1
+    assert got["last_episode"] == "ep_dubonly"
+    assert got["targets"] == 1
+    assert unanchored.read("Frieren: Beyond Journey's End") == {}
+
+
+def test_an_anchored_episode_records_nothing(tmp_path, monkeypatch):
+    """Guard: a reference means the show is not a dub-only case and the banner must stay away."""
+    stem = str(tmp_path / "ep_anchored")
+    conf_path = stem + repair.CONF_SUFFIX
+    srt_path = stem + repair.SRT_SUFFIX
+    _write_conf(
+        conf_path,
+        srt_path,
+        [{"start": 0.0, "end": 2.0, "text": "line", "avg_logprob": -0.9, "no_speech_prob": 0.1}],
+    )
+    g = glossary.load_dict({"show": "Frieren"})
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
+    monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_anchored.mkv"))
+    monkeypatch.setattr(repair, "glossary_for", lambda video: g)
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 2.0, "the official sub")]))
+    monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "")
+
+    assert repair.process(conf_path) == "repaired"
+    assert unanchored.read("Frieren") == {}
 
 
 def test_an_llm_empty_card_still_ships_a_stored_human_correction(tmp_path, monkeypatch):

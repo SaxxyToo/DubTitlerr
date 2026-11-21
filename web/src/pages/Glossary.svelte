@@ -62,6 +62,10 @@
   let status = $state('');
   let errorMsg = $state('');
   let note = $state('');
+  let unanchored = $state<{ episodes?: number; targets?: number; last_episode?: string; last_at?: string }>(
+    {},
+  );
+  let unanchoredRepair = $state(false);
   let loading = $state(false);
   let saving = $state(false);
   let newTerm = $state('');
@@ -107,6 +111,8 @@
         wiki?: string;
         flagged?: ReviewItem[];
         flagged_total?: number;
+        unanchored?: { episodes?: number; targets?: number; last_episode?: string; last_at?: string };
+        unanchored_repair?: boolean;
       };
       version = data.version;
       names = data.names;
@@ -114,6 +120,8 @@
       hardFixes = data.hard_fixes;
       reviewItems = data.flagged ?? [];
       flaggedTotal = data.flagged_total ?? reviewItems.length;
+      unanchored = data.unanchored ?? {};
+      unanchoredRepair = data.unanchored_repair ?? false;
       wiki = data.wiki ?? '';
       if (clearForm) {
         wikiDraft = wiki;
@@ -205,6 +213,39 @@
       saving = false;
       await tick();
       searchEl?.focus(); // the card that held the button is gone; keep focus inside the editor
+    }
+  }
+
+  // The repair stage records a show whose episodes had no English reference; this is the
+  // one-click remedy. It is the same glossary file and version chain as a term edit, so a
+  // concurrent save still 409s instead of being overwritten.
+  async function enableUnanchored() {
+    if (saving) return;
+    errorMsg = '';
+    status = '';
+    note = '';
+    saving = true;
+    try {
+      await api('/api/glossary', {
+        show,
+        op: 'set',
+        key: 'unanchored_repair',
+        value: true,
+        expected_version: version,
+      });
+      await loadDetail({ quiet: true });
+      note =
+        'Unanchored repair is on. It applies to episodes repaired from now on; re-run repair on the affected episodes to improve them.';
+    } catch (exc) {
+      if (exc instanceof ApiError) {
+        // 409: someone else saved first. Reload their version, then say so as an error, not a success.
+        if (exc.status === 409) await loadDetail({ quiet: true, clearForm: false });
+        errorMsg = describeError(exc.status, exc.payload as { error?: string });
+      } else {
+        errorMsg = exc instanceof Error ? exc.message : 'Request failed. Please try again.';
+      }
+    } finally {
+      saving = false;
     }
   }
 
@@ -354,6 +395,22 @@
         /></label
       >
     </div>
+
+    {#if show && !loading && unanchored.episodes && !unanchoredRepair}
+      <div class="notice info-notice" role="status">
+        <span>
+          <strong>{unanchored.episodes}</strong>
+          {unanchored.episodes === 1 ? 'episode has' : 'episodes have'}
+          no English subtitle to anchor repair, so names can stay misheard. Enable unanchored repair for this show?
+          It repairs from the glossary alone — wider guesses, fewer missed names.
+        </span>
+        <button class="primary" type="button" disabled={saving} onclick={() => void enableUnanchored()}>
+          Enable unanchored repair
+        </button>
+      </div>
+    {:else if show && !loading && unanchoredRepair && unanchored.episodes}
+      <p class="page-sub">Unanchored repair is on for this show.</p>
+    {/if}
 
     {#if loading}
       <p class="page-sub">Loading glossary…</p>

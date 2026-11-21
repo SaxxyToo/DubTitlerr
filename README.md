@@ -153,7 +153,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Then open `http://<host>:8842/review/setup` to create the admin account. `compose.yaml` and `.env.example` carry the full variable set; [Reference](docs/wiki/Reference.md) explains each one, and [Your first show](docs/wiki/Your-First-Show.md) is the end-to-end walkthrough.
+Then open `http://<host>:8842/review/setup` to create the admin account. You do not need to write an order file first: if `anime_order.txt` is missing, the first sweep queues every show folder under `ANIME_ROOT` that holds a video, newest first. `compose.yaml` and `.env.example` carry the full variable set; [Reference](docs/wiki/Reference.md) explains each one, and [Your first show](docs/wiki/Your-First-Show.md) is the end-to-end walkthrough.
 
 ## Documentation
 

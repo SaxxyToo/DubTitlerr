@@ -97,6 +97,10 @@ echo 'Show Name (Year)' > ~/dubtitlerr/anime_order.txt
 
 Nothing else goes in this file yet. One show is the whole point of this lesson.
 
+If you skip this step, the first sweep builds the file from the library tree: every show
+folder under `ANIME_ROOT` that holds a video, newest first. The lesson still works; it just
+starts with whichever show was updated last instead of the one you chose.
+
 ---
 
 ## Step 3 — Start the container

@@ -359,6 +359,15 @@ while :; do
 			${WATCH_QUEUE_PIN:+--pin "$WATCH_QUEUE_PIN"} </dev/null ||
 			echo "  watch_queue declined to write (keeping the existing order file)"
 	fi
+	# Fresh install with no media server: the watch queue had nothing to say, so build a
+	# queue from the library tree itself (newest show first). It never overwrites an
+	# existing order file, and a failed scan falls through to the idle below.
+	if [ "$sweep" -eq 1 ] && [ ! -f "$ORDER" ]; then
+		echo "#### LIBRARY QUEUE $(date)"
+		ANIME_ROOT="$ANIME" ANIME_ORDER="$ORDER" python3 -m dubtitlerr.pipeline.library_queue \
+			--root "$ANIME" --out "$ORDER" </dev/null ||
+			echo "  library_queue could not build $ORDER"
+	fi
 	if [ "$sweep" -eq 1 ] && [ ! -f "$ORDER" ]; then
 		echo "gen_loop: no order file $ORDER — idle 300s"
 		# Liveness only: no sweep has completed, so /healthz stays "no sweep has completed yet"

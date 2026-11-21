@@ -39,6 +39,10 @@ captions** is better than an anchor: that episode can be sourced rather than gen
 The next repair pass sends glossary-only prompts for unanchored lines instead of skipping
 them.
 
+The Glossary page also shows this as a one-click banner when the repair stage has recorded
+affected episodes (`/config/unanchored.jsonl`, append-only). The JSON key remains the source
+of truth and is the way to set it from a script.
+
 **Know the trade.** Glossary-only repair can fabricate names — measured turning `Oimo` into
 `Zoro`. Review the results rather than turning this on and walking away. Reasoning:
 [Why it works this way](Why-It-Works-This-Way.md#anchored-and-unanchored-repair).
@@ -51,6 +55,30 @@ install**: it is committed to git and reviewable, where the global flag is host
 configuration that a `git pull` cannot show you. If an unanchored repair ships
 something wrong, the recovery is a `reject` verdict recorded with `decisions.record`
 followed by `review_apply.py`, not disabling the flag.
+
+---
+
+## Use a dub with no audio language tag
+
+**Problem:** the file's only audio track has no language tag (`und`, or none at all). The
+selector refuses it as a sub-only release and the episode is skipped with `no-eng-dub`.
+
+**Check what is there:**
+
+```sh
+ffprobe -v error -select_streams a \
+  -show_entries stream=index:stream_tags=language,title \
+  -of default=noprint_wrappers=1 "Show - S01E01.mkv"
+```
+
+A track whose **title** says English or Dub is accepted automatically, even when the language
+tag is missing — the title is evidence. A track with neither a tag nor a titled language is a
+guess: set **Settings > Library > Use a lone untagged track** (`UND_AUDIO_AS_DUB=1`) only when
+the release is dub-only. A Japanese-only file would be transcribed as English and produce
+garbage.
+
+`REQUIRE_ENG=0` remains the blunt override: it takes the first audio stream whatever its tag.
+Prefer the setting above, which fires only when there is exactly one audio track.
 
 ---
 
@@ -112,6 +140,12 @@ One Pace (1999)
 Cowboy Bebop (1998)
 # Trigun (1998)   <- queued but paused
 ```
+
+**No media server?** You do not have to write this file by hand. If `anime_order.txt` is
+missing, the generate loop builds it from the top level of `ANIME_ROOT` on the first sweep:
+every folder holding a video becomes a show, newest episode first. It never overwrites an
+existing file. Once Plex, WatchState or Jellyfin is configured, the watch queue owns the
+file again.
 
 **Jump to where you actually are** with `/config/season_priority.txt`:
 

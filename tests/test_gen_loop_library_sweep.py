@@ -34,6 +34,10 @@ def _run_loop(tmp_path, sweep, with_order=True, **extra):
     # review_requests now shares the atomic-write primitive, which is stdlib-only so this
     # minimal app dir stays pysubs2-free.
     shutil.copy(REPO / "dubtitlerr" / "core" / "atomic_file.py", app / "dubtitlerr" / "core" / "atomic_file.py")
+    # The no-media-server bootstrap: gen_loop.sh runs this CLI when the order file is
+    # missing, and it must import from the same pysubs2-free skeleton.
+    shutil.copy(REPO / "dubtitlerr" / "core" / "media_types.py", app / "dubtitlerr" / "core" / "media_types.py")
+    shutil.copy(REPO / "dubtitlerr" / "pipeline" / "library_queue.py", app / "dubtitlerr" / "pipeline" / "library_queue.py")
     # The loop reports at pass boundaries through the notify CLI. notify must import from this
     # pysubs2-free skeleton: a module-scope common/pysubs2 import here would fail every test.
     shutil.copy(REPO / "dubtitlerr" / "core" / "notify.py", app / "dubtitlerr" / "core" / "notify.py")
@@ -44,6 +48,7 @@ def _run_loop(tmp_path, sweep, with_order=True, **extra):
     )
     anime = tmp_path / "anime"
     (anime / "Frieren").mkdir(parents=True)
+    (anime / "Frieren" / "S01E01.mkv").write_bytes(b"x")
     (anime / "Other").mkdir()
     order = tmp_path / "order.txt"
     if with_order:
@@ -118,3 +123,21 @@ def test_sweep_unset_keeps_sweeping(tmp_path):
     proc, calls, _ = _run_loop(tmp_path, None)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert calls[-1] == "Other|"
+
+
+def test_a_missing_order_file_is_built_from_the_library_tree(tmp_path):
+    # The no-media-server install: no order file, no watch queue answer. The loop must
+    # queue what exists instead of idling forever. Mutation caught: the sweep never
+    # starts, or library_queue overwrites a list the operator wrote.
+    proc, calls, _ = _run_loop(tmp_path, "true", with_order=False)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert calls == [r"Frieren|Frieren.*S01E01", "Frieren|"]
+    assert (tmp_path / "order.txt").read_text() == "Frieren\n"
+
+
+def test_the_library_queue_does_not_touch_an_existing_order_file(tmp_path):
+    # Guard: a hand-written (or watch-queue) order file stays authoritative.
+    proc, calls, _ = _run_loop(tmp_path, "true")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (tmp_path / "order.txt").read_text() == "Other\n"
+    assert "Other|" in calls

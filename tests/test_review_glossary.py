@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from dubtitlerr.core import decisions
+from dubtitlerr.core import decisions, unanchored
 from dubtitlerr.glossary import glossary_lock
 from dubtitlerr.review import review_glossary, review_server
 
@@ -36,6 +36,8 @@ def gdir(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setattr(decisions, "GLOSSARY_DIR", str(d))
     monkeypatch.setenv("GLOSSARY_LOCK_WAIT", "0")
+    # unanchored.jsonl lives in the config volume, never in /config during a test.
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
     return d
 
 
@@ -108,6 +110,8 @@ def test_detail_round_trip_has_editable_keys_and_sha256_version(gdir):
             }
         ],
         "flagged_total": 1,
+        "unanchored_repair": True,
+        "unanchored": {},
     }
 
 
@@ -536,6 +540,20 @@ def test_each_write_logs_one_audit_line(gdir, capsys):
         assert part in lines[0]
 
 
+def test_setting_unanchored_repair_logs_one_audit_line(gdir, capsys):
+    p = _put(gdir, data={k: v for k, v in RAW.items() if k != "unanchored_repair"})
+    review_glossary.handle(
+        "POST",
+        "/api/glossary",
+        {"show": SHOW, "op": "set", "key": "unanchored_repair", "value": True, "expected_version": _version(p)},
+        operator="token",
+    )
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "glossary edit" in ln]
+    assert len(lines) == 1
+    for part in ("operator=token", f"show={json.dumps(SHOW)}", "op=set", "key=unanchored_repair", "value=true"):
+        assert part in lines[0]
+
+
 def test_refused_writes_log_no_audit_line(gdir, capsys):
     p = _put(gdir)
     _post(gdir, p, expected_version="0" * 64)
@@ -922,3 +940,41 @@ def test_a_backslash_is_refused_in_a_rename_value(gdir):
 def test_a_backslash_in_a_hard_fix_value_is_still_allowed(gdir):
     p = _put(gdir)
     assert _post(gdir, p, key="hard_fixes", term="acdc band", value="AC\\DC")[0] == 200
+
+
+# --- the unanchored banner's backing data -----------------------------------
+
+
+def test_read_show_reports_the_unanchored_record_and_the_existing_switch(gdir):
+    _put(gdir)
+    unanchored.record(SHOW, "S01E01.mkv", 11)
+    status, payload = review_glossary.read_show(SHOW)
+    assert status == 200
+    assert payload["unanchored"]["episodes"] == 1
+    assert payload["unanchored"]["targets"] == 11
+    assert payload["unanchored"]["last_episode"] == "S01E01.mkv"
+    assert payload["unanchored_repair"] is True  # RAW declares it
+
+
+def test_set_unanchored_repair_round_trips_through_the_same_write_path(gdir):
+    p = _put(gdir, data={k: v for k, v in RAW.items() if k != "unanchored_repair"})
+    old = _version(p)
+    status, payload = _post(gdir, p, op="set", key="unanchored_repair", value=True)
+    assert status == 200
+    assert payload["version"] == _version(p) != old
+    assert _disk(p)["unanchored_repair"] is True
+    assert review_glossary.read_show(SHOW)[1]["unanchored_repair"] is True
+
+
+def test_set_unanchored_repair_rejects_a_non_boolean_and_writes_nothing(gdir):
+    p = _put(gdir)
+    before = p.read_bytes()
+    status, payload = _post(gdir, p, op="set", key="unanchored_repair", value="yes")
+    assert status == 400 and "true or false" in payload["error"]
+    assert p.read_bytes() == before
+
+
+def test_set_on_another_key_is_refused(gdir):
+    p = _put(gdir)
+    status, payload = _post(gdir, p, op="set", key="names", value=True)
+    assert status == 400 and "op must be" in payload["error"]
