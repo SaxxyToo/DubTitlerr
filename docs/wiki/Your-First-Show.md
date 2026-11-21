@@ -197,6 +197,8 @@ If you provided `REVIEW_USERNAME` and `REVIEW_PASSWORD` in your Compose environm
 
 After signing in, open your episode in the review workspace. You are looking at only the lines the pipeline was unsure about, not the whole episode. Each row shows what was transcribed, what the repair model proposed, the lines either side for context, and a chip naming what the repair was anchored on — **Dub-anchored**, **Translation-anchored**, **Unanchored** or **Unclassified**. Follow the dub audio, not the chip; the chip tells you how reliable the reference is.
 
+On a phone the workspace is two screens: the inbox lists episodes, and opening one replaces the list with the line under review. The verdicts sit in a dock pinned to the bottom of the screen, staging one advances to the next undecided line, and the search and risk/anchor filters sit behind the funnel button in the line header. A staged choice is kept when you go back to the episode list, so **Save** is still one step at the end.
+
 For each one, choose:
 
 - **accept**: the proposal is right

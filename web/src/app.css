@@ -760,6 +760,52 @@ select {
   margin-top: 2px;
   overflow-wrap: anywhere;
 }
+.review-title-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.review-title-copy {
+  min-width: 0;
+}
+.review-risk {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Phone-only controls: the back link and the thumb-reach action dock. */
+.back-to-episodes {
+  display: none;
+  align-items: center;
+  gap: 1px;
+  min-height: 40px;
+  margin-left: -8px;
+  padding: 0 8px 0 4px;
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.phone-dock {
+  display: none;
+}
+.review-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.phone-filter-toggle {
+  display: none;
+}
+/* The phone dock has no room for the save bar's consequence line; the footnote carries it instead. */
+.phone-consequence {
+  display: none;
+}
 .review-toolbar {
   display: flex;
   align-items: center;
@@ -1444,6 +1490,153 @@ textarea {
   .mobile-menu {
     display: inline-flex;
   }
+
+  /* Phone review: the inbox and the editor are two screens, and the actions stay in thumb reach.
+     Above 768px the same nodes are the desktop two-column workspace, unchanged. */
+  .workspace.phone-inbox .review-panel {
+    display: none;
+  }
+  .workspace.phone-editing .episode-panel {
+    display: none;
+  }
+  main.phone-editing .page-header,
+  main.phone-editing .page-sub {
+    display: none;
+  }
+  main.phone-editing {
+    padding-bottom: calc(180px + env(safe-area-inset-bottom));
+  }
+  main.phone-editing .workspace-footnote {
+    padding-bottom: 8px;
+  }
+  .phone-consequence {
+    display: block;
+    flex-basis: 100%;
+  }
+  .back-to-episodes {
+    display: inline-flex;
+  }
+  .review-title {
+    align-items: flex-start;
+    padding: 10px 14px;
+  }
+  .review-title h2 {
+    font-size: 15px;
+  }
+  .review-risk {
+    margin-top: 2px;
+    font-size: 11px;
+  }
+  .back-to-episodes {
+    min-height: 36px;
+  }
+  .season-badge {
+    display: none;
+  }
+  .phone-filter-toggle {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* The line toolbar is one tap away: the evidence, not the filters, is the first screen. */
+  .review-toolbar {
+    display: none;
+  }
+  .review-toolbar.phone-filters-open {
+    display: flex;
+  }
+  /* Higher specificity than the base .transport/.save-bar rules, which come later in this file. */
+  .evidence .transport,
+  .review-panel > .save-bar {
+    display: none;
+  }
+  .phone-dock {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 14px calc(6px + env(safe-area-inset-bottom));
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.4);
+  }
+  .dock-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 18px;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .dock-status > span:nth-child(2) {
+    margin-left: auto;
+  }
+  .dock-apply {
+    min-height: 24px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: var(--accent);
+  }
+  .dock-verdicts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .dock-verdicts .verdict {
+    min-height: 48px;
+    justify-content: center;
+    padding: 6px;
+    font-size: 12.5px;
+    line-height: 1.15;
+    text-align: center;
+  }
+  .dock-verdicts .verdict:nth-child(4) {
+    grid-column: 1 / -1;
+  }
+  .dock-nav {
+    display: flex;
+    gap: 6px;
+  }
+  .dock-nav > button {
+    min-height: 44px;
+  }
+  .dock-nav .secondary {
+    width: 54px;
+    justify-content: center;
+    padding: 0;
+  }
+  .dock-save {
+    flex: 1;
+    justify-content: center;
+    font-size: 14px;
+  }
+  /* Fingers, not cursors: every review-line control is at least 44px tall on a phone. */
+  .line-strip button {
+    min-width: 44px;
+    height: 44px;
+    font-size: 13px;
+  }
+  .search-field {
+    min-height: 44px;
+  }
+  select {
+    min-height: 44px;
+  }
+}
+/* A touch screen has no keyboard to press: the shortcut chips and the footnote's shortcut link
+   are desktop noise on a phone. The topbar help button stays. */
+@media (pointer: coarse) {
+  kbd {
+    display: none;
+  }
+  .workspace-footnote .text-button {
+    display: none;
+  }
 }
 @media (max-width: 650px) {
   .topbar {
@@ -1780,24 +1973,74 @@ textarea {
   }
 }
 @media (max-width: 650px) {
+  /* The waveform is a desktop instrument. On a phone the line text is the screen, so the band
+     becomes a one-row listen control and gives ~70px back to the evidence. */
   .audio-band {
-    aspect-ratio: 925 / 330;
-    max-height: 170px;
+    aspect-ratio: auto;
+    max-height: none;
+    height: auto;
+    min-height: 52px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    margin-top: 2px;
   }
-  .band-timechip {
-    left: 8px;
-    bottom: 30px;
-    font-size: 11px;
-    padding: 2px 6px;
+  .audio-band .band-grid,
+  .audio-band .band-wave,
+  .audio-band .band-playhead,
+  .audio-band .band-timechip,
+  .audio-band .band-ruler {
+    display: none;
   }
   .audio-band .listen-pill {
-    right: 8px;
-    bottom: 26px;
+    position: static;
+    min-height: 40px;
     font-size: 12px;
     padding: 6px 9px;
   }
+  .audio-band .listen-row {
+    margin: 0;
+    flex: 1;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .audio-band .listen-row small {
+    display: none;
+  }
+  .audio-band .listen-row .timecode {
+    font-size: 12px;
+  }
   .deck-card {
-    padding: 14px 16px;
+    padding: 10px 16px;
+  }
+  .deck-rule {
+    margin: 8px 0;
+  }
+  /* One chip row at phone size: tighter badges, and the dock (not the card) carries the line counter. */
+  .card-meta {
+    flex-wrap: nowrap;
+    overflow: hidden;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  .card-meta > div {
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+  .card-meta > .muted {
+    display: none;
+  }
+  .card-meta .badge {
+    flex-shrink: 0;
+    padding: 2px 6px;
+    font-size: 11px;
+    gap: 4px;
+  }
+  .card-meta .badge svg {
+    width: 12px;
+    height: 12px;
   }
   .deck-orig p {
     font-size: 20px;
@@ -1813,5 +2056,12 @@ textarea {
   .transport-remaining {
     flex-basis: 100%;
     margin-left: 0;
+  }
+}
+/* A 320px phone cannot fit the three chips on one line; wrapping is better than clipping them. */
+@media (max-width: 360px) {
+  .card-meta,
+  .card-meta > div {
+    flex-wrap: wrap;
   }
 }

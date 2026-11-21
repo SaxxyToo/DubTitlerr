@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { blank, diffParts, nextOpenIndex, refChip, refClassOf, refNote, timecode } from '../src/review.ts';
+import { blank, diffParts, nextOpenIndex, refChip, refClassOf, refNote, riskSummary, timecode } from '../src/review.ts';
 
 test('diff preserves the exact original and proposed words including untrusted HTML', () => {
   const original = 'A <script>factory</script> is here.';
@@ -88,4 +88,17 @@ test('the note under the reference never claims a role the entry does not have',
   assert.match(refNote({ reference: 'the fansub line' }), /before its role was recorded/);
   assert.doesNotMatch(refNote({ reference: 'the fansub line' }), /different translation/);
   assert.match(refNote({}), /No subtitle reference/);
+});
+test('the risk summary counts every row in the queue, in a fixed order', () => {
+  const rows = [
+    { risk: 'punctuation' },
+    { risk: 'words' },
+    { risk: 'words' },
+    { risk: 'substitution' },
+  ];
+  assert.equal(riskSummary(rows), '2 words · 1 substitution · 1 punctuation');
+  // Singular counts read as singular; the summary is prose, not a label table.
+  assert.equal(riskSummary([{ risk: 'words' }]), '1 word · 0 substitutions · 0 punctuation');
+  // An empty queue still names the three classes, so the line never reads as partial.
+  assert.equal(riskSummary([]), '0 words · 0 substitutions · 0 punctuation');
 });

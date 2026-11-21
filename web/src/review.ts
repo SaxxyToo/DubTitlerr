@@ -105,3 +105,22 @@ export function diffParts(original: string, proposed: string, side: 'original' |
 export function blank(text: string) {
   return !/[^\s\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u.test(text);
 }
+/**
+ * The risk mix of a queue, in the order the classic review page prints it: counts, not just
+ * filters, so an episode whose work is all punctuation reads differently before you start.
+ */
+export function riskSummary(rows: { risk: string }[]): string {
+  const order = ['words', 'substitution', 'punctuation'] as const;
+  const labels: Record<string, [string, string]> = {
+    words: ['word', 'words'],
+    substitution: ['substitution', 'substitutions'],
+    punctuation: ['punctuation', 'punctuation'],
+  };
+  return order
+    .map((k) => {
+      const n = rows.filter((r) => r.risk === k).length;
+      const [one, many] = labels[k];
+      return `${n} ${n === 1 ? one : many}`;
+    })
+    .join(' · ');
+}

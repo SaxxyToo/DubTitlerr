@@ -44,6 +44,7 @@
     refChip,
     refNote,
     riskLabels,
+    riskSummary,
     timecode,
     verdictLabels,
   } from './review';
@@ -128,6 +129,13 @@
   let episodeOrder = $state<string>(readSortPref(storage(), EPISODE_SORT_KEY, EPISODE_SORTS, 'default'));
   let showHelp = $state(false);
   let mobileNav = $state(false);
+  // Phone review is two screens (episodes, then the line), not one long column: the editor replaces
+  // the inbox while an episode is open, and the action dock stays in thumb reach.
+  let phoneEditing = $state(false);
+  // Phone review keeps the line toolbar collapsed: the evidence is the screen, and search/filters
+  // are one tap away. The desktop toolbar is never hidden (this class only applies below 768px).
+  let phoneFilters = $state(false);
+  const phoneLayout = () => typeof matchMedia !== 'undefined' && matchMedia('(max-width: 768px)').matches;
   let health = $state('Unknown');
   // The release the server is running, shown in the sidebar footer so a bug report can name it.
   // Read from /api/v1/system/status once a session exists; '' until then (and if the call fails).
@@ -206,6 +214,13 @@
   const activeIndex = $derived(current ? visible.findIndex((e) => e.id === current.id) : -1);
   const draft = $derived(current ? drafts[current.id] : undefined);
   const remaining = $derived(visible.filter((e) => !drafts[e.id]).length);
+  // The risk mix of the lines in view, the same summary the classic review page prints.
+  const riskLine = $derived(riskSummary(view === 'shared' ? shared : entries));
+  // A phone editor belongs to the view that opened it; any route change returns to that view's own screen.
+  $effect(() => {
+    view;
+    phoneEditing = false;
+  });
 
   // `extra` carries per-call headers; they go in the request headers, never in the JSON body.
   // `method` defaults to POST with a body and GET without; PUT and body-less POST (reset) name theirs.
@@ -441,12 +456,25 @@
       lineQuery = '';
       risk = 'all';
       refFilter = 'all';
-      void revealReviewPanel();
+      if (phoneLayout()) {
+        // The phone shows one screen: episodes first, then the line. Selecting swaps to the editor.
+        phoneEditing = true;
+        await tick();
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      } else void revealReviewPanel();
     } catch (exc) {
       report(exc);
     } finally {
       loading = false;
     }
+  }
+  /** Back from the phone editor to the episode list, keeping the open episode and its staged choices. */
+  async function backToEpisodes() {
+    stopAudio();
+    phoneEditing = false;
+    await tick();
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    document.querySelector<HTMLElement>('.episode.selected')?.focus();
   }
   function activate(id: string) {
     if (id !== current?.id) stopAudio();
@@ -662,6 +690,8 @@
     episodes = [];
     selected = null;
     authenticated = false;
+    phoneEditing = false;
+    phoneFilters = false;
     account = { state: 'login', username: '', role: '' };
     message = '';
     error = '';
@@ -743,7 +773,7 @@
       </div>
     </header>
 
-    <main id="main" tabindex="-1">
+    <main id="main" tabindex="-1" class:phone-editing={phoneEditing}>
       {#if account.state === 'loading'}
         <p class="page-sub" role="status">Checking your session…</p>
       {:else if account.state === 'setup'}
@@ -799,7 +829,12 @@
             >
           </div>{/if}
 
-        <div class="workspace" class:shared-workspace={view === 'shared'}>
+        <div
+          class="workspace"
+          class:shared-workspace={view === 'shared'}
+          class:phone-editing={phoneEditing}
+          class:phone-inbox={!phoneEditing && view === 'inbox' && filteredEpisodes.length > 0}
+        >
           {#if view === 'inbox'}
             <section class="episode-panel" aria-label="Episode inbox">
               <div class="panel-title">
@@ -856,10 +891,30 @@
           {/if}
           <section class="review-panel" aria-label="Review editor" tabindex="-1" bind:this={reviewPanel}>
             <div class="review-title">
-              <h2>
-                {view === 'shared' ? 'Repeated changes' : (selected?.name ?? 'Choose an episode')}
-              </h2>
-              {#if view === 'inbox' && selected}<span class="badge neutral">{selected.season}</span>{/if}
+              <div class="review-title-main">
+                {#if view === 'inbox'}<button class="back-to-episodes" type="button" onclick={backToEpisodes}>
+                    <ChevronLeft size={18} aria-hidden="true" /> Episodes
+                  </button>{/if}
+                <div class="review-title-copy">
+                  <h2>
+                    {view === 'shared' ? 'Repeated changes' : (selected?.name ?? 'Choose an episode')}
+                  </h2>
+                  {#if view === 'shared' ? shared.length : entries.length}
+                    <small class="review-risk">{riskLine}</small>
+                  {/if}
+                </div>
+              </div>
+              <div class="review-title-actions">
+                <button
+                  class="icon-button phone-filter-toggle"
+                  aria-label="Review filters"
+                  aria-expanded={phoneFilters}
+                  onclick={() => (phoneFilters = !phoneFilters)}><Filter size={17} /></button
+                >
+                {#if view === 'inbox' && selected}<span class="badge neutral season-badge"
+                    >{selected.season}</span
+                  >{/if}
+              </div>
             </div>
             {#if loading}<div class="empty-state">
                 <LoaderCircle size={32} class="spin" />
@@ -875,7 +930,7 @@
                 </p>
               </div>
             {:else}
-              <div class="review-toolbar">
+              <div class="review-toolbar" class:phone-filters-open={phoneFilters}>
                 <label class="search-field"
                   ><Search size={15} /><input
                     aria-label="Search review lines"
@@ -1125,12 +1180,55 @@
             </footer>
           </section>
         </div>
+        {#if current && !loading && (view === 'shared' || phoneEditing)}
+          <div class="phone-dock" role="region" aria-label="Review actions">
+            <div class="dock-status">
+              <span>Line {Math.max(1, activeIndex + 1)} of {visible.length}</span>
+              <span>{remaining} still to decide</span>
+              {#if view === 'inbox' && selected}<button
+                  class="text-button dock-apply"
+                  onclick={apply}
+                  disabled={saving || loading || staged > 0}
+                  aria-label="Apply saved decisions">Apply</button
+                >{/if}
+            </div>
+            <div class="dock-verdicts">
+              {#each current.offered as verdict (verdict)}<button
+                  class="verdict {verdict}"
+                  class:chosen={draft?.verdict === verdict}
+                  onclick={() => choose(verdict)}
+                  disabled={saving}
+                  aria-pressed={draft?.verdict === verdict}>{verdictLabels[verdict]}</button
+                >{/each}
+            </div>
+            <div class="dock-nav">
+              <button
+                class="secondary"
+                onclick={() => move(-1)}
+                disabled={visible.length < 2}
+                aria-label="Previous line"><ChevronLeft size={20} /></button
+              ><button class="primary dock-save" onclick={save} disabled={!staged || saving || loading}
+                >{#if saving}<LoaderCircle size={16} class="spin" />{:else}<Save size={16} />{/if}{saving
+                  ? 'Working…'
+                  : staged
+                    ? `Save ${staged} choice${staged === 1 ? '' : 's'}`
+                    : 'Save choices'}</button
+              ><button
+                class="secondary"
+                onclick={() => move(1)}
+                disabled={visible.length < 2}
+                aria-label="Next line"><ChevronRight size={20} /></button
+              >
+            </div>
+          </div>
+        {/if}
         <div class="workspace-footnote">
           <ShieldCheck size={14} /><span
             >Human decisions are show-wide. Review the exact wording; a saved verdict may settle the same line
             in other episodes.</span
-          ><button class="text-button" onclick={() => (showHelp = true)}
-            >Keyboard shortcuts <kbd>?</kbd></button
+          ><span class="phone-consequence">Saving records verdicts; applying queues a remux.</span><button
+            class="text-button"
+            onclick={() => (showHelp = true)}>Keyboard shortcuts <kbd>?</kbd></button
           >
         </div>
       {/if}
