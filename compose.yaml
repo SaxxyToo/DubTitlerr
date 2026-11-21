@@ -23,11 +23,12 @@
 
 services:
   dubtitlerr:
-    # Built locally -- this fork publishes no image, so `docker compose up -d
-    # --build` is the normal path. Pin DUBTITLERR_TAG to a release tag if you
-    # want reproducible version stamps.
-    image: dubtitlerr:${DUBTITLERR_TAG:-latest}
-    # The full image (Whisper model baked in, review UI built).
+    # The published release. Pin DUBTITLERR_TAG to a release tag for reproducible
+    # version stamps; `latest` follows the newest release.
+    image: ghcr.io/saxxytoo/dubtitlerr:${DUBTITLERR_TAG:-latest}
+    # The full image (Whisper model baked in, review UI built). Kept so
+    # `docker compose up -d --build` still builds from source; `pull` uses the
+    # published image above.
     build:
       context: .
       dockerfile: Dockerfile.builder

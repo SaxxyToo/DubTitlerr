@@ -6,7 +6,9 @@
 #
 #   docker build -f Dockerfile.fork -t dubtitlerr:fork .
 #
-# Keep the base tag in step with the release the fork is based on.
+# Deliberately pinned to the last UPSTREAM release: this overlay exercises the fork's
+# scripts on the upstream runtime, not on the fork's own image. Bump it only when upstream
+# publishes a new release.
 FROM ghcr.io/xenarathon/dubtitlerr:v0.3.0
 
 # The fork runtime now lives in the dubtitlerr package; the overlay carries the package,

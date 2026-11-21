@@ -13,10 +13,10 @@ default differs between modules, that is stated rather than smoothed over.
 (`ghcr.io/saxxytoo/dubtitlerr:<vX.Y.Z>` for the full build omarchy runs; `:<vX.Y.Z>-lite` for the
 endpoint-only image)
 
-**Tags:** the release's git tag (`v0.4.0`), annotated, on the merge commit in `main`. Pushing it
+**Tags:** the release's git tag (`vX.Y.Z`), annotated, on the merge commit in `main`. Pushing it
 runs `.github/workflows/release.yml`: the full CI gate re-runs, then both images publish in
-parallel — `ghcr.io/saxxytoo/dubtitlerr:v0.4.0` and `:latest` (builder),
-`:v0.4.0-lite` and `:latest-lite` (lite). Hosts pull instead of building; the moving `:latest`
+parallel — `ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z` and `:latest` (builder),
+`:vX.Y.Z-lite` and `:latest-lite` (lite). Hosts pull instead of building; the moving `:latest`
 follows the newest release, never `main`. A locally date-suffixed tag
 (`dubtitlerr:rollback-2026-11-19`) is the rollback slot for a same-version rebuild — see
 [Cut a release](How-To-Guides.md#cut-a-release).
@@ -65,16 +65,16 @@ The container runs as **root**, so `generate.py` can chown into the media tree. 
 
 ## Version
 
-**Source of truth:** `dubtitlerr/__init__.py`, `__version__ = "0.4.0"`. One string, one file.
+**Source of truth:** `dubtitlerr/__init__.py`, the `__version__` literal. One string, one file.
 `pyproject.toml` declares `dynamic = ["version"]` and reads that attribute; `uv.lock` stores no
 version for the project; `tests/test_version.py` fails if any surface below stops agreeing with it.
 
 | Surface | What it shows |
 | --- | --- |
-| `python3 -m dubtitlerr --version` | `dubtitlerr 0.4.0` — on the host, in the image, no network |
-| Container boot log (`docker logs`) | `==== dubtitle-builder up dubtitlerr 0.4.0 …` and `#### gen_loop up dubtitlerr 0.4.0 …` |
-| `GET /api/v1/system/status` → `version.app` | `"0.4.0"` (always a string; the field is no longer null) |
-| Review page sidebar footer | `DubTitlerr 0.4.0`, fetched from that route after sign-in |
+| `python3 -m dubtitlerr --version` | `dubtitlerr X.Y.Z` — on the host, in the image, no network |
+| Container boot log (`docker logs`) | `==== dubtitle-builder up dubtitlerr X.Y.Z …` and `#### gen_loop up dubtitlerr X.Y.Z …` |
+| `GET /api/v1/system/status` → `version.app` | `"X.Y.Z"` (always a string; the field is no longer null) |
+| Review page sidebar footer | `DubTitlerr X.Y.Z`, fetched from that route after sign-in |
 | `docker inspect <image>` | `org.opencontainers.image.version`, `…revision` (git sha), `…title`, `…source` |
 
 `version.transcribe_version` and `version.text_version` are a different thing: the pipeline's
