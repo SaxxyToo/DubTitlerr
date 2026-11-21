@@ -241,6 +241,34 @@ def test_the_live_zero_percent_raw_file_still_fails_the_floor():
     assert any("0% of cards end with punctuation" in f for f in fails), fails
 
 
+# --- song spans are not English dialogue ----------------------------------------------
+
+
+def test_a_romaji_lyric_cannot_be_a_known_mishear():
+    """Frieren S02E01's real ending: the show glossary carries "Furikaereba -> Frieren", so
+    the lyric line "Furikaereba itsumo." was reported as a known mishear forever."""
+    text = open(os.path.join(FIXTURES, "frieren_s02e01_song.dubtitles.ass"), encoding="utf-8-sig", errors="replace").read()
+    cues = g.parse_ass(text, style="Dubtitles")
+    assert "Furikaereba itsumo." in [t for _, _, t in cues]
+    assert g.evaluate(cues, None, mishears=["Furikaereba", "Verbal"]) == []
+
+
+def test_a_dialogue_mishear_outside_the_song_span_still_fails():
+    """Negative control: excluding lyrics must not blind the mishear guard on speech."""
+    cues = g.parse_srt(
+        srt(
+            [
+                (1, 3, "Take the tram to the station."),
+                (4, 6, "Furikaereba itsumo."),
+                (7, 9, "Osoresu ni susume yo."),
+                (10, 12, "Verbal said Furikaereba, apparently."),
+            ]
+        )
+    )
+    fails = g.evaluate(cues, None, mishears=["Furikaereba", "Verbal"])
+    assert fails and fails[0].startswith("known mishear"), fails
+
+
 def test_a_published_sidecar_is_found_by_its_delivery_name(tmp_path):
     """`stem.dub.en.ass` is what the library actually carries; the gate must audit it, not
     only the pipeline's internal `stem.eng.dubtitles.ass`."""
@@ -248,5 +276,18 @@ def test_a_published_sidecar_is_found_by_its_delivery_name(tmp_path):
     (tmp_path / "ep.dub.en.ass").write_text(
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         "Dialogue: 0,0:00:01.00,0:00:05.80,Dubtitles,,0,0,0,,The Evas were created.\\NFrom Adam.\n"
+    )
+    assert g.main([stem, "--duration", "6"]) == 0
+
+
+def test_signs_and_lyrics_are_not_counted_as_dialogue(tmp_path):
+    """A styled sidecar carries sign cues that run longer than any dialogue card. Counting
+    them fails a good file (and did, on E22's 8.1 s title card)."""
+    stem = str(tmp_path / "ep")
+    (tmp_path / "ep.dub.en.ass").write_text(
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Style: Dubtitles,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2.8,0,2,60,60,49,1\n"
+        "Dialogue: 0,0:00:01.00,0:00:05.80,Dubtitles,,0,0,0,,The Evas were created.\\NFrom Adam.\n"
+        "Dialogue: 0,0:00:06.00,0:00:14.00,Signs,,0,0,0,,TITLE CARD THAT RUNS LONG\n"
     )
     assert g.main([stem, "--duration", "6"]) == 0

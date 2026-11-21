@@ -1084,3 +1084,41 @@ def test_the_live_cyberpunk_over_duration_card_is_ended_at_its_own_speech(tmp_pa
     assert round(fix["after"][0]["end"], 2) == 398.3, fix
     assert gate_fails(stem) == []
     assert words_of(stem) == before_words, "a trim may not change a word"
+
+
+def test_the_live_frieren_song_episode_is_a_no_op(tmp_path):
+    """The only refusal was the ending-song romaji read as a known mishear; the file ships."""
+    stem = _live_episode(tmp_path, "frieren_s02e01_song.dubtitles.ass")
+    path = stem + ".eng.dubtitles.ass"
+    before = read(path)
+    assert gate_fails(stem) == [], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_NOOP, result
+    assert read(path) == before
+
+
+def test_a_song_span_card_is_left_alone_even_when_it_breaks_a_budget(tmp_path):
+    """A romaji lyric over 7.5 s is not a layout fault to fix: the song owns that span."""
+    cues = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
+    cues.append((100.0, 120.0, "Osoresu ni susume yo."))
+    cues.append((120.5, 140.5, "Furikaereba itsumo."))
+    cues += [(150.0 + i, 151.0 + i, f"And line {i} again.") for i in range(PAD)]
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+    assert gate_fails(stem) == [], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_NOOP, result
+    assert read(stem + ".eng.dubtitles.ass") == before
+
+
+def test_a_lone_foreign_card_is_dialogue_and_still_has_to_fit(tmp_path):
+    """One romaji-looking card is not a span, so the gate still judges its layout."""
+    cues = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
+    cues.append((100.0, 120.0, "Osoresu ni susume yo."))
+    cues += [(150.0 + i, 151.0 + i, f"And line {i} again.") for i in range(PAD)]
+    stem = write_episode(tmp_path, cues)
+    assert any("over 7.5s" in f for f in gate_fails(stem)), gate_fails(stem)

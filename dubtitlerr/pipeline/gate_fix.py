@@ -39,6 +39,11 @@ What this module will and will not do:
     used to be reported unfixable forever. Such a card is dropped instead -- it removes no
     spoken word, and the fansub/song path owns that span -- and the drop is counted in the
     audit document (`music_cues_dropped`).
+  * **A song span is not dialogue either.** The dub re-uses the Japanese OP/ED, and the
+    English ASR renders the singing as pseudo-romaji. Those cards are recognised as a song
+    span (`core/song_spans`) and left exactly as they are: `publish_gate` does not score
+    them, and this module does not re-wrap, split or drop them. The release's own lyric
+    and sign events stay where the merge put them.
   * **An already-passing file is a no-op.** No audit entry, no stage record, no byte
     written -- so a healthy episode costs the merge pass nothing.
   * **A give-up is PARKED, not retried every pass.** When the attempt ends `unfixable`,
@@ -99,6 +104,7 @@ import sys
 import time
 from collections import Counter
 
+from dubtitlerr.core import song_spans
 from dubtitlerr.core.atomic_file import MODE_KEEP, atomic_write
 from dubtitlerr.glossary import glossary as glossary_text
 from dubtitlerr.pipeline import card_split, publish_gate, reflow
@@ -126,7 +132,12 @@ MAX_AUDIT_ATTEMPTS = 20
 #     parked with `known mishear(s)` heal on their first pass under this epoch. The attempt
 #     stamp also carries a glossary fingerprint now, so a glossary change retries that
 #     show's parked episodes once (exactly what heals them) without an operator unpark.
-GATE_FIX_EPOCH = 2
+#   3 (2026-11-21): park-class resolutions. A card claims an ASR word that starts up to
+#     WORDS_LEAD before it, so the repetition trim fires on the real card it was written
+#     for (Cyberpunk S02E01 #101); song-span cards are recognised and left untouched
+#     (Frieren S02E01's ending lyrics). Every episode parked at an earlier epoch is
+#     re-examined once under this behaviour.
+GATE_FIX_EPOCH = 3
 
 # Outcomes that are PARKED: a deterministic give-up on this exact artifact. `cannot-evaluate`
 # is deliberately absent -- an unreadable artifact can be transient, so it keeps retrying.
@@ -425,10 +436,14 @@ def fix_cues(cues, words_doc=None, max_line=GATE_MAX_LINE):
     normalized.
     """
     new_cues, actions, origin = [], [], []
+    # A song span is not dialogue: its cards carry no word worth re-flowing, and the
+    # release's own lyric lines must keep their bytes. `publish_gate` already excludes the
+    # span from its dialogue checks; leaving the cards alone here keeps the two in step.
+    song = song_spans.indexes(cues)
     for index, (start, end, text) in enumerate(cues):
         flat = _flat(text)
         dur = end - start
-        if not cue_faults(text, dur, max_line):
+        if index in song or not cue_faults(text, dur, max_line):
             new_cues.append((start, end, text))
             origin.append(index)
             continue

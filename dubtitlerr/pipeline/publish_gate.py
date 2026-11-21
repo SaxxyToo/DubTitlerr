@@ -25,6 +25,8 @@ import re
 import subprocess
 import sys
 
+from dubtitlerr.core import song_spans
+
 MAX_CHARS = 88
 MAX_LINE = 46
 MAX_DUR = 7.5
@@ -171,7 +173,14 @@ def glossary_mishears(path):
 
 
 def evaluate(cues, duration=None, mishears=(), max_chars=MAX_CHARS, max_line=MAX_LINE):
-    """Return the list of reasons this sidecar must not be published (empty = pass)."""
+    """Return the list of reasons this sidecar must not be published (empty = pass).
+
+    Song spans are not dialogue. A dub re-uses the Japanese OP/ED, and the English ASR
+    renders the sung audio as pseudo-romaji with the odd English adaptation line
+    (``core/song_spans``). Those cards carry no English to check, so they are left out of
+    the punctuation, layout and mishear checks rather than being counted as failures --
+    the voice-orchestra lyric region parked Frieren S02E01 forever otherwise.
+    """
     fails = []
     if not cues:
         return ["no cues"]
@@ -182,29 +191,35 @@ def evaluate(cues, duration=None, mishears=(), max_chars=MAX_CHARS, max_line=MAX
         per_min = len(cues) / (duration / 60.0)
         if per_min < MIN_CARDS_PER_MIN:
             fails.append(f"{per_min:.1f} cards per minute")
-    lines = [t.split("\n") for _, _, t in cues]
+    song = song_spans.indexes(cues)
+    dialogue = [c for i, c in enumerate(cues) if i not in song]
+    if not dialogue:
+        return fails + ["no dialogue cards (the whole file reads as a song)"]
+    lines = [t.split("\n") for _, _, t in dialogue]
     longest_line = max((len(x) for ls in lines for x in ls), default=0)
     if longest_line > max_line:
         fails.append(f"line of {longest_line} chars (max {max_line})")
-    over = sum(1 for _, _, t in cues if len(t.replace("\n", " ")) > max_chars)
+    over = sum(1 for _, _, t in dialogue if len(t.replace("\n", " ")) > max_chars)
     if over:
         fails.append(f"{over} card(s) over {max_chars} chars")
-    longdur = [b - a for a, b, _ in cues if b - a > MAX_DUR]
+    longdur = [b - a for a, b, _ in dialogue if b - a > MAX_DUR]
     if longdur:
         fails.append(f"{len(longdur)} card(s) over {MAX_DUR:.1f}s (max {max(longdur):.1f}s)")
-    ended = sum(1 for _, _, t in cues if t.rstrip().endswith(PUNCT))
-    if ended / len(cues) < MIN_PUNCT_ENDED:
-        fails.append(f"{100 * ended / len(cues):.0f}% of cards end with punctuation")
+    ended = sum(1 for _, _, t in dialogue if t.rstrip().endswith(PUNCT))
+    if ended / len(dialogue) < MIN_PUNCT_ENDED:
+        fails.append(f"{100 * ended / len(dialogue):.0f}% of cards end with punctuation")
     # Lowercase start AFTER a sentence ended = cold-start ASR cut. A lowercase start after an
     # unpunctuated card is a sentence split across two cues, which is normal subtitling.
-    if cues[0][0] > 290:
-        fails.append(f"first cue at {cues[0][0]:.0f}s (cold open missing?)")
+    if dialogue[0][0] > 290:
+        fails.append(f"first cue at {dialogue[0][0]:.0f}s (cold open missing?)")
     orphan = sum(
-        1 for i in range(1, len(cues)) if cues[i][2][:1].islower() and cues[i - 1][2].rstrip().endswith((".", "!", "?", "\u2026"))
+        1
+        for i in range(1, len(dialogue))
+        if dialogue[i][2][:1].islower() and dialogue[i - 1][2].rstrip().endswith((".", "!", "?", "\u2026"))
     )
-    if orphan / len(cues) > MAX_ORPHAN:
-        fails.append(f"{100 * orphan / len(cues):.0f}% lowercase orphan cards")
-    text = " ".join(t.replace("\n", " ") for _, _, t in cues)
+    if orphan / len(dialogue) > MAX_ORPHAN:
+        fails.append(f"{100 * orphan / len(dialogue):.0f}% lowercase orphan cards")
+    text = " ".join(t.replace("\n", " ") for _, _, t in dialogue)
     hits = [w for w in mishears if re.search(rf"(?<!\w){re.escape(w)}(?!\w)", text, re.I)]
     if hits:
         fails.append(f"known mishear(s): {', '.join(sorted(set(hits))[:6])}")
@@ -241,13 +256,17 @@ def main(argv=None):
     gloss_path = a.glossary or glossary_for(a.stem, a.glossary_dir)
     mishears = glossary_mishears(gloss_path) if gloss_path else []
     fails = evaluate(cues, duration, mishears, max_line=a.max_line)
+    songs = song_spans.describe(cues)
     if a.json:
-        print(json.dumps({"artifact": path, "cues": len(cues), "duration": duration, "fails": fails}, indent=1))
+        print(
+            json.dumps({"artifact": path, "cues": len(cues), "duration": duration, "song_spans": songs, "fails": fails}, indent=1)
+        )
     elif fails:
         print(f"gate: FAIL {os.path.basename(path)} — {'; '.join(fails)}")
     else:
         covered = f", {100 * cues[-1][1] / duration:.0f}% covered" if duration else ""
-        print(f"gate: ok {os.path.basename(path)} ({len(cues)} cues{covered})")
+        sung = f", {sum(s['cards'] for s in songs)} song card(s) excluded" if songs else ""
+        print(f"gate: ok {os.path.basename(path)} ({len(cues)} cues{covered}{sung})")
     return 1 if fails else 0
 
 
