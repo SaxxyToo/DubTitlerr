@@ -287,6 +287,7 @@ ACQUIRE_BACKEND^connections^enum^""^gen,merge^next_show^connections^Acquire back
 OPENROUTER_JEV_API_KEY^connections^secret^^gen,merge^next_show^bootstrap^OpenRouter key^Key variable read by name from the container environment.
 COMMANDCODE_API_KEY^connections^secret^^gen,merge^next_show^bootstrap^CommandCode key^Key variable read by name from the container environment.
 LONGCATAI_API_KEY^connections^secret^^gen,merge^next_show^bootstrap^LongCat key^Key variable read by name from the container environment.
+JIMAKU_API_KEY^connect^secret^^gen^next_show^bootstrap^Jimaku API key^Free key from jimaku.cc; fetches a Japanese reference track for a show whose release ships none.
 IDLE_CHECK_INTERVAL^schedule^int^60^gen^next_sweep^-^Idle check interval (s)^How often the idle wait looks for requests.
 REQUEST_POLL_INTERVAL^schedule^int^60^gen^next_sweep^-^Request poll interval (s)^How often the idle wait looks for run requests.
 RESCAN_INTERVAL^schedule^int^21600^gen,server^next_sweep^-^Rescan interval (s)^Idle time after a full sweep before the next one.
