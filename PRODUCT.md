@@ -27,7 +27,7 @@ Machine repair under human authority: every proposal is reviewable evidence, ver
 
 ## Capabilities and Constraints
 
-- Single-page web app (Svelte 5 + TypeScript + Vite) served by the Python review server; the server-rendered classic page remains as the fallback when the workspace is not built, and for `?stem=` deep links. `/` redirects to `/review/` once the workspace is built.
+- Single-page web app (Svelte 5 + TypeScript + Vite) served by the Python review server. The server-rendered review pages are removed: `/`, `/index.html` and `/shared` redirect to the workspace, and `/review/` answers 503 until it is built.
 - Accounts, roles, audit logging, and API keys exist and must keep working.
 - Verdicts are staged, then applied; applying queues a remux — review actions reach the real library, so the UI must communicate consequence honestly and never imply automation it cannot ensure.
 - Keyboard operability and WCAG AA contrast are standing commitments; CI runs svelte-check, unit tests, and Playwright browser tests including axe scans.

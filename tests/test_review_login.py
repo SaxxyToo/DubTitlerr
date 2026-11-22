@@ -274,7 +274,7 @@ def test_loopback_login_hands_out_a_cookie_that_unlocks_reads(server):
     assert request(server, "GET", "/api/episodes", headers={"Cookie": cookie})[0] == 200
     assert request(server, "GET", "/api/episodes")[0] == 401
     assert request(server, "GET", "/api/episodes", headers={"Cookie": f"dubtitlerr_token={KEY}"})[0] == 401, (
-        "the legacy cookie is for the classic pages only"
+        "the legacy token cookie is not an API credential"
     )
 
 
@@ -292,18 +292,6 @@ def test_login_accepts_only_json_and_a_small_body(server):
     assert request(server, "POST", "/api/login", ok, {"Content-Type": "application/json; charset=utf-8"})[0] == 200
     assert request(server, "POST", "/api/login", {"username": "reviewer", "password": "x" * 6000}, JSON)[0] == 413
     assert request(server, "POST", "/api/login", raw=b"not json", headers=JSON)[0] == 401, "an unreadable body is a failed login"
-
-
-def test_the_classic_pages_accept_a_session_and_otherwise_point_at_setup_or_login(server, env, monkeypatch, tmp_path):
-    # A built workspace redirects / to /review/; this test is about the classic page fallback.
-    monkeypatch.setattr(rs, "UI_DIST", tmp_path / "web-dist-not-built")
-    cookie = cookie_of(login()[2])
-    page = request(server, "GET", "/", headers={"Cookie": cookie})
-    assert page[0] == 200 and b"needs-token" not in page[1]
-    locked = request(server, "GET", "/")
-    assert b"needs-token" in locked[1] and b"/review/login" in locked[1]
-    (env.tmp / "config" / "users.json").unlink()
-    assert b"/review/setup" in request(server, "GET", "/shared")[1]
 
 
 def test_a_successful_login_clears_the_username_counter_but_never_the_address_counter(env):

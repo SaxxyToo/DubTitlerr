@@ -43,7 +43,6 @@ Env:
 
 import datetime
 import hashlib
-import html
 import http.cookies
 import http.server
 import json
@@ -56,7 +55,6 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from urllib.parse import quote
 
 from dubtitlerr.core import common, decisions, media_select, unresolved
 from dubtitlerr.core.common import log
@@ -438,13 +436,6 @@ def _words(text: str) -> list:
 # cannot detect it, and on an unanchored card neither can anything downstream.
 RISK_ORDER = {"words": 0, "substitution": 1, "punctuation": 2}
 
-# What the reviewer is being asked to look for, in that order.
-RISK_LABEL = {
-    "words": "a word added or dropped",
-    "substitution": "a word swapped",
-    "punctuation": "punctuation only",
-}
-
 
 def risk_class(original: str, proposed: str) -> str:
     """What the repair actually DID, as the axis the queue is ordered on.
@@ -458,13 +449,6 @@ def risk_class(original: str, proposed: str) -> str:
     if a == b:
         return "punctuation"
     return "substitution" if len(a) == len(b) else "words"
-
-
-def hms(seconds) -> str:
-    """A card start as a seek target. Hours only when there are hours."""
-    total = int(float(seconds))
-    h, m, sec = total // 3600, (total // 60) % 60, total % 60
-    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
 
 def _triage_key(e: dict) -> tuple:
@@ -990,7 +974,7 @@ def workspace_asset(path: str) -> tuple:
         return 200, target.read_bytes()
     except OSError:
         return 503 if target.name == "index.html" else 404, {
-            "error": "Review workspace not built. Run npm ci && npm run build in web/. The classic review page is at /."
+            "error": "Review workspace not built. Run npm ci && npm run build in web/."
         }
 
 
@@ -1285,372 +1269,6 @@ _CSS = (
 )
 
 
-def render_shared() -> str:
-    """The shared-lines page. Same radios and same Save as an episode page.
-
-    NO APPLY BUTTON. A verdict here spans episodes; re-muxing is a per-episode act with a
-    per-episode cost, so it stays on the episode page where the reviewer can see which file
-    they are about to rebuild."""
-    rows = handle_shared()["pairs"]
-    # Grouped by show -- handle_shared's own identity key already scopes a group to one
-    # show (`groups.setdefault((show, ...))`), and a flat interleaved list threw that away
-    # visually: a reviewer working through one show's shared lines had no way to see them
-    # apart from another's without reading every row. Same <details class=show> convention
-    # the episode index already uses for the same job.
-    by_show: dict = {}
-    for r in rows:
-        by_show.setdefault(r["show"], []).append(r)
-    sections = []
-    for show, srows in sorted(by_show.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        lis = []
-        for r in srows:
-            buttons = "".join(
-                f'<label><input type="radio" name="p{r["id"]}" value="{html.escape(v)}"> {html.escape(v)}</label> '
-                for v in r["offered"]
-            )
-            lis.append(
-                '<li class="r{}" data-pair="{}" data-risk="{}" data-repeats="{}"><div class=o>{}</div><div class=p>{}</div>'
-                "<small><b>in {} episodes</b> \u2014 {}</small><div>{}"
-                '<input id="t{}" placeholder="corrected text"></div></li>'.format(
-                    html.escape(r["risk"]),
-                    r["pair"],
-                    html.escape(r["risk"]),
-                    r["episodes"],
-                    html.escape(r["original_text"]),
-                    html.escape(r["proposed_text"]),
-                    r["episodes"],
-                    html.escape(RISK_LABEL.get(r["risk"], "")),
-                    buttons,
-                    r["id"],
-                )
-            )
-        sections.append(
-            f"<details class=show open><summary>{html.escape(show)} \u2014 {len(srows)} line(s)</summary>"
-            f"<ul>{''.join(lis)}</ul></details>"
-        )
-    saved = sum(r["episodes"] - 1 for r in rows)
-    return (
-        "<!doctype html><meta charset=utf-8>" + _VIEWPORT + "<title>DubTitlerr shared lines</title>"
-        f"<style>{_CSS}</style>"
-        '<h1>Shared lines</h1><p><a href="/">← all episodes</a></p>'
-        '<p><label>Order: <select id="shared-sort">'
-        '<option value="repeated" selected>most repeated first</option>'
-        '<option value="risk">risk first</option>'
-        "</select></label></p>"
-        f"<p><small>{len(rows)} line(s) that appear in more than one episode, grouped by show. "
-        f"Deciding one here settles it everywhere and removes {saved} repeat question(s) from "
-        "the episode queues. Grouped on the exact text pair, so the same sung line transcribed "
-        "two ways is still two decisions.</small></p>"
-        f"<div id=list>{''.join(sections)}</div>"
-        '<hr><div id=bar><button id="save">Save verdicts</button> <small id=tally></small></div>'
-        "<script>"
-        "const SS=document.getElementById('shared-sort'),SR={words:0,substitution:1,punctuation:2};"
-        # Sorts WITHIN each show's own <ul>, never across groups -- collecting every li into
-        # #list and re-appending there would flatten the grouping right back out on sort.
-        "function sortShared(mode){document.querySelectorAll('#list ul').forEach(ul=>{"
-        "const rows=[...ul.querySelectorAll('li[data-pair]')];"
-        "rows.sort((a,b)=>{let d=mode==='risk'?SR[a.dataset.risk]-SR[b.dataset.risk]:"
-        "Number(b.dataset.repeats)-Number(a.dataset.repeats);"
-        "return d||Number(a.dataset.pair)-Number(b.dataset.pair)});rows.forEach(row=>list.appendChild(row))}"
-        "const SHARED_SORT_KEY='dubtitlerr_shared_sort';"
-        "try{const saved=localStorage.getItem(SHARED_SORT_KEY);if(['repeated','risk'].includes(saved))SS.value=saved}catch(e){}"
-        "sortShared(SS.value);SS.addEventListener('change',()=>{sortShared(SS.value);"
-        "try{localStorage.setItem(SHARED_SORT_KEY,SS.value)}catch(e){}});"
-        "async function post(p,b){return (await fetch(p,{method:'POST',headers:{'Content-Type':'application/json',"
-        "'X-DubTitlerr-Request':'1'},"
-        "body:JSON.stringify(b)})).json()}"
-        "function chosen(){return [...document.querySelectorAll('#list input[type=radio]:checked')]"
-        ".map(r=>({id:r.name.slice(1),verdict:r.value,"
-        "text:(document.getElementById('t'+r.name.slice(1))||{}).value||''}))}"
-        "const SV=document.getElementById('save'),TAL=document.getElementById('tally');"
-        "function tally(){const n=chosen().length,"
-        "t=new Set([...document.querySelectorAll('#list input[type=radio]')].map(r=>r.name)).size;"
-        "SV.textContent=n?('Save '+n+' verdict'+(n==1?'':'s')):'Save verdicts';SV.disabled=!n;"
-        "TAL.textContent=(t-n)+' still undecided'}"
-        "document.addEventListener('change',e=>{if(e.target.type==='radio')tally()});"
-        # data-clear carries the radio GROUP name, so one handler serves both pages.
-        "document.addEventListener('click',function(ev){"
-        "const b=ev.target.closest&&ev.target.closest('button.clear');if(!b)return;"
-        "const g=b.getAttribute('data-clear');"
-        "document.querySelectorAll('#list input[type=radio]').forEach(function(r){if(r.name===g)r.checked=false});"
-        "tally()});"
-        # A second click on the already-chosen radio clears it too. The button is the
-        # discoverable route; this is for a reviewer who has learned the page.
-        "document.addEventListener('mousedown',function(ev){const r=ev.target;"
-        "if(r&&r.type==='radio')r.dataset.wasOn=r.checked?'1':''});"
-        "document.addEventListener('click',function(ev){const r=ev.target;"
-        "if(r&&r.type==='radio'&&r.dataset.wasOn){r.checked=false;r.dataset.wasOn='';tally()}});"
-        "tally();SV.addEventListener('click',async()=>{const d=chosen();if(!d.length)return;"
-        "if(d.some(x=>x.verdict==='correct'&&!/[^\\s\\u00ad\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u206f\\ufeff]/.test(x.text))){"
-        "alert('A correction needs text: type the corrected line, or pick another verdict.');return}"
-        "SV.disabled=true;const r=await post('/api/shared',{decisions:d});"
-        "if(r.error){alert(r.error);SV.disabled=false;return}"
-        "if(r.errors&&r.errors.length){alert('saved '+r.saved+', REFUSED '+r.errors.length+':\\n'+"
-        "r.errors.map(x=>'line '+x.id+': '+x.error).join('\\n'))}"
-        "location.reload()});"
-        "</script>"
-    )
-
-
-def render_page(stem: str = "") -> str:
-    """The review page. Deliberately plain -- this is the functional half, not the final UI.
-
-    Every value drawn from an episode goes through html.escape: the card text is ASR output
-    and model output, data this pipeline did not author, rendered by a root process. The
-    token is never embedded; the operator pastes the one printed to the container log."""
-    doc = handle_episode(stem) if stem else handle_index()
-    rows = []
-    for e in doc.get("entries", []):
-        warn = " <b>PERMANENT — this card has no reference</b>" if e.get("permanent") else ""
-        # Radios, not submit buttons. Every click used to be a POST and a full page reload,
-        # so working one episode threw the reviewer back to the top thirty times; the answers
-        # now sit on the page until they hand the whole episode back at once.
-        #
-        # Only the OFFERED verdicts are rendered -- the same closed set handle_decide_batch
-        # enforces. Rendering `force` on an admitted entry would invite a click the server
-        # then refuses, with the reviewer unable to tell why.
-        buttons = "".join(
-            f'<label><input type="radio" name="v{e["index"]}" value="{html.escape(v)}"> {html.escape(v)}</label> '
-            for v in e.get("offered", ())
-        )
-        # A radio group cannot be un-set by clicking, so a reviewer who picks a verdict and
-        # THEN wants to check the timestamp first has no way back to undecided: they either
-        # save something they are unsure of, or reload and lose the rest of the page.
-        # chosen() already submits only :checked rows, so clearing the row is enough to hold
-        # it back. Per ROW -- the reviewer is undoing one line, not abandoning the episode.
-        buttons += (
-            f'<button type="button" class="clear" data-clear="v{e["index"]}" title="leave this line undecided">clear</button>'
-        )
-        # Every card the line is on. Approximate by construction -- these are ASR word
-        # timings -- but a seek target within a second or two is what checking a line needs.
-        when = ", ".join(hms(t) for t in e.get("starts", ())) or "no card time"
-        # The cards either side, so the reviewer can see whether the queued line is a whole
-        # sentence or a fragment of one. Rendered per occurrence and in card order, with the
-        # queued line itself marked, because a repeated line's neighbours differ each time.
-        ctx = "".join(
-            "<div class=ctx>{}<b>{}</b>{}</div>".format(
-                "".join(f"<span>{html.escape(b)}</span> " for b in occ.get("before", ())),
-                html.escape(e.get("original_text", "")),
-                "".join(f" <span>{html.escape(a)}</span>" for a in occ.get("after", ())),
-            )
-            for occ in e.get("context", ())
-        )
-        rows.append(
-            '<li class="r{}" data-index="{}" data-risk="{}" data-start="{}" '
-            'data-length="{}">{}<div class=o>{}</div><div class=p>{}</div>'
-            "<small><b>{}</b> \u2014 {} \u2014 {}/{}{}</small><div>{}"
-            '<input id="t{}" placeholder="corrected text"></div></li>'.format(
-                html.escape(e.get("risk", "")),
-                e["index"],
-                html.escape(e.get("risk", "")),
-                min(e.get("starts") or [float("inf")]),
-                max(len(e.get("original_text", "")), len(e.get("proposed_text", ""))),
-                ctx,
-                html.escape(e.get("original_text", "")),
-                html.escape(e.get("proposed_text", "")),
-                html.escape(when),
-                html.escape(RISK_LABEL.get(e.get("risk", ""), "")),
-                html.escape(e.get("stage", "")),
-                html.escape(e.get("reason", "")),
-                warn,
-                buttons,
-                e["index"],
-            )
-        )
-    # Grouped show -> season, because rendered flat against the real library this was 294
-    # rows of links with no way to find anything. One Pace alone is 457 episodes, so grouping
-    # by show is not sufficient on its own.
-    groups: dict = {}
-    for ep in doc.get("episodes", []):
-        groups.setdefault(ep["show"], {}).setdefault(ep["season"], []).append(ep)
-    for show, seasons in sorted(groups.items(), key=lambda kv: -sum(e["admitted"] for s in kv[1].values() for e in s)):
-        eps_all = [e for s in seasons.values() for e in s]
-        adm, ref = sum(e["admitted"] for e in eps_all), sum(e["refused"] for e in eps_all)
-        inner = []
-        for season, eps in sorted(seasons.items()):
-            sa, sr = sum(e["admitted"] for e in eps), sum(e["refused"] for e in eps)
-            lis = []
-            for ep in eps:
-                href = "/?stem=" + html.escape(quote(ep["stem"], safe="/"))
-                # data-adm drives the toggle client-side: hiding server-side would make the
-                # count on the toggle a claim the page could not back up.
-                lis.append(
-                    f'<li class=ep data-adm="{ep["admitted"]}"><a href="{href}">{html.escape(ep["name"])}</a> '
-                    f"<span class=adm>{ep['admitted']} admitted</span> "
-                    f"<span class=ref>{ep['refused']} refused</span></li>"
-                )
-            inner.append(
-                f'<details class=season data-adm="{sa}"><summary>{html.escape(season)} — '
-                f"<b>{sa}</b> admitted, {sr} refused</summary><ul>{''.join(lis)}</ul></details>"
-            )
-        rows.append(
-            f'<details class=show data-adm="{adm}"{" open" if adm else ""}>'
-            f"<summary>{html.escape(show)} — <b>{adm}</b> admitted (shipped unchecked), "
-            f"{ref} refused by the guard</summary>{''.join(inner)}</details>"
-        )
-    # Only on an episode page. A verdict already changes what the NEXT repair run ships;
-    # this is for an episode that has ALREADY been muxed, where nothing would re-trigger it.
-    # It costs a re-mux of a multi-GB file, so the button says so rather than just doing it.
-    #
-    # TWO buttons, deliberately. Saving verdicts is cheap and changes what the NEXT repair
-    # run ships; applying costs a re-mux of a multi-GB file. One button for both would make
-    # every partial pass through an episode trigger one.
-    #
-    # Sticky, because an episode's queue is long -- 31 rows on the first S31 episode -- and a
-    # control the reviewer has to scroll to the end of the list to reach is a control they
-    # will not use.
-    apply_html = (
-        '<hr><div id=bar><button id="save">Save verdicts</button> '
-        '<button id="apply">Apply decisions to this episode</button> '
-        "<small id=tally></small><br>"
-        "<small>Save records your verdicts and stops repair re-applying those lines. Apply "
-        "rewrites the subtitle and drops the stamp, so the merge loop re-muxes the file — "
-        "only needed for an episode already muxed.</small></div>"
-        if stem
-        else ""
-    )
-    zero_adm = sum(1 for e in doc.get("episodes", []) if not e["admitted"])
-    hidden_refusals = sum(e["refused"] for e in doc.get("episodes", []) if not e["admitted"])
-    counts: dict = {}
-    for e in doc.get("entries", []):
-        counts[e.get("risk", "")] = counts.get(e.get("risk", ""), 0) + 1
-    controls = (
-        # On an episode page the order is a claim about what is below it, so the page backs
-        # the claim with the counts rather than leaving the reviewer to take it on trust.
-        '<p><label>Order: <select id="episode-sort">'
-        '<option value="risk" selected>risk first</option>'
-        '<option value="chronological">chronological</option>'
-        '<option value="queue">queue order</option>'
-        '<option value="longest">longest first</option>'
-        "</select></label> <small>Reorders this page only; verdicts keep their JSONL indexes.</small></p>"
-        "<p><small>Risk summary: "
-        + ", ".join(f"<b>{counts.get(k, 0)}</b> {RISK_LABEL[k]}" for k in RISK_ORDER)
-        + ". Times are the card start, approximate to the ASR word timings.</small></p>"
-        if stem
-        else (
-            '<p><a href="/shared">shared lines →</a> — the ones in more than one episode, '
-            "asked once instead of once per episode.</p>"
-            '<p><input id="filter" size=32 placeholder="filter by show or episode…"> '
-            f'<label><input type="checkbox" id="showall"> also show the {zero_adm} episodes with nothing '
-            f"admitted ({hidden_refusals} guard refusals — the audit backlog)</label></p>"
-        )
-    )
-    episode_sort_script = (
-        "const ES=document.getElementById('episode-sort'),ER={words:0,substitution:1,punctuation:2};"
-        "function sortEpisode(mode){const list=document.getElementById('list');"
-        "const rows=[...list.querySelectorAll('li[data-index]')];"
-        "rows.sort((a,b)=>{let d;if(mode==='chronological')d=Number(a.dataset.start)-Number(b.dataset.start);"
-        "else if(mode==='queue')d=Number(a.dataset.index)-Number(b.dataset.index);"
-        "else if(mode==='longest')d=Number(b.dataset.length)-Number(a.dataset.length);"
-        "else d=ER[a.dataset.risk]-ER[b.dataset.risk];"
-        "return d||Number(a.dataset.index)-Number(b.dataset.index)});rows.forEach(row=>list.appendChild(row))}"
-        "const EPISODE_SORT_KEY='dubtitlerr_episode_sort';"
-        "try{const saved=localStorage.getItem(EPISODE_SORT_KEY);"
-        "if(['risk','chronological','queue','longest'].includes(saved))ES.value=saved}catch(e){}"
-        "sortEpisode(ES.value);ES.addEventListener('change',()=>{sortEpisode(ES.value);"
-        "try{localStorage.setItem(EPISODE_SORT_KEY,ES.value)}catch(e){}});"
-        if stem
-        else ""
-    )
-    return (
-        "<!doctype html><meta charset=utf-8>" + _VIEWPORT + "<title>DubTitlerr review</title>"
-        f"<style>{_CSS}</style>"
-        "<h1>Review</h1>"
-        f"{controls}"
-        f"<div id=list>{''.join(rows)}</div>"
-        f"{apply_html}"
-        "<script>"
-        f"const STEM={_js(doc.get('stem', ''))};"
-        f"{episode_sort_script}"
-        # The session cookie rides along by itself; the header proves the write came from this page, not a cross-site form.
-        "async function post(p,b){return (await fetch(p,{method:'POST',headers:{'Content-Type':'application/json',"
-        "'X-DubTitlerr-Request':'1'},"
-        "body:JSON.stringify(b)})).json()}"
-        # One request for the whole episode. Sequential per-verdict posts would each be a
-        # read-modify-write of two whole files over the media mount, and concurrent ones
-        # would race each other.
-        "function chosen(){return [...document.querySelectorAll('#list input[type=radio]:checked')]"
-        ".map(r=>({index:Number(r.name.slice(1)),verdict:r.value,"
-        "text:(document.getElementById('t'+r.name.slice(1))||{}).value||''}))}"
-        "const SV=document.getElementById('save'),TAL=document.getElementById('tally');"
-        "function tally(){if(!TAL)return;const n=chosen().length,"
-        "t=document.querySelectorAll('#list li input[type=radio]').length?"
-        "new Set([...document.querySelectorAll('#list input[type=radio]')].map(r=>r.name)).size:0;"
-        "SV.textContent=n?('Save '+n+' verdict'+(n==1?'':'s')):'Save verdicts';SV.disabled=!n;"
-        "TAL.textContent=(t-n)+' still undecided'}"
-        "document.addEventListener('change',e=>{if(e.target.type==='radio')tally()});"
-        # data-clear carries the radio GROUP name, so one handler serves both pages.
-        "document.addEventListener('click',function(ev){"
-        "const b=ev.target.closest&&ev.target.closest('button.clear');if(!b)return;"
-        "const g=b.getAttribute('data-clear');"
-        "document.querySelectorAll('#list input[type=radio]').forEach(function(r){if(r.name===g)r.checked=false});"
-        "tally()});"
-        # A second click on the already-chosen radio clears it too. The button is the
-        # discoverable route; this is for a reviewer who has learned the page.
-        "document.addEventListener('mousedown',function(ev){const r=ev.target;"
-        "if(r&&r.type==='radio')r.dataset.wasOn=r.checked?'1':''});"
-        "document.addEventListener('click',function(ev){const r=ev.target;"
-        "if(r&&r.type==='radio'&&r.dataset.wasOn){r.checked=false;r.dataset.wasOn='';tally()}});"
-        "if(SV){tally();SV.addEventListener('click',async()=>{const d=chosen();if(!d.length)return;"
-        "if(d.some(x=>x.verdict==='correct'&&!/[^\\s\\u00ad\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u206f\\ufeff]/.test(x.text))){"
-        "alert('A correction needs text: type the corrected line, or pick another verdict.');return}"
-        "SV.disabled=true;const r=await post('/api/decide',{stem:STEM,decisions:d});"
-        # Errors are NAMED, not counted. A reviewer told "2 refused" cannot tell which two of
-        # their thirty verdicts did not land, and a verdict that vanishes quietly is the
-        # exact failure this loop exists to prevent.
-        "if(r.error){alert(r.error);SV.disabled=false;return}"
-        "if(r.errors&&r.errors.length){alert('saved '+r.saved+', REFUSED '+r.errors.length+':\\n'+"
-        "r.errors.map(x=>'entry '+x.index+': '+x.error).join('\\n'))}"
-        "else if(r.warning){alert(r.warning)}"
-        "location.reload()})}"
-        "const ap=document.getElementById('apply');"
-        "if(ap){ap.addEventListener('click',async()=>{ap.disabled=true;"
-        "const r=await post('/api/apply',{stem:STEM});"
-        "alert(r.error?r.error:(r.changed?('re-opened: '+r.changed+' card(s) changed'):"
-        "'nothing to apply for this episode'));ap.disabled=false})}"
-        # Hiding is right -- the refusal backlog is work the owner explicitly deferred -- but
-        # hiding it SILENTLY would make thousands of real items invisible to anyone who did
-        # not know the toggle existed, so the control names the count it conceals.
-        "const F=document.getElementById('filter'),SA=document.getElementById('showall');"
-        "function apply(){const q=(F&&F.value||'').toLowerCase(),all=SA&&SA.checked;"
-        "document.querySelectorAll('#list li.ep').forEach(li=>{"
-        "const t=li.textContent.toLowerCase(),adm=+li.dataset.adm;"
-        "li.style.display=((all||adm>0)&&(!q||t.includes(q)))?'':'none'});"
-        "document.querySelectorAll('#list details').forEach(d=>{"
-        "const vis=[...d.querySelectorAll('li.ep')].some(li=>li.style.display!=='none');"
-        "d.style.display=vis?'':'none';if(q&&vis)d.open=true});}"
-        "if(F){F.addEventListener('input',apply);SA.addEventListener('change',apply);apply()}"
-        "</script>"
-    )
-
-
-def render_locked(page_kind: str, setup: bool = False) -> str:
-    """The shell shown instead of render_page()/render_shared() when review_auth.decide()
-    refuses the GET -- same chrome (title, CSS, the token box and its JS) as the real
-    page, but the episode/shared list is never built: handle_index()/handle_episode()/
-    handle_shared() walk MERGE_ROOTS and the decision stores and return every stem and
-    every card's original/proposed text, so the one thing this shell must not do is
-    call any of them. NO script and NO fetch() call either -- there is nothing to save from
-    a page that was never shown data. page_kind ("page" or "shared") picks only the <h1>;
-    ``setup`` points at first-run setup instead of sign-in."""
-    h1 = "Shared lines" if page_kind == "shared" else "Review"
-    back = '<p><a href="/">← all episodes</a></p>' if page_kind == "shared" else ""
-    return (
-        "<!doctype html><meta charset=utf-8>" + _VIEWPORT + "<title>DubTitlerr review</title>"
-        f"<style>{_CSS}</style>"
-        f"<h1>{h1}</h1>"
-        f"{back}"
-        '<p id="needs-token">Sign in to load the queue.</p>'
-        "<p>"
-        + (
-            'No accounts exist yet: <a href="/review/setup">create the first admin</a>.'
-            if setup
-            else 'Or <a href="/review/login">sign in with your account</a>.'
-        )
-        + "</p>"
-    )
-
-
 def handle_healthz() -> tuple:
     """Return 200 OK or 503 Service Unavailable based on heartbeat conditions.
 
@@ -1730,25 +1348,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
 
         u = urlparse(self.path)
-        # The classic pages accept a signed-in session, the token header and, for these page routes only, the legacy token
-        # cookie (review_auth.authenticate). /api/* never reads that cookie.
-        hdrs = dict(self.headers.items())
-        if u.path == "/shared":
-            _role, why = review_auth.role_for("GET", "/shared", hdrs)
-            if why is not None:
-                return self._send(200, render_locked("shared", setup=why == 409).encode(), "text/html; charset=utf-8")
-            return self._send(200, render_shared().encode(), "text/html; charset=utf-8")
+        # One UI: the review workspace. The server-rendered pages are gone; their old URLs keep
+        # working as redirects so a bookmark cannot land on a surface that no longer exists.
         if u.path in ("/", "/index.html"):
-            stem = (parse_qs(u.query).get("stem") or [""])[0]
-            # One UI: the review workspace. The classic server-rendered page remains the fallback
-            # when web/dist was never built, and the deep-link target for ?stem= bookmarks that
-            # name an episode.
-            if not stem and (UI_DIST / "index.html").is_file():
-                return self._send(302, b"", "text/html; charset=utf-8", {"Location": "/review/"})
-            _role, why = review_auth.role_for("GET", u.path, hdrs)
-            if why is not None:
-                return self._send(200, render_locked("page", setup=why == 409).encode(), "text/html; charset=utf-8")
-            return self._send(200, render_page(stem).encode(), "text/html; charset=utf-8")
+            return self._send(302, b"", "text/html; charset=utf-8", {"Location": "/review/"})
+        if u.path == "/shared":
+            return self._send(302, b"", "text/html; charset=utf-8", {"Location": "/review/#/shared"})
         if u.path == "/healthz":
             status, payload = handle_healthz()
             return self._send(status, payload)

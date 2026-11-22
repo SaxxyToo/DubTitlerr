@@ -1027,8 +1027,8 @@ Access is controlled by `ROUTE_ROLES`. Every route requires a specific role: `pu
 | GET    | `/review`, `/review/*`    | `public`  | Single-page application assets and review workspace                      |
 | POST   | `/api/webhook/sonarr`     | `public`* | Sonarr webhook receiver (*requires `WEBHOOK_TOKEN` header or query)      |
 | POST   | `/api/webhook/radarr`     | `public`* | Radarr webhook receiver (*requires `WEBHOOK_TOKEN` header or query)      |
-| GET    | `/`, `/index.html`        | `user`    | Redirects to `/review/` once the workspace is built; classic page fallback and `?stem=<episode>` deep links |
-| GET    | `/shared`                 | `user`    | Lines appearing in two or more episodes                                  |
+| GET    | `/`, `/index.html`        | `public`  | Redirects to `/review/`; the server-rendered page is gone                |
+| GET    | `/shared`                 | `public`  | Redirects to `/review/#/shared`                                          |
 | GET    | `/api/audio`              | `user`    | Audio dialogue clip playback for cue review                              |
 | GET    | `/api/episodes`           | `user`    | List episodes with pending review items                                  |
 | GET    | `/api/shows`              | `user`    | List library shows                                                       |
