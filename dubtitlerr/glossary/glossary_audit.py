@@ -206,6 +206,7 @@ def _write_cleanup(path: str, run: dict) -> str:
         if isinstance(loaded, dict) and isinstance(loaded.get("runs"), list):
             doc = loaded
     except (OSError, ValueError):
+        # A missing or corrupt cleanup log just starts a fresh one.
         pass
     doc["runs"] = (doc["runs"] + [run])[-MAX_CLEANUP_RUNS:]
     from dubtitlerr.glossary.glossary_acquire import _write_json  # call time: acquire imports verify

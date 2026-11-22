@@ -130,6 +130,7 @@ def host_problem(url: str) -> str:
         try:  # legacy IPv4 spellings: 2852039166, 0xA9FEA9FE, 169.254.43518
             candidates.append(ipaddress.ip_address(socket.inet_ntoa(socket.inet_aton(host))))
         except (OSError, ValueError):
+            # Not a legacy numeric IPv4 spelling either: leave `candidates` empty and let the caller refuse the host.
             pass
     for address in candidates:
         if _is_refused_address(address):

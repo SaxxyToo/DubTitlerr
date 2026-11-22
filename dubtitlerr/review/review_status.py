@@ -76,6 +76,7 @@ def _read_repair_summary(stem: str) -> str | None:
                 model = data.get("model")
                 return str(model) if model is not None else None
     except (OSError, ValueError, TypeError):
+        # No status file, or an unreadable one: the caller reports 'unknown'.
         pass
     return None
 

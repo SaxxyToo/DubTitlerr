@@ -88,6 +88,7 @@ def _sanitize(text, key: str = "", url: str = "") -> str:
             if parts.query:
                 out = out.replace(parts.query, "[redacted]")
         except Exception:
+            # An unparseable value is returned untouched: a half-applied redaction would hide less than the regex sweep below.
             pass
     out = re.sub(r"://[^:/@]+:[^@]+@", "://[redacted]:[redacted]@", out)
     return out[:200]

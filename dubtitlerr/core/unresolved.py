@@ -184,6 +184,7 @@ def _load_counters(stem: str) -> dict:
                     doc[key] = {}
             return doc
     except (OSError, ValueError):
+        # A missing or corrupt state doc falls through to the fresh document built above.
         pass
     return {"counts": {}, "days": {}, "sampled": {}, "sample_day": {}}
 

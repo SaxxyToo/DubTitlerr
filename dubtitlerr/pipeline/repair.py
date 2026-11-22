@@ -255,6 +255,7 @@ def _retry_wait(retry_after, attempt):
         if math.isfinite(wait) and wait >= 0:
             return min(wait, 30.0)
     except (TypeError, ValueError):
+        # An absent or non-numeric Retry-After falls through to the 2 s/4 s backoff: the header is untrusted input.
         pass
     return 2.0 * 2**attempt
 
@@ -646,6 +647,7 @@ def _post_json(url, body, headers=None):
         try:
             sock[0].shutdown(socket.SHUT_RDWR)
         except Exception:
+            # The socket may never have connected, or is already shut down; the blocked read still wakes on `expired`.
             pass
 
     watchdog = threading.Timer(deadline, _expire)

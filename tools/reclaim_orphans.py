@@ -161,6 +161,7 @@ def find_matches(root: str) -> list[Match]:
                 try:
                     videos[os.path.getsize(p)].append(p)
                 except OSError:
+                    # A file that vanished between the walk and the stat is not an orphan candidate.
                     pass
             elif fn.endswith(common.STAMP_SUFFIX):
                 stamps.append(p)

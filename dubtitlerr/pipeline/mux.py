@@ -295,6 +295,7 @@ def video_duration(path):
         if d > 0:
             return d
     except (TypeError, ValueError):
+        # A missing or non-numeric ffprobe duration falls through to the tag and then the container figure.
         pass
     tagged = _parse_duration((st.get("tags") or {}).get("DURATION"))
     if tagged is not None:
@@ -599,11 +600,13 @@ def finalize_sidecar(orig, stem, src, stamp, apply) -> str:
                 if os.path.exists(dest) and not os.path.exists(src):
                     os.replace(dest, src)
             except OSError:
+                # Rollback is best effort: the sidecar stays put and the original OSError is re-raised below.
                 pass
         log(f"  ERROR: sidecar finalize failed ({e}); video untouched, sidecar retried next pass")
         try:
             write_stage(stem, "mux", "unwritable", str(e))
         except OSError:
+            # Advisory stage note: a failed write must not mask the sidecar-finalize error being reported.
             pass
         return "sidecar-write-failed"
 
@@ -693,6 +696,7 @@ def cleanup_old_temps(stem: str, now: float | None = None) -> None:
                 if (current_time - st.st_mtime) > 6 * 3600:
                     os.remove(full_path)
             except OSError:
+                # Pruning is best effort: a file that vanished between the walk and the stat is simply skipped.
                 pass
 
 
@@ -708,6 +712,7 @@ def process(orig, apply):
             try:
                 write_stage(stem, "mux", "crashed", "recovery-pending")
             except OSError:
+                # Nothing was executed here: a failed stage write only costs this pass its INCOMPLETE note.
                 pass
         return "recovery-pending"
     if apply:
@@ -771,6 +776,7 @@ def process(orig, apply):
                 try:
                     os.remove(out)
                 except OSError:
+                    # Best effort: the re-mux below writes this path anyway.
                     pass
             if already_delivered(read_stamp(stamp), orig, "mux"):
                 return "already-muxed"
@@ -795,6 +801,7 @@ def process(orig, apply):
             try:
                 os.remove(out)
             except OSError:
+                # Best effort: the temp output is `.muxtmp`-suffixed and swept by the next pass.
                 pass
             log(
                 f"  ERROR: muxed OK but stamp write FAILED ({e}) — {os.path.basename(orig)} "
@@ -807,11 +814,13 @@ def process(orig, apply):
                 try:
                     os.remove(stamp)
                 except OSError:
+                    # The stamp is already invalid: leaving it behind costs only one extra re-mux.
                     pass
             if os.path.exists(out):
                 try:
                     os.remove(out)
                 except OSError:
+                    # Best effort: `orig` is untouched and the next sweep retries cleanly.
                     pass
             if already_delivered(read_stamp(stamp), orig, "mux"):
                 return "already-muxed"
@@ -834,6 +843,7 @@ def process(orig, apply):
                 try:
                     os.remove(stem + suff)
                 except OSError:
+                    # Leftovers of an install that already succeeded; a failed delete is swept next pass.
                     pass
             with open(stem + ".dubtitles.mux.log", "w") as f:
                 f.write(f"muxed {os.path.basename(orig)} -> mkv; eng audio + Dubtitles default\n")
@@ -849,6 +859,7 @@ def process(orig, apply):
             try:
                 os.remove(stamp)
             except OSError:
+                # The stamp is not 'done' for a tree this run failed on: a stale stamp only costs one retry.
                 pass
         if isinstance(e, FinalizeCopyError) and os.path.exists(out):
             # a failed cross-device copy overwrites final (== orig for an .mkv) in place,

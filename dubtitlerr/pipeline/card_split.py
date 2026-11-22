@@ -100,6 +100,7 @@ def _duration_split(text1: str, text2: str, total_dur: float, words: list | None
                 dur1 = (w_cut - w_start) / span * avail
                 return dur1, avail - dur1
         except (KeyError, TypeError, ZeroDivisionError):
+            # Malformed word timings fall back to the even split computed below.
             pass
     total_chars = len(text1) + len(text2)
     dur1 = avail * len(text1) / total_chars

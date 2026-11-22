@@ -80,6 +80,7 @@ def read(show, environ=None):
                 try:
                     targets = max(targets, int(entry.get("targets") or 0))
                 except (TypeError, ValueError):
+                    # A non-numeric target count counts as absent; the entry is still unresolved.
                     pass
                 last_at = entry.get("at") or last_at
                 last_episode = episode or last_episode

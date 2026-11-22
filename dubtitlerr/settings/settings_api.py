@@ -616,6 +616,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
                 try:
                     self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 except OSError:
+                    # NODELAY only trims the handshake latency; a socket that refuses it still connects.
                     pass
                 return
             except OSError as e:
@@ -639,6 +640,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
                 try:
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 except OSError:
+                    # NODELAY only trims the handshake latency; a socket that refuses it still connects.
                     pass
                 server_hostname = self._tunnel_host or self.host
                 self.sock = self._context.wrap_socket(sock, server_hostname=server_hostname)

@@ -3,6 +3,20 @@ name: CodeQL
 # for public repositories and uploads SARIF to the Security tab; it is deliberately a separate
 # workflow from ci.yml because it needs security-events: write and the CI gate must stay
 # contents: read.
+#
+# Scope is deliberately `security-extended`, not `security-and-quality`. The quality half of that
+# suite (py/file-not-closed, py/empty-except, py/side-effect-in-assert, py/cyclic-import, unused
+# locals...) is a code-review concern, and against a tree with a 5,900-test suite it produced ~400
+# of ~610 alerts, almost all of them inside tests/. A Security tab that is two-thirds test-fixture
+# style noise is a Security tab nobody reads, which buries the alerts that do matter. Code style is
+# gated by ruff in ci.yml instead. tests/ and web/tests/ are excluded for the same reason: fixtures
+# open files, assert on calls and use throwaway credentials on purpose.
+#
+# The suite is named through the action's `queries` input rather than the config file because a
+# config file names a suite as `- uses: security-extended`, and test_public_repo_hygiene reads every
+# `uses:` line in this directory as an action reference that must be pinned to a commit SHA. The
+# input overrides the config file's own `queries` setting, so the two do not conflict: paths come
+# from `config`, the suite comes from `queries`.
 on:
   push:
     branches: [main]
@@ -34,7 +48,11 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
-          queries: security-and-quality
+          queries: security-extended
+          config: |
+            paths-ignore:
+              - tests
+              - web/tests
       - uses: github/codeql-action/analyze@d2aacf54c2fbc910db8d7ec338fdb54ea48c692d # v3
         with:
           category: "/language:${{ matrix.language }}"

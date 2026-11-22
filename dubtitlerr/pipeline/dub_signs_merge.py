@@ -128,6 +128,7 @@ def list_attachment_filenames(video):
             if atts:
                 return atts
     except Exception:
+        # No usable attachment list from mkvmerge: fall through to the ffprobe probe below.
         pass
     try:
         r = subprocess.run(
@@ -156,6 +157,7 @@ def list_attachment_filenames(video):
                 if (st.get("tags") or {}).get("filename")
             ]
     except Exception:
+        # Probe failed or carried no filenames: the caller treats that as 'no attachments'.
         pass
     return []
 
@@ -782,6 +784,7 @@ def process_one(srt):
         try:
             os.remove(part)
         except OSError:
+            # Best effort: `.part` is rewritten by the next build and swept with the other leftovers.
             pass
 
     try:
@@ -819,6 +822,7 @@ def process_one(srt):
     try:
         os.remove(srt)
     except OSError:
+        # Best effort: the srt is superseded by the .ass just installed, and a failed delete is swept next pass.
         pass
     log(f"  signs/songs/credits kept={signs}  dub lines={dub}")
     write_stage(stem, "signs", "ok")

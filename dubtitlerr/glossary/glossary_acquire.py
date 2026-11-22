@@ -1445,6 +1445,7 @@ def _acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str 
             try:
                 os.remove(gloss_path + ".tmp")
             except OSError:
+                # Best effort: the `.tmp` is overwritten by the next write, and the failure being handled is re-raised.
                 pass
             return {"show": show, "wiki": api, "note": f"write-failed: {e}", "files": files}
     if journal is not None and apply:

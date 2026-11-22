@@ -1088,6 +1088,7 @@ def clear_park(stem):
     try:
         os.remove(_park_path(stem))
     except OSError:
+        # Already absent: 'never raises' is this function's whole contract.
         pass
 
 
@@ -1365,6 +1366,7 @@ def _record(stem, result, parked, failures_before=None):
 
         common.write_stage(stem, "gate_fix", outcome, f"{result['outcome']}: {result['summary']}"[:300])
     except (ImportError, OSError, ValueError):
+        # The stage note is advisory; the verdict is already in the audit doc written above.
         pass
 
 

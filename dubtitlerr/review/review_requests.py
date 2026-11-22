@@ -403,6 +403,7 @@ def list_shows(anime_root: str | None = None) -> list[str]:
             if validate({"show": name}, anime_root=aroot)["show"] == name:
                 out.append(name)
         except Refused:
+            # A name the validator refuses is not a show; the loop keeps the names that pass.
             pass
     return sorted(out)
 
@@ -499,6 +500,7 @@ def create(
                     except (OSError, ValueError):
                         continue
         except OSError:
+            # Request dir unreadable: fall through with whatever was collected.
             pass
 
         # Timestamp & ID with microsecond precision
@@ -868,6 +870,7 @@ def recover_running(requests_dir: str | None = None, now: Any = None) -> list[st
                 dest = finish(entry.path, ok=False, error="interrupted by restart", now=now)
                 recovered.append(dest)
     except OSError:
+        # Dir unreadable: nothing to recover, and recovery must never block startup.
         pass
     return recovered
 
