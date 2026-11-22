@@ -34,9 +34,17 @@ episode's own ``.dubtitles.words.json`` timeline, and rebuilds the presentation:
     reach ``MIN_DISPLAY`` where the gap to the next card allows it, never exceed
     ``MAX_DISPLAY``, and always leave ``MIN_GAP`` -- so back-to-back <80 ms
     "churn" gaps cannot be produced.
+  * **Speaker turns.** A card that holds TWO utterances with a real pause between
+    them is a merged ping-pong block (`'Where is he?'` / `'Gone.'`). Where the
+    evidence is unambiguous it is written as the fansub two-line block -- each
+    speaker's line prefixed with ``- `` -- so a reader can tell the mouths apart.
+    A card that is one word on each side (`'Pleiades.'` / `'Processor.'`) is left
+    alone: one speaker listing two names sounds exactly the same. The dash is a
+    MARK, never a word: :func:`content_tokens` strips it, and the word invariant is
+    checked on the stripped sequence, so P31's comparison stays mechanical.
   * **Nothing else.** No word is added, removed, reordered, re-spelled or
     re-cased. Punctuation and capitalisation belong to the restoration stage
-    (P31), speaker dashes to P30. The invariant is enforced mechanically:
+    (P31). The invariant is enforced mechanically:
     :func:`restructure` refuses (returns the input untouched) unless the
     whitespace-split token sequence of the output equals the input's, and the
     file writer re-checks it before replacing anything on disk.
@@ -47,10 +55,15 @@ Uncertainty produces the ORIGINAL card, never a guess:
 
   * a card whose tokens cannot be aligned to the word stream is a barrier -- it is
     never merged, never split, never re-timed, and no unit crosses it;
+  * a turn is only marked where a pause, a segment boundary, two complete sentences
+    and a two-line layout all agree; everything else keeps its single line;
+  * a card that already carries a turn marker is kept VERBATIM and is a barrier --
+    a sourced track's own attribution is never re-derived or overwritten;
   * a layout that would need an unpublishable card (over the gate's 88-char /
     46-char-line / 7.5 s ceilings) is abandoned and that unit keeps its cards;
   * no usable ``words.json`` means structure-only: cards may be joined where the
     join is unambiguous, and nothing is re-timed from invented audio positions.
+    Turns need word timing, so a structure-only pass inserts no dashes at all.
 
 In-app re-pass
 --------------
@@ -112,11 +125,17 @@ STRETCH_WORD_MAX = 1.5  # a single word claiming longer than this is a DTW artif
 MIN_TRUST_CPS = 4.0
 MAX_RECORDS = 200  # audit detail cap per episode (counters are never capped)
 
+# Speaker turns (P30). A dash is a MARK, never a word -- see content_tokens().
+TURN_PREFIX = "- "
+TURN_PAUSE = 0.30  # a real pause BETWEEN two speakers, inside one card
+TURN_LINE_MAX = MAX_LINE - len(TURN_PREFIX)  # 40: a turn line must fit ONE display line
+
 SENT_END = ".!?…"
 CLAUSE = ",;:"
 _TRAILING_QUOTES = "\"'”’)]}*"
+_TURN_LINE = re.compile(r"^\s*-\s+")
 
-PRESENTATION_EPOCH = 1
+PRESENTATION_EPOCH = 2  # 2 = speaker-turn dashes (P30)
 STAMP_SUFFIX = ".dubtitles.presentation.json"
 
 
@@ -130,6 +149,30 @@ def flatten(text: str) -> str:
 
 def tokens(text: str) -> list[str]:
     return flatten(text).split()
+
+
+def turn_marked(text: str) -> bool:
+    """True when this card already carries the fansub ``- `` speaker marker."""
+    raw = str(text or "").replace("\\N", "\n").replace("\\n", "\n")
+    return any(_TURN_LINE.match(line) for line in raw.split("\n"))
+
+
+def content_tokens(text: str) -> list[str]:
+    """Tokens with the leading speaker marker removed, line by line.
+
+    The P31 invariant hook: the dash is a MARK, not a word, so the word-sequence
+    comparison (and the "my rebuild changed no word" check) must be made on the text
+    with the marker stripped. Both sides of that comparison go through here, which
+    also makes a sourced track's own markers symmetric instead of a token difference.
+    """
+    out: list[str] = []
+    raw = str(text or "").replace("\\N", "\n").replace("\\n", "\n")
+    for line in raw.split("\n"):
+        toks = line.split()
+        if toks and toks[0] == "-":
+            toks = toks[1:]
+        out.extend(toks)
+    return out
 
 
 def _norm(token: str) -> str:
@@ -161,6 +204,18 @@ def _first_letter(text: str) -> str:
 
 def _wrappable(text: str) -> bool:
     return all(len(ln) <= MAX_LINE for ln in reflow.wrap_balance(text).split("\n"))
+
+
+def _wrap_card(text: str) -> str:
+    """Wrap one card, respecting a turn break the turn detector already placed.
+
+    ``wrap_balance`` would re-flow a two-line turn card as one balanced paragraph and
+    throw the attribution away, so each line of an already-broken card is wrapped on
+    its own; the break survives because it is the boundary between two speakers.
+    """
+    if "\n" not in text:
+        return reflow.wrap_balance(text)
+    return "\n".join(reflow.wrap_balance(line) for line in text.split("\n") if line.strip())
 
 
 def _repeat_run(text: str) -> bool:
@@ -493,26 +548,32 @@ def _split_text(
 
 def _unit_cards(unit: list[dict], ranges: list[tuple[int, int] | None], words: list[dict] | None) -> tuple[list[dict], dict]:
     """Display cards for one sentence unit, plus this unit's contribution to the audit."""
+    info = {"splits": 0, "clause_splits": 0, "refused": False}
+    if len(unit) == 1 and unit[0].get("sourced_turn"):
+        # A sourced track's own attribution is a deliverable, not a guess: the card is
+        # kept verbatim (both lines, both markers) and never merged, split or wrapped.
+        c = unit[0]
+        s0, e0 = _speech(c, ranges[0], words)
+        return [{"text": c["text"], "speech_start": s0, "speech_end": e0, "verbatim": True}], info
     text = _join_text([c["text"] for c in unit])
     speech = (_speech(unit[0], ranges[0], words)[0], _speech(unit[-1], ranges[-1], words)[1])
     run = None
     if words is not None and ranges[0] is not None and ranges[-1] is not None:
         run = words[ranges[0][0] : ranges[-1][1] + 1]
-    info = {"splits": 0, "clause_splits": 0, "refused": False}
     # A unit splits when its TEXT cannot be displayed as one card. A long speech span
     # is handled by clamping the display (see _time_cards), never by cutting the
     # sentence: `'It'` + `'hurts...'` was the old span rule, and it is a fragment.
     needs_split = len(text) > MAX_CHARS or not _wrappable(text)
     pieces = _split_text(text, speech, run) if needs_split else [(text, speech, run)]
     cards = []
-    for piece, pspeech, _ in pieces:
+    for piece, pspeech, prun in pieces:
         # A piece past the hard ceiling is the one fault this stage cannot repair
         # without changing words: fail closed to the original cards. Duration is not
         # checked here -- the display is clamped below MAX_DISPLAY, under the gate's.
         if _hard_faults(piece):
             info["refused"] = True
             return [dict(c) for c in unit], info
-        cards.append({"text": piece, "speech_start": pspeech[0], "speech_end": pspeech[1]})
+        cards.append({"text": piece, "speech_start": pspeech[0], "speech_end": pspeech[1], "_run": prun})
     if len(cards) > 1:
         info["splits"] = len(cards) - 1
         info["clause_splits"] = sum(1 for c in cards[:-1] if _ends_clause(c["text"]))
@@ -565,6 +626,85 @@ def _time_cards(cards: list[dict], audio_duration: float | None) -> tuple[list[d
     return cards, stats
 
 
+# --- speaker turns ------------------------------------------------------------------
+
+
+def detect_turn(text: str, word_run: list[dict] | None, display: float) -> tuple[str, float] | None:
+    """Return ``(two-line dash-prefixed text, pause at the seam)`` for a two-speaker card.
+
+    Every one of these must hold at the seam, or the card is left exactly as it is:
+
+      * the card's tokens map 1:1 onto its own words -- a pause has to be MEASURABLE;
+      * the first utterance ENDS a sentence and the second starts a capital or an
+        opening quote -- a lowercase continuation is one sentence, not a reply;
+      * a real pause mid-card (``TURN_PAUSE``) AND a whisper segment boundary, i.e.
+        the ASR itself heard a break rather than a DTW wobble;
+      * both sides are complete sentences (terminal marks on both ends);
+      * each side fits ONE display line including its ``- `` marker, so the card is
+        the classic two-line block rather than a three-line wall;
+      * exactly ONE seam qualifies -- three speakers cannot be a two-line card;
+      * both sides are not one word each. Two one-word utterances around a pause are
+        as likely one speaker listing (`'Pleiades.'` / `'Processor.'`); a wrong
+        attribution reads worse than no attribution, so it is withheld.
+
+    The dashes are a display mark and never part of a word -- :func:`content_tokens`
+    strips them, which is what keeps the word-sequence invariant mechanical.
+    """
+    toks = tokens(text)
+    if len(toks) < 2 or not word_run or len(word_run) != len(toks):
+        return None
+    seams: list[int] = []
+    for k in range(1, len(toks)):
+        left, right = " ".join(toks[:k]), " ".join(toks[k:])
+        if not is_terminal(left) or not is_terminal(right):
+            continue
+        if not (right[:1].isupper() or right[:1] in "\"'“‘"):
+            continue
+        if word_run[k].get("seg", 0) == word_run[k - 1].get("seg", 0):
+            continue
+        gap = word_run[k]["start"] - word_run[k - 1]["end"]
+        if gap < TURN_PAUSE - reflow.EPS:
+            continue
+        if len(left) > TURN_LINE_MAX or len(right) > TURN_LINE_MAX:
+            continue
+        if k == 1 and len(toks) == 2:
+            continue  # both sides one word each: indistinguishable from one speaker listing
+        marks = f"{TURN_PREFIX}{left}\n{TURN_PREFIX}{right}"
+        if _hard_faults(marks):
+            continue
+        if reflow.card_cps(marks, max(display, reflow.MIN_DUR)) > MAX_CPS + reflow.EPS:
+            continue
+        seams.append(k)
+    if len(seams) != 1:
+        return None
+    k = seams[0]
+    gap = word_run[k]["start"] - word_run[k - 1]["end"]
+    return f"{TURN_PREFIX}{' '.join(toks[:k])}\n{TURN_PREFIX}{' '.join(toks[k:])}", gap
+
+
+def _apply_turns(cards: list[dict], report: dict) -> None:
+    """Mark speaker turns on already-timed cards; counters and audit go to ``report``.
+
+    Runs AFTER timing because the readability guard needs the display duration, and a
+    dash adds two visible characters per line. Text-only: no time moves, so the
+    timing counters describe exactly the same layout with or without the dashes.
+    """
+    for c in cards:
+        run = c.pop("_run", None)
+        if c.get("verbatim") or turn_marked(c["text"]):
+            continue
+        found = detect_turn(c["text"], run, c["end"] - c["start"])
+        if not found:
+            continue
+        marked, gap = found
+        c["text"] = marked
+        report["turn_dashes"] += 1
+        left, right = (ln[len(TURN_PREFIX) :] for ln in marked.split("\n"))
+        report.setdefault("turn_records", []).append(
+            {"at": round(c["start"], 2), "pause": round(gap, 2), "turn": f"{left} | {right}"}
+        )
+
+
 # --- the engine ---------------------------------------------------------------------
 
 
@@ -596,6 +736,8 @@ def restructure(
         "refused_units": 0,
         "stretched_segments": 0,
         "stretched_words": 0,
+        "turn_dashes": 0,
+        "sourced_turn_cards": 0,
         "words_preserved": True,
     }
     if not cards:
@@ -608,7 +750,15 @@ def restructure(
             c["speech_start"] = c.get("source_start", c["start"])
         if not c.get("speech_end"):
             c["speech_end"] = c.get("source_end", c["end"])
-        c["text"] = flatten(c["text"])
+        if turn_marked(c.get("text", "")):
+            # A source track's own `- ` markers are authorship, not layout: keep the
+            # card verbatim (lines included) and make it a barrier, so no join, split,
+            # wrap or new dash can touch what the source already decided.
+            c["sourced_turn"] = True
+            c["text"] = str(c["text"]).replace("\\N", "\n").replace("\\n", "\n").strip()
+            report["sourced_turn_cards"] += 1
+        else:
+            c["text"] = flatten(c["text"])
         norm.append(c)
 
     repaired = words
@@ -619,7 +769,7 @@ def restructure(
     ranges = validate_ranges(norm, ranges, repaired)
     report["unmapped_cards"] = sum(1 for r in ranges if r is None)
 
-    before_tokens = [t for c in norm for t in tokens(c["text"])]
+    before_tokens = [t for c in norm for t in content_tokens(c["text"])]
 
     # --- assemble sentence units ---
     units: list[tuple[list[dict], list]] = []
@@ -638,6 +788,8 @@ def restructure(
         usable = repaired is None or (ranges[i - 1] is not None and ranges[i] is not None)
         runt_bridge = (
             not usable
+            and not prev.get("sourced_turn")
+            and not nxt.get("sourced_turn")
             and _repeat_run(prev["text"])
             and nxt["start"] - prev["end"] <= MERGE_PAUSE + reflow.EPS
             and len(_join_text([prev["text"], nxt["text"]])) <= MAX_CHARS
@@ -645,6 +797,8 @@ def restructure(
         same_unit = nxt_speech[1] - unit_start <= MAX_UNIT_SPAN and (
             (
                 usable
+                and not prev.get("sourced_turn")
+                and not nxt.get("sourced_turn")
                 and (
                     (not is_terminal(prev["text"]) and _continues(prev, nxt, ranges[i - 1], ranges[i], gap))
                     or _join_short(prev, nxt, prev_speech, nxt_speech, gap)
@@ -703,9 +857,21 @@ def restructure(
                 laid[i]["end"] = ceiling
                 report["churn_clamps"] += 1
 
-    out = [{"start": c["start"], "end": c["end"], "text": reflow.wrap_balance(c["text"])} for c in laid]
+    # Speaker turns last: they only add marks, and the readability guard needs the
+    # display duration that timing just decided.
+    _apply_turns(laid, report)
+    records.extend(report.pop("turn_records", []))
 
-    after_tokens = [t for c in out for t in tokens(c["text"].replace("\n", " "))]
+    out = [
+        {
+            "start": c["start"],
+            "end": c["end"],
+            "text": c["text"] if c.get("verbatim") else _wrap_card(c["text"]),
+        }
+        for c in laid
+    ]
+
+    after_tokens = [t for c in out for t in content_tokens(c["text"])]
     report["cards_after"] = len(out)
     if before_tokens != after_tokens:
         # The invariant is the owner's rule ("words never change"). A rebuild that

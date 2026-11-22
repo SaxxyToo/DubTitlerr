@@ -57,7 +57,9 @@ def _quality(cards):
 
 
 def _flat_tokens(texts):
-    return [t for txt in texts for t in presentation.tokens(txt.replace("\n", " "))]
+    # The turn dash is a display MARK, not a word: it is stripped on both sides of the
+    # comparison (this is the same hook P31's invariant uses).
+    return [t for txt in texts for t in presentation.content_tokens(txt)]
 
 
 def test_86_s01e01_is_rebuilt_into_sentence_units_without_churn():
@@ -105,11 +107,14 @@ def test_toradora_s01e24_is_equal_or_better_on_every_axis():
 
 def test_sourced_track_without_words_is_structure_only_and_fail_closed():
     """JJK S01E19 has no words.json: cards may join, nothing is re-timed from invented
-    audio, and the churn gap -- a pure display property -- is still removed."""
+    audio, and the churn gap -- a pure display property -- is still removed. Turns need
+    measured pauses, so a no-words pass inserts NO dashes."""
     cards = _cards(JJK_ASS)
     out, report = presentation.restructure(cards, None, None)
     before, after = _quality(cards), _quality(out)
     assert report["words_preserved"] is True
+    assert report["turn_dashes"] == 0
+    assert not any(presentation.turn_marked(c["text"]) for c in out)
     assert after["churn"] == 0
     assert after["orphan"] == 0
     assert after["cards"] <= before["cards"]
@@ -119,6 +124,136 @@ def test_sourced_track_without_words_is_structure_only_and_fail_closed():
     assert min(c["start"] for c in out) >= min(c["start"] for c in cards) - 1e-6
     assert max(c["end"] for c in out) <= max(c["end"] for c in cards) + 1e-6
     assert [c["start"] for c in out] == sorted(c["start"] for c in out)
+
+
+# --- P30: speaker turns -------------------------------------------------------------
+
+
+def _run(*specs):
+    """Word run from (text, start, end, seg) tuples."""
+    return [{"text": t, "start": a, "end": b, "seg": s} for t, a, b, s in specs]
+
+
+def test_86_s01e01_marks_the_two_speaker_blocks_with_dashes():
+    """The merged question/answer blocks get the fansub `- ` convention; nothing else."""
+    cards = _cards(E86_ASS)
+    out, report = presentation.restructure(cards, _words(E86_WORDS), None)
+    marked = [c["text"] for c in out if presentation.turn_marked(c["text"])]
+
+    assert report["turn_dashes"] == len(marked) == 3
+    assert "- Not the other way around?\n- Correct." in marked
+    assert "- Gather round.\n- Morning." in marked
+    assert "- I want them!\n- Hey, calm down." in marked
+    for text in marked:
+        lines = text.split("\n")
+        assert len(lines) == 2  # the classic two-line block
+        assert all(ln.startswith(presentation.TURN_PREFIX) for ln in lines)
+        assert all(len(ln) <= presentation.MAX_LINE for ln in lines)
+    # Zero dashes where there is no turn: a single speaker's sentence pair is not one,
+    # however many sentence boundaries it holds.
+    assert "Back to business. We can't find a single handler to take this post." not in marked
+
+    # Every marked card really does hold a sentence boundary inside it; a card without
+    # one can never be dashed.
+    def has_inner_boundary(text):
+        toks = presentation.tokens(text)
+        return any(presentation.is_terminal(" ".join(toks[:k])) for k in range(1, len(toks)))
+
+    assert not any(presentation.turn_marked(c["text"]) for c in out if not has_inner_boundary(c["text"]))
+    # The invariant still holds with the marks: strip the dashes and the word sequence
+    # is byte-identical to the delivered file's.
+    assert _flat_tokens([c["text"] for c in out]) == _flat_tokens([c["text"] for c in cards])
+
+
+def test_toradora_s01e24_marks_the_rapid_ping_pong_blocks():
+    cards = _cards(TORA_ASS)
+    out, report = presentation.restructure(cards, _words(TORA_WORDS), None)
+    marked = [c["text"] for c in out if presentation.turn_marked(c["text"])]
+
+    assert report["turn_dashes"] == len(marked) == 6
+    assert "- And your breath stinks.\n- Shut up!" in marked
+    assert "- Happy now?\n- Later!" in marked
+    assert "- So cool, don't you think?\n- Mm-hmm." in marked
+    assert "- Don't you think?\n- Yeah!" in marked
+    assert "- So I can love you.\n- Ryuuji." in marked
+    assert "- You hear that? She's laughing!\n- Yeah, I know." in marked
+    # `'God, Mom. So childish.'` is a pause under TURN_PAUSE: no dash, fail closed.
+    assert "God, Mom. So childish." not in marked
+    assert _flat_tokens([c["text"] for c in out]) == _flat_tokens([c["text"] for c in cards])
+
+
+def _seam(left: list[str], right: list[str], pause: float, right_seg: int = 1) -> list[dict]:
+    """A word run for ``left | right`` with ``pause`` seconds of silence at the seam."""
+    run: list[dict] = []
+    t = 0.0
+    for word in left:
+        run.append({"text": " " + word, "start": t, "end": t + 0.2, "seg": 0})
+        t += 0.2
+    t += pause
+    for word in right:
+        run.append({"text": " " + word, "start": t, "end": t + 0.2, "seg": right_seg})
+        t += 0.2
+    return run
+
+
+def test_detect_turn_is_fail_closed_on_every_uncertain_signal():
+    """One missing piece of evidence and the card keeps its single line."""
+    # Positive: a pause, a segment seam, two complete sentences, two lines.
+    got = presentation.detect_turn("Where is he? Gone.", _seam(["Where", "is", "he?"], ["Gone."], 0.4), 2.0)
+    assert got is not None and got[0] == "- Where is he?\n- Gone." and round(got[1], 3) == 0.4
+
+    def no(mark, text, run, display=4.0):
+        assert presentation.detect_turn(text, run, display) is None, mark
+
+    no("pause under TURN_PAUSE", "Where is he? Gone.", _seam(["Where", "is", "he?"], ["Gone."], 0.2))
+    no("same whisper segment", "Where is he? Gone.", _seam(["Where", "is", "he?"], ["Gone."], 0.4, right_seg=0))
+    no("lowercase continuation", "Where is he? gone.", _seam(["Where", "is", "he?"], ["gone."], 0.4))
+    no("right side is not a sentence", "Where is he? Gone", _seam(["Where", "is", "he?"], ["Gone"], 0.4))
+    no("two single-word sides", "Pleiades. Processor.", _seam(["Pleiades."], ["Processor."], 0.44))
+    long_right = ["Gone."] * 6 + ["Right", "then."]
+    no(
+        "right side would need a third line",
+        "Where is he? " + " ".join(long_right),
+        _seam(["Where", "is", "he?"], long_right, 0.4),
+    )
+    # Two qualifying seams are three speakers: not a two-line card.
+    three = _seam(["Where", "is", "he?"], ["Gone", "now."], 0.4)
+    t = three[-1]["end"] + 0.4
+    for word in ("Right", "then."):
+        three.append({"text": " " + word, "start": t, "end": t + 0.2, "seg": 2})
+        t += 0.2
+    no("three speakers", "Where is he? Gone now. Right then.", three)
+
+
+def test_a_sourced_track_keeps_its_own_markers_verbatim_and_gets_no_new_ones():
+    cards = [
+        {"start": 1.0, "end": 3.0, "text": "- What?\\N- Yeah."},
+        {"start": 3.05, "end": 4.5, "text": "It's me."},
+    ]
+    words = _run((" It's", 3.1, 3.3, 0), (" me.", 3.3, 3.5, 0))
+    out, report = presentation.restructure(cards, words, None)
+
+    assert report["sourced_turn_cards"] == 1
+    assert report["turn_dashes"] == 0
+    assert out[0]["text"] == "- What?\n- Yeah."  # both markers, both lines, untouched
+    assert out[1]["text"] == "It's me."  # never merged into the sourced block
+    assert presentation.content_tokens("- What?\n- Yeah.") == ["What?", "Yeah."]
+
+
+def test_dashes_land_in_the_file_and_survive_the_gate(tmp_path):
+    stem = str(tmp_path / "Show" / "ep01")
+    os.makedirs(os.path.dirname(stem), exist_ok=True)
+    shutil.copy(TORA_ASS, stem + ".dub.en.ass")
+    shutil.copy(TORA_WORDS, stem + ".dubtitles.words.json")
+
+    report, changed = presentation.restructure_file(stem + ".dub.en.ass", {"words": _words(TORA_WORDS)}, None)
+    assert changed is True and report["turn_dashes"] == 6
+    text = open(stem + ".dub.en.ass", encoding="utf-8-sig").read()
+    assert "\\N- " in text
+    assert publish_gate.evaluate(publish_gate.parse_ass(text, style="Dubtitles"), None) == []
+    # A second pass sees the markers as authorship: it preserves them and adds none.
+    again, _ = presentation.restructure_file(stem + ".dub.en.ass", {"words": _words(TORA_WORDS)}, None)
+    assert again["sourced_turn_cards"] == 6 and again["turn_dashes"] == 0
 
 
 def test_an_unmapped_card_is_a_barrier(tmp_path):

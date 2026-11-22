@@ -17,6 +17,7 @@ import subprocess
 import sys
 
 from dubtitlerr.core import common
+from dubtitlerr.pipeline import presentation
 
 MERGE_PASS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "merge_pass.sh")
 
@@ -772,7 +773,7 @@ def test_presentation_repass_stamps_a_delivered_episode_once(tmp_path, monkeypat
 
     res = _run(tmp_path, root)
     stamp = json.load(open(stem + ".dubtitles.presentation.json"))
-    assert stamp["epoch"] == 1, (stamp, res.stdout, res.stderr)
+    assert stamp["epoch"] == presentation.PRESENTATION_EPOCH, (stamp, res.stdout, res.stderr)
     assert stamp["outcome"] in ("rebuilt", "no-op"), (stamp, res.stdout, res.stderr)
     assert "presentation: scanned=1" in res.stdout, res.stdout
 
@@ -781,7 +782,7 @@ def test_presentation_repass_stamps_a_delivered_episode_once(tmp_path, monkeypat
     delivered = open(stem + ".eng.dubtitles.ass", encoding="utf-8").read()
     _run(tmp_path, root)
     assert open(stem + ".eng.dubtitles.ass", encoding="utf-8").read() == delivered
-    assert json.load(open(stem + ".dubtitles.presentation.json"))["epoch"] == 1
+    assert json.load(open(stem + ".dubtitles.presentation.json"))["epoch"] == presentation.PRESENTATION_EPOCH
 
 
 def test_presentation_repass_is_off_when_disabled(tmp_path, monkeypatch):
