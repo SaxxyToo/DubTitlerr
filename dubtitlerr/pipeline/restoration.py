@@ -715,6 +715,16 @@ def apply_episode(stem: str, dry_run: bool = False, force: bool = False, ask=Non
                 backup = f.read()
         except OSError:
             backup = None
+    from dubtitlerr.pipeline import publish_gate
+
+    try:
+        duration = publish_gate.video_duration(stem)
+    except Exception:  # noqa: BLE001 - a missing duration only drops the tail clamp
+        duration = None
+    # The verdict this episode arrived with. Restoring the previous bytes is only correct
+    # when this pass makes the gate WORSE; a refusal the input already carried belongs to
+    # the stage downstream that repairs it, not to a rollback that discards the text work.
+    fails_before = publish_gate.evaluate(publish_gate.load_cues(stem)[1], duration) if backup is not None else []
     report, changed = apply_file(path, stem=stem, dry_run=dry_run, ask=ask)
     report["path"] = os.path.basename(path)
     if not changed:
@@ -724,21 +734,20 @@ def apply_episode(stem: str, dry_run: bool = False, force: bool = False, ask=Non
         if not dry_run and report["outcome"] not in ("llm-unavailable", "partial"):
             _write_stamp(stem, path, report, report["outcome"])
         return report
-    from dubtitlerr.pipeline import publish_gate
 
-    try:
-        duration = publish_gate.video_duration(stem)
-    except Exception:  # noqa: BLE001 - a missing duration only drops the tail clamp
-        duration = None
     fails = publish_gate.evaluate(publish_gate.load_cues(stem)[1], duration)
-    if fails:
+    worse = publish_gate.regressions(fails_before, fails)
+    if worse:
         if backup is not None:
             atomic_write(path, lambda f: f.write(backup), mode=MODE_KEEP)
         report["outcome"] = "regressed"
-        report["fails"] = fails
+        report["fails"] = worse
+        report["pre_existing_fails"] = fails_before
         if not dry_run:
             _write_stamp(stem, path, report, "regressed")
         return report
+    if fails:
+        report["pre_existing_fails"] = fails
     if report.get("outcome") == "partial":
         return report  # written, not stamped: the next pass retries the model work
     report["outcome"] = "restored"

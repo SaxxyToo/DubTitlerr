@@ -1134,6 +1134,13 @@ def apply_episode(stem: str, dry_run: bool = False, force: bool = False) -> dict
                 backup = f.read()
         except OSError:
             backup = None
+    from dubtitlerr.pipeline import publish_gate
+
+    # The gate verdict this episode arrived with. A rebuild that leaves the file no worse
+    # than this is kept even when the file still refuses: the refusals already in hand are
+    # the input's problem (a later stage may repair them), never a reason to throw away
+    # every other improvement. JJK S01E12 lost a 268 -> 215 card rebuild this way.
+    fails_before = publish_gate.evaluate(publish_gate.load_cues(stem)[1], duration) if backup is not None else []
     report, changed = restructure_file(path, words_doc, duration, dry_run=dry_run)
     report["path"] = os.path.basename(path)
     report["words_source"] = "words.json" if words_doc else "cues-only"
@@ -1142,21 +1149,26 @@ def apply_episode(stem: str, dry_run: bool = False, force: bool = False) -> dict
         if not dry_run:
             _write_stamp(stem, report, report["outcome"])
         return report
-    # Fail-closed: re-gate the file we just wrote. A refusal means the rebuild made the
-    # file unpublishable, so the previous bytes go back and the epoch is not advanced.
-    from dubtitlerr.pipeline import publish_gate
-
+    # Fail-closed: re-gate the file we just wrote. A refusal that is NEW or WORSE than the
+    # one the input carried means the rebuild made the file less publishable, so the
+    # previous bytes go back and the epoch is not advanced.
     fails = publish_gate.evaluate(publish_gate.load_cues(stem)[1], duration)
-    if fails:
+    worse = publish_gate.regressions(fails_before, fails)
+    if worse:
         if backup is not None:
             atomic_write(path, lambda f: f.write(backup), mode=MODE_KEEP)
         report["outcome"] = "regressed"
-        report["fails"] = fails
+        report["fails"] = worse
+        report["pre_existing_fails"] = fails_before
         if not dry_run:
             # Stamp the attempt: a rebuild that the gate refuses is deterministic, and
             # retrying it every merge pass is the churn this stamp exists to prevent.
             _write_stamp(stem, report, "regressed")
         return report
+    if fails:
+        # Kept, but the episode still carries refusals it arrived with: record them so the
+        # downstream repair (gate_fix) is visibly the stage that has to clear them.
+        report["pre_existing_fails"] = fails
     report["outcome"] = "rebuilt"
     if not dry_run:
         _write_stamp(stem, report, "rebuilt")
