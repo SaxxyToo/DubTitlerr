@@ -1428,6 +1428,22 @@ def test_a_multi_word_over_duration_card_is_never_clamped(tmp_path):
     assert words_of(stem) == [w for _, _, t in cues for w in t.split()]
 
 
+def test_a_clamp_that_cannot_fit_still_parks(tmp_path):
+    """Fail closed: the next card is 0.3 s away, so no legal clamp exists — refuse."""
+    cues = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
+    cues.append((100.0, 118.0, "Hello?"))
+    cues += [(100.3 + i, 101.3 + i, f"And line {i} again.") for i in range(PAD)]
+    stem = write_episode(tmp_path, cues)
+    path = stem + ".eng.dubtitles.ass"
+    before = read(path)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert "single unbroken token" in result["summary"], result["summary"]
+    assert read(path) == before
+
+
 def test_the_clamp_keeps_every_other_card_byte_identical(tmp_path):
     cues = padded(100.0, 119.0, "Hello?")
     stem = write_episode(tmp_path, cues)
