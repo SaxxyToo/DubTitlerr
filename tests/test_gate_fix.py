@@ -21,7 +21,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dubtitlerr.core.atomic_file import atomic_write
-from dubtitlerr.pipeline import gate_fix, publish_gate
+from dubtitlerr.pipeline import gate_fix, presentation, publish_gate
 
 ASS_HEAD = (
     """[Script Info]
@@ -1456,3 +1456,31 @@ def test_the_clamp_keeps_every_other_card_byte_identical(tmp_path):
     assert len(after) == len(before)
     changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
     assert len(changed) == 1, changed
+
+
+# --- P35: the S01E12 chain end to end, on the episode's own bytes ---------------------
+# JJK S01E12 shipped its raw ASR track: presentation built 268 -> 215 cards, re-gated the
+# result, saw the 57-char scream card it had INHERITED, and restored the input. The fix keeps
+# the rebuild and leaves that one refusal to the stage that owns it. This test walks the real
+# chain -- raw bytes -> presentation -> gate_fix -> gate -- so the whole path is proven, not
+# just the revert rule.
+
+
+def test_the_live_jjk_s01e12_rebuild_is_kept_and_the_inherited_wrap_ships(tmp_path):
+    stem = _live_episode(tmp_path, "jjk_s01e12_live_slice.ass", "jjk_s01e12_live_slice.words.json")
+    inherited = ["line of 57 chars (max 46)"]
+    assert gate_fails(stem) == inherited, gate_fails(stem)
+
+    report = presentation.apply_episode(stem)
+
+    assert report["outcome"] == "rebuilt", report
+    assert report["pre_existing_fails"] == inherited, report
+    assert report["cards_after"] < report["cards_before"], report
+    # the rebuild kept the refusal it arrived with -- that is gate_fix's queue, not a reason
+    # to discard the whole pass
+    assert gate_fails(stem) == inherited, gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert gate_fails(stem) == []

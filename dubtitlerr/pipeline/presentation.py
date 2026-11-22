@@ -135,7 +135,7 @@ CLAUSE = ",;:"
 _TRAILING_QUOTES = "\"'”’)]}*"
 _TURN_LINE = re.compile(r"^\s*-\s+")
 
-PRESENTATION_EPOCH = 2  # 2 = speaker-turn dashes (P30)
+PRESENTATION_EPOCH = 3  # 2 = speaker-turn dashes (P30); 3 = keep the rebuild on an inherited refusal
 STAMP_SUFFIX = ".dubtitles.presentation.json"
 
 

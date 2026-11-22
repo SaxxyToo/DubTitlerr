@@ -111,7 +111,7 @@ import time
 from dubtitlerr.core.atomic_file import MODE_KEEP, atomic_write
 from dubtitlerr.pipeline import presentation, punctuation
 
-RESTORATION_EPOCH = 1  # 1 = punctuation/caps/spacing/house style (P31)
+RESTORATION_EPOCH = 2  # 1 = punctuation/caps/spacing/house style (P31); 2 = same inherited-refusal rule
 STAMP_SUFFIX = ".dubtitles.restoration.json"
 MAX_BATCH = 12  # cards per model call
 MAX_REJECT_EVENTS = 20
