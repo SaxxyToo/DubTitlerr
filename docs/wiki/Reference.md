@@ -899,6 +899,8 @@ python3 -m dubtitlerr.core.notify subscribed --event episode.delivered   # exit 
 | `flagged`            | object | Terms a human still has to decide, or that the verifier could not confirm. Each value is a reason string or an object `{"reason", "canonical", ...}`. See the table below |
 | `known`              | list   | Terms a human marked correct as they stand                                                                                                                                |
 | `acquired`           | object | Provenance of each name acquisition or a human review wrote                                                                                                               |
+| `review_rulings`     | object | Durable review verdicts, keyed by the casefolded term: `{decision: "dismiss"\|"apply", reason, canonical, by: "auto"\|"operator", policy}`. A dismissed variant never re-queues |
+| `review_policy`      | object | Last per-tier counter snapshot written by the review policy (P33 reads this)                                                                                              |
 | `arc_titles`         | object | Arc name (or `scope:<rung>:<season>`) to the wiki titles stored for it. Written by `--tag-arcs`                                                                           |
 | `arc_coverage`       | object | Per arc: how many titles, whether redirects finished, whether it is waived or stale. The gate trusts this                                                                 |
 | `arc_titles_missing` | list   | Arcs whose fetch came back empty, partial or under `ARC_MIN_TITLES`. While it is non-empty the arc gate does nothing                                                      |
@@ -917,6 +919,9 @@ python3 -m dubtitlerr.core.notify subscribed --event episode.delivered   # exit 
 | `expansion-guarded`         | An expansion a guard blocked, shown only when `VERIFY_QUEUE_BLOCKED_EXPANSIONS=1` and the title has more tokens | Writes the expansion to `phrases`   |
 | `low-confidence`            | The model had a candidate and was not sure                                                                      | Accepts the candidate               |
 | `possessive_floor_crossing` | A possessive form that crossed the mining floor                                                                 | Keeps both forms                    |
+| `unseen-needs-evidence`     | A real spelling difference the transcript never corroborates                                                    | Accepts the candidate               |
+| `conflicts-with-curated-fix`| The proposal disagrees with a fix a person owns                                                                 | Overrides the curated fix           |
+| `no-wiki-match`             | A tier-B candidate from a different lookup, not on this wiki's title list                                       | Accepts the candidate               |
 | `no-match`                  | No candidate. Not queued unless `VERIFY_QUEUE_NO_MATCH=1`                                                       | Marks the term correct as it stands |
 
 `--review` lists decisions first, in that order, and collapses the no-match terms into one line;
@@ -963,7 +968,7 @@ non-https URL, or an internal/link-local host is refused before any request.
 
 `glossary_audit` cross-references a glossary's `names` against its own `flagged` map and the wiki
 cache, and **acts on** entries that are junk-classified yet still listed as names: a flag reason
-(`english-word`, `sentence-initial-only`, `common-word`, `no-match`, `no-wiki-match`, `below-floor`)
+(`english-word`, `sentence-initial-only`, `common-word`, `no-match`, `below-floor`)
 or a capitalised ordinary English word with no exact wiki page. An exact wiki title protects a name
 however ordinary it looks (`Fern`, `Hero`, `Land`), and a lowercase entry (`mana`, `mage`) is treated
 as curated prompt vocabulary, never junk. It runs in the nightly sweep right after VERIFY with
@@ -980,16 +985,51 @@ Exit `0` = nothing left to fix (clean, or clean after `--fix`), `1` = junk repor
 (`--fix` had no wiki to decide on, or the report-only mode was used), `2` = the glossary could not be
 read.
 
-### Bounded flag storage
+### Review policy: tiers, durable verdicts and backfill
 
 VERIFY and ACQUIRE re-classify the same unsettled terms every sweep, so guard verdicts used to pile
-up as review entries (Frieren: ~666 of 798). They now land in `archived_flags` as counts by class
+up as review entries (Frieren: ~666 of 798; the live library reached 1,877, 82% of them
+`english-word`). The review policy now resolves each generated verdict by tier, at generation time:
+
+| Tier | Reasons | What happens |
+| ---- | ------- | ------------ |
+| 1 | `english-word`, `below-floor`, `sentence-initial-only` | Dismissed into `archived_flags` counts + `.archived.jsonl`. **Guardrail:** only when the variant matches no exact wiki title, no cast term (`names`/`phrases`/`known`/`acquired`) and no `hard_fix`; without cached wiki titles the verdict is queued (fail-closed) |
+| 2 | `respelling-needs-review`, `possessive_floor_crossing` | The correction is applied as a `hard_fix` only when the canonical is already a glossary canonical (names/phrases/fix value), the effect is a spelling fix, and no curated fix disagrees. Anything else is queued |
+| 3 | `unseen-needs-evidence`, `conflicts-with-curated-fix`, `no-wiki-match`, and every unknown reason | Queued: the only entries that need a person |
+| — | `common-word`, `no-match` | Collapsed to counts (P24); neither carries a decision |
+
+Every dismissal/approval (auto or operator) writes a durable `review_rulings` entry, so the same
+variant+reason cannot re-enter the queue on a later sweep. Auto decisions also append a JSON line to
+`<glossary>.review-audit.jsonl` with the shape shared with the P33 audit view:
+
+```json
+{"at": 1795319493.2, "term": "Magic", "reason": "english-word", "decision": "dismiss",
+ "tier": 1, "canonical": "Magic Knight", "applied": null, "guard": null,
+ "by": "auto", "policy": "p32-v1", "show": "Frieren ..."}
+```
+
+`undo` removes an auto ruling and the fix only if the policy wrote it (a human-owned `run: review`
+fix is never touched). Drain an existing pile with the backfill tool; it reads each show's cached
+wiki titles and leaves the file byte-identical when nothing is due:
+
+```sh
+python3 -m dubtitlerr.glossary.review_policy "/config/glossaries/<Show>.json" [--titles FILE] [--dry-run]
+python3 -m dubtitlerr.glossary.review_policy --dir /config/glossaries --dry-run   # whole library
+python3 -m dubtitlerr.glossary.review_policy "/config/glossaries/<Show>.json" --undo <Term>
+```
+
+A bulk rewrite first copies the glossary to `<file>.bak-p32-<UTC stamp>`. Exit `0` = drained or
+nothing due, `1` = a load/write failure, `2` = bad arguments.
+
+### Bounded flag storage
+
+Guard verdicts still land in `archived_flags` as counts by class
 (`{"counts": {"english-word": 412, "below-floor": 180, ...}, "total": 666}`), recomputed on each
 write and therefore stable across reruns, while their full entries are appended (deduplicated by
 term+reason) to `<glossary>.archived.jsonl`. Entry-form `flagged` is kept for the classes a human
 actually decides: `respelling-needs-review`, `low-confidence`, `unseen-needs-evidence`,
-`conflicts-with-curated-fix`, `possessive_floor_crossing`, `transcript-new-term` (and acquire's
-`share-too-close`/`not-in-arc-pages`/`expansion-guarded`).
+`conflicts-with-curated-fix`, `possessive_floor_crossing`, `transcript-new-term`, `no-wiki-match`
+(and acquire's `share-too-close`/`not-in-arc-pages`/`expansion-guarded`).
 
 `glossary_verify` can be run by hand:
 
