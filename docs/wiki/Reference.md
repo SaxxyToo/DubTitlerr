@@ -464,6 +464,43 @@ reference text but no recorded role — every entry queued before this change �
 which is a different question: the anchor exists, its role is unknown. Older queue entries without
 these fields still read.
 
+### External reference acquisition (Jimaku)
+
+A release that ships no subtitle track has nothing to classify, which is also the case
+`glossary_acquire` documents: no mineable track means no names. `dubtitlerr/core/refs/` fills that
+gap by fetching one Japanese track from [Jimaku](https://jimaku.cc) (the Kitsunekko successor,
+keyed to AniList IDs) and **refusing it unless it provably belongs to this video**. An acquired
+track has `translation` provenance, never `dub`: it is the original-language wording, which is a
+disambiguation anchor, not the dub's text.
+
+| Step | Module | What it decides |
+| --- | --- | --- |
+| entry | `refs/match.py` | Is this the series, and the season? `Season 2`, `II`, `第2期`; a later cour (`Part 2`, 第2クール) never matches |
+| file | `refs/match.py` | Does the file name state **this** episode? `S01E05`, `1x05`, `- 05`, `第5話`, `05v2`, `01-04`; a season pack names no episode and is never used |
+| encoding | `core/subtitle_encoding.py` | BOM, then strict UTF-8, then the language's codecs (`ja`: cp932/Shift-JIS/EUC-JP/ISO-2022-JP), then scored legacy codepages |
+| admission | `core/subtitle_fit.py` | Overrun, coverage, and — when a witness exists — line-start agreement at the best offset |
+
+Admission constants, measured against this repo's own artifacts (28 cross-episode pairs):
+
+| Constant | Value | Meaning |
+| --- | --- | --- |
+| `MIN_SHARE` | `0.60` | Share of the candidate's line starts that find a witness start within 0.3 s at the best offset |
+| `MIN_LIFT` | `0.10` | How far that share must beat the same measurement at an arbitrary offset (a dense track scores ~0.72 by density alone) |
+| `MIN_CUES` | `20` | A shorter track can coincide by luck; the 5- and 12-cue fixture slices scored 0.60 against unrelated episodes |
+| `MAX_OFFSET` | `90` s | Beyond this the candidate is another cut, and the search must not be talked into finding an offset |
+| `OVER_RUN` | 10 % or 120 s | Cues ending past this are a different cut, not a stray sign |
+
+The lane is a module CLI, not a loop stage — nothing is muxed and no glossary entry is admitted from
+it:
+
+```bash
+JIMAKU_API_KEY=... python3 -m dubtitlerr.core.refs.acquire \
+  --anilist-id 154587 --season 1 --episode 5 --video /media/.../Show.S01E05.mkv --out /tmp/refs
+```
+
+Exit status `0` means a reference was admitted, `1` means none passed (reasons on stdout as JSON),
+`2` is a usage or key error. Downloads are https-only and restricted to `jimaku.cc` hosts.
+
 ---
 
 ## Environment variables
@@ -736,6 +773,7 @@ The muxed `Dubtitles` track is appended last and flagged default, so the relativ
 | `JELLYFIN_URL` / `JELLYFIN_API_KEY` / `JELLYFIN_USER` | _(empty)_ / _(empty)_ / _(empty: every user)_ | Jellyfin direct watch source; an empty user aggregates all users                                                                                                                                        |
 | `PLEX_URL` / `PLEX_TOKEN` / `PLEX_SECTION` | _(empty)_ / _(empty)_ / `7` | Plex refresh and watch source                                                                                                                                                                                             |
 | `PLEX_PATH`                                | _(empty)_                   | Path prefix Plex sees, if it differs                                                                                                                                                                                      |
+| `JIMAKU_API_KEY`                           | _(empty: acquisition off)_  | Free key from jimaku.cc; used by `dubtitlerr.core.refs.acquire` to fetch a Japanese reference track for a show whose release ships none                                                                                   |
 
 **How a watched show finds its folder:** by the show's TVDB id first — WatchState's
 `parent.guid_tvdb`, the `tvdb://` Guid on the Plex show, or Jellyfin's `ProviderIds.Tvdb` —
