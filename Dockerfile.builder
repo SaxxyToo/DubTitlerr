@@ -15,6 +15,8 @@ FROM mccloud/subgen:2026.06.2
 # and jellyfish (Metaphone, glossary.py tier-4 phonetic match -- V2 A4/A5).
 # wamerican = /usr/share/dict/american-english, the English-word gate for glossary.py (C1).
 # mkvtoolnix = mkvmerge for the D1 mux stage (embed .ass + fonts as a default Dubtitles track).
+# libarchive-tools = bsdtar, which core/refs/acquire.py uses to read the .rar archives Jimaku
+# entries ship (Debian's libarchive reads RAR3/RAR5; rarfile would need non-free unrar).
 # webrtcvad (Timing Compare U3/T8): tools/vad.py's --vad webrtcvad backend. tools/ itself
 # isn't COPY'd into this image (offline analytics, run standalone -- matches
 # tools/bakeoff.py, also not baked in); installed here anyway so the dep is available if
@@ -27,7 +29,7 @@ FROM mccloud/subgen:2026.06.2
 # to pyproject.toml, which is where this project declares its ranges.
 # hadolint ignore=DL3008,DL3013
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3-pip wamerican mkvtoolnix git tzdata \
+    && apt-get install -y --no-install-recommends python3-pip wamerican mkvtoolnix git tzdata libarchive-tools \
     && python3 -m pip install --no-cache-dir pysubs2 jellyfish \
     && (python3 -m pip install --no-cache-dir webrtcvad || echo "webrtcvad install failed -- analytics-only, use --vad ffmpeg-silencedetect; NOT fatal for generation") \
     && rm -rf /var/lib/apt/lists/*
