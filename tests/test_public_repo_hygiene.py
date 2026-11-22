@@ -278,3 +278,67 @@ def test_reusable_ci_uses_least_privilege_permissions():
     assert not offenders, (
         f"every ci.yml job must run with contents: read and without packages: write; offending jobs: {offenders}"
     )
+
+
+# ---- Repository operations ---------------------------------------------------------------
+# The workflows are part of the published product, not private plumbing. These checks keep the
+# supply-chain and contribution surfaces honest as the workflow count grows.
+
+
+def test_every_remote_action_is_pinned_to_a_commit_sha():
+    """A tag can be repointed; a workflow that runs with the checkout must name a commit.
+
+    Local reusable workflows (`./.github/workflows/...`) are exempt: they are this repo's own
+    code, reviewed by the same PR. Everything under `uses:` is either a 40-character SHA or a
+    failure -- `@v4` is not a pin, it is a moving target.
+    """
+    root = Path(__file__).resolve().parents[1]
+    offenders = []
+    for path in sorted((root / ".github/workflows").glob("*.yml")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.split("#", 1)[0]
+            match = re.search(r"\buses:\s*(\S+)", stripped)
+            if not match:
+                continue
+            reference = match.group(1)
+            if reference.startswith("./"):
+                continue
+            if not re.search(r"@[0-9a-f]{40}$", reference):
+                offenders.append(f"{path.name}:{number}: {reference}")
+    assert not offenders, "remote actions must be pinned to a 40-character commit SHA:\n" + "\n".join(offenders)
+
+
+def test_dependabot_covers_every_ecosystem_the_repo_ships():
+    """The SHA pins move only if Dependabot can see the files that hold them."""
+    root = Path(__file__).resolve().parents[1]
+    text = (root / ".github/dependabot.yml").read_text(encoding="utf-8")
+    for ecosystem in ("uv", "npm", "github-actions", "docker"):
+        assert f"package-ecosystem: {ecosystem}" in text, f"dependabot.yml does not cover {ecosystem}"
+
+
+def test_issue_forms_are_the_only_way_in_and_security_has_a_private_route():
+    root = Path(__file__).resolve().parents[1]
+    config = (root / ".github/ISSUE_TEMPLATE/config.yml").read_text(encoding="utf-8")
+    assert "blank_issues_enabled: false" in config, "blank issues bypass the form fields"
+    assert "security/advisories/new" in config, "the security contact must use private advisories"
+    for form in ("bug_report.yml", "feature_request.yml"):
+        assert (root / ".github/ISSUE_TEMPLATE" / form).exists(), f"missing issue form: {form}"
+
+
+def test_security_reports_go_to_this_repository_not_upstream():
+    """The fork inherited SECURITY.md from upstream; a report sent to XenaRathon's tracker
+    reaches a maintainer who cannot fix this fork's code."""
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "SECURITY.md").read_text(encoding="utf-8")
+    assert "XenaRathon/DubTitlerr/issues" not in text
+    assert "SaxxyToo/DubTitlerr/security/advisories/new" in text
+
+
+def test_no_stale_upstream_overlay_dockerfile():
+    """Dockerfile.fork pinned the last UPSTREAM release and copied this fork's package into it.
+    The upstream image predates the package layout, so the overlay could not run the fork's
+    code; keeping it only advertised a build path that was already broken."""
+    root = Path(__file__).resolve().parents[1]
+    assert not (root / "Dockerfile.fork").exists()
+    for name in ("README.md", "docs/wiki/Home.md"):
+        assert "Dockerfile.fork" not in (root / name).read_text(encoding="utf-8"), f"{name} still points at the removed overlay"

@@ -59,7 +59,11 @@ run then does is decided by the persisted processing state (below), not by a har
 escalation pairs. Releases up to 0.2.2 check it only before a glossary step starts, so an
 acquire step runs to its end or to `ACQUIRE_TIMEOUT`.
 
-The container runs as **root**, so `generate.py` can chown into the media tree. `Dockerfile` builds a merge-only image (signs and dub merge, no transcribe or repair) and is deprecated. `Dockerfile.builder` is the recommended image.
+The container runs as **root** so the pipeline can chown into a bind-mounted media tree:
+`python3 -m dubtitlerr.pipeline.generate` writes each sidecar as `MEDIA_UID:MEDIA_GID`, and
+`chown` needs `CAP_CHOWN`. The two supported images are `Dockerfile.builder` (local Whisper,
+review UI, ~13 GB) and `Dockerfile.lite` (endpoint ASR only, under 1 GB); `Dockerfile.builder`
+is the recommended full build.
 
 ---
 

@@ -68,10 +68,17 @@ npx playwright test
 | `gen_loop.sh`, `merge_pass.sh`, `container_run.sh` | Supervisors; the most fragile surface |
 | `docs/wiki/` | Tutorial, how-to, reference and rationale pages |
 
-## Pull requests
+## Branches and pull requests
 
-- Conventional Commits with a scope where it fits: `fix:`, `feat:`, `docs:`, `test(web):`, `chore:`.
+`main` is protected: every change lands through a pull request, required checks must be green,
+and the branch is deleted on merge. There are no direct pushes, including version bumps.
+
+- Branch from `main` and name it for the change: `feat/...`, `fix/...`, `test/...`, `docs/...`,
+  `chore/...`. A worker/card branch is deleted when its PR merges; a merged branch left behind
+  is how a branch list turns into sixty refs.
 - One concern per PR. A version bump is its own PR.
+- Conventional Commits with a scope where it fits: `fix:`, `feat:`, `docs:`, `test(web):`,
+  `chore:`. The `pr-title` check enforces the shape; it does not enforce taste.
 - Fill in the PR template; "tests pass" needs the command and its result.
 - Do not commit secrets, config volumes, media, or the `graphify-out/` cache.
 - A merge is not a release. Tags are cut deliberately from `main`; see

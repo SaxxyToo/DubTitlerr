@@ -9,7 +9,7 @@ DubTitlerr transcribes English-dub anime audio into subtitles, repairs them with
 - **Layout:** the pipeline lives in the `dubtitlerr/` package (`core/`, `pipeline/`, `glossary/`, `review/`, `settings/`); the shells at the repo root drive stages as `python3 -m dubtitlerr.<sub>.<module>`. There are no top-level pipeline scripts.
 
 - **Commits** follow Conventional Commits with a scope where one fits: `fix:`, `feat:`, `docs:`, `test(web):`, `chore:`.
-- **Checks before pushing:** `scripts/check.sh` runs ruff then the full suite; `scripts/check.sh --dash` also runs the shell loops under dash. Both finish clean before a PR.
+- **Checks before pushing:** `scripts/check.sh` runs ruff then the full suite; `scripts/check.sh --dash` also runs the shell loops under dash; `scripts/check.sh --cov` adds branch coverage. All finish clean before a PR. CI also runs CodeQL, dependency review, shellcheck, a Dockerfile.lite build and the documentation link check.
 - **Write the failing test first.** Tests mock HTTP and model calls and use fake credentials.
 - **Validate on a spread of shows**, never one: one with a fansub track and one without, one whose glossary came from acquisition and one that was only mined. One Pace is the least representative title, because it holds nearly all the curated `hard_fixes`.
 - **One worker per library.** Nothing in the code locks across workers. Two workers on one library race on `<stem>.muxtmp.mkv` and re-transcribe each other's episodes. Building a real claim/lock is open work; a change that assumes a lock exists is a bug.

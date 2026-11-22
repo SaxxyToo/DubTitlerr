@@ -78,8 +78,8 @@ the show.
 - A library with English dub audio, laid out as `Show Name (Year)/Season 01/…S01E01…`.
 
 **Image:** built from this repository. `Dockerfile.builder` is the standalone full build (Whisper
-model baked in, review UI built); `Dockerfile.lite` is endpoint-only and under 1 GB; `Dockerfile.fork`
-is a thin overlay for exercising a change on a host that already has a release image.
+model baked in, review UI built); `Dockerfile.lite` is endpoint-only and under 1 GB. There is no
+third "fork overlay" image: both images ship this repository's code.
 
 ---
 
@@ -116,11 +116,3 @@ is a thin overlay for exercising a change on a host that already has a release i
   **This repository's `glossaries/` directory is a snapshot**, used by the tests and by the
   examples in these docs. The pipeline reads whatever is mounted at `GLOSSARY_DIR` and never
   the copy in its own source tree, so the shared repository is the one to install.
-
----
-
-## Related repositories
-
-- **Glossaries** — community per-show name dictionaries, pulled into `GLOSSARY_DIR`.
-- **Subtitles** — finished dubtitle files for episodes that have had a human review pass,
-  published as review completes.

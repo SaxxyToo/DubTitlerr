@@ -1,0 +1,45 @@
+# Path-based labels for pull requests. Keep the keys identical to the repository labels
+# (gh label list); the labeler adds a label when any changed file matches.
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "scripts/**"
+          - "Dockerfile*"
+          - "compose.yaml"
+          - "container_run.sh"
+          - "gen_loop.sh"
+          - "merge_pass.sh"
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "*.md"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "pyproject.toml"
+          - "uv.lock"
+          - "web/package.json"
+          - "web/package-lock.json"
+
+pipeline:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "dubtitlerr/**"
+          - "shell/**"
+          - "tools/**"
+          - "glossaries/**"
+          - "data/**"
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tests/**"
+
+web:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "web/**"

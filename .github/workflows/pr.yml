@@ -1,0 +1,47 @@
+name: PR
+# Pull-request hygiene only: a Conventional-Commits title and path labels. Kept out of ci.yml so
+# the test gate stays read-only and a title typo never blocks a build from starting.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: amannn/action-semantic-pull-request@e32d7e603df1aa1ba07e981f2a23455dee596825 # v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            test
+            refactor
+            perf
+            build
+            ci
+            chore
+            revert
+          requireScope: false
+          # "fix(review): the workspace opens on the inbox", not "Fix: ..." and not a sentence.
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" must start lowercase and describe the change, not the branch.
+            Example: "fix(review): the desktop workspace is the workspace on a phone"
+
+  label:
+    name: pr-label
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@8558fd74291d67161a8a78ce36a881fa63b766a9 # v5

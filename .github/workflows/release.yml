@@ -1,10 +1,10 @@
 name: release
-# Tag-triggered: pushing a vX.Y.Z tag publishes the images this fork deploys, with the full CI
-# gate re-run as the first stage. ghcr.io/<owner>/<repo>:vX.Y.Z plus :latest is the builder
-# image omarchy runs; :vX.Y.Z-lite plus :latest-lite is the lite image minisax runs. The hosts
-# pull from GHCR instead of building: one built artifact, the same bytes everywhere, labelled
-# with the release. `:latest` follows the tag, never `main` -- main is the working branch and
-# every commit landing there is not a release.
+# Tag-triggered: pushing a vX.Y.Z tag validates the tag, re-runs the full CI gate, publishes the
+# images this fork deploys, and attaches generated release notes. ghcr.io/<owner>/<repo>:vX.Y.Z
+# plus :latest is the builder image omarchy runs; :vX.Y.Z-lite plus :latest-lite is the lite image
+# minisax runs. The hosts pull from GHCR instead of building: one built artifact, the same bytes
+# everywhere, labelled with the release. `:latest` follows the tag, never `main` -- main is the
+# working branch and every commit landing there is not a release.
 on:
   push:
     tags: ["v*"]
@@ -18,11 +18,34 @@ permissions:
   packages: write
 
 jobs:
+  # A tag is a promise: it names a release, and it must point at a commit that is actually on
+  # main. Before this job, a typo'd or off-main tag still published :latest images.
+  validate-tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Require a semver tag on a main commit
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag '$tag' is not a semver tag such as v0.4.18"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag '$tag' points at $GITHUB_SHA, which is not on main"
+            exit 1
+          fi
+          echo "tag $tag is valid and reachable from main"
+
   ci-gate:
     uses: ./.github/workflows/ci.yml
 
   builder:
-    needs: ci-gate
+    needs: [validate-tag, ci-gate]
     runs-on: ubuntu-latest
     # The build downloads a CUDA base plus a whisper model. 40 minutes is generous; it is
     # here so a stalled pull cannot hold a runner for GitHub's six-hour default.
@@ -70,7 +93,7 @@ jobs:
           echo "published ghcr.io/$repo:$tag and :latest"
 
   lite:
-    needs: ci-gate
+    needs: [validate-tag, ci-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -95,3 +118,28 @@ jobs:
           docker push "ghcr.io/$repo:$tag-lite"
           docker push "ghcr.io/$repo:latest-lite"
           echo "published ghcr.io/$repo:$tag-lite and :latest-lite"
+
+  # The release page is part of what a tag publishes. An existing release keeps its notes:
+  # a re-run of the workflow must not overwrite a hand-edited page.
+  release:
+    needs: [validate-tag, builder, lite]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag already exists; keeping its notes"
+          else
+            gh release create "$tag" --verify-tag --generate-notes --title "$tag"
+            echo "created release $tag"
+          fi

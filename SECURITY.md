@@ -1,11 +1,20 @@
 # Security
 
+## Supported versions
+
+Only the current `0.4.x` line receives fixes. Deployments should pin a release tag; `:latest`
+follows the newest release, never `main`.
+
 ## Reporting a vulnerability
 
-Open a [GitHub issue](https://github.com/XenaRathon/DubTitlerr/issues) for anything that
-isn't sensitive. For something you'd rather not post publicly (a real exploit path, not a
-hardening suggestion), email the maintainer — see the GitHub profile for contact — and
-allow a reasonable window to land a fix before public disclosure.
+Report an exploit path privately through
+[GitHub Security Advisories](https://github.com/SaxxyToo/DubTitlerr/security/advisories/new).
+Do not open a public issue for it. For a non-sensitive hardening suggestion, a normal
+[issue](https://github.com/SaxxyToo/DubTitlerr/issues) is fine.
+
+Include the release (`python3 -m dubtitlerr --version`), the deployment shape (bind address,
+`REVIEW_AUTH`, whether a reverse proxy sits in front) and the steps that reproduce it. Allow a
+reasonable window to land a fix before public disclosure.
 
 ## The review server's auth model
 
