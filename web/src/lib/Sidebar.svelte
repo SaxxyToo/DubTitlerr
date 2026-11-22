@@ -4,7 +4,6 @@
   import {
     AudioLines,
     BookOpen,
-    ExternalLink,
     History,
     Inbox,
     Layers,
@@ -98,7 +97,6 @@
     {/each}
   </nav>
   <div class="sidebar-bottom">
-    <a href="/" class="classic-link"><ExternalLink size={15} aria-hidden="true" />Classic review</a>
     <div class="version-line">{version ? `DubTitlerr ${version}` : 'DubTitlerr'}</div>
   </div>
 </aside>

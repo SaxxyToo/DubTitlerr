@@ -463,161 +463,6 @@ def test_the_router_gates_writes_and_passes_reads(tmp_path, monkeypatch):
     assert review_server.route("GET", "/api/nothing-here", {}, None)[0] == 401, "unknown /api/ route without token → 401"
 
 
-def test_episode_text_is_escaped_into_the_page(tmp_path, monkeypatch):
-    """Card text is ASR and model output -- data this pipeline did not author, rendered into
-    a page served by a root process. An episode whose dialogue happens to contain markup
-    would otherwise execute in the reviewer's browser."""
-    stem = str(tmp_path / "ep_xss")
-    # The hostile text is the CARD's text, which is the realistic shape: original_text comes
-    # from conf.json, so a card whose dialogue contains markup is how this actually arrives.
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "<script>alert(1)</script>"}], f)
-    unresolved.record(stem, "repair_applied", "accepted", original_text="<script>alert(1)</script>", proposed_text="a & b")
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    page = review_server.render_page(stem)
-
-    assert "<script>alert(1)</script>" not in page
-    assert "&lt;script&gt;" in page and "a &amp; b" in page
-
-
-def test_surrounding_context_is_visually_distinguished_from_the_current_line(tmp_path, monkeypatch):
-    """Reported 2026-09-01: a reviewer on a real episode page could not tell the surrounding
-    cards were there at all. `unresolved.card_context` really does thread real before/after
-    text into every entry (`_decorate` -> `handle_episode` -> the `ctx` div in `render_page`),
-    but `_CSS` had no rule for `.ctx` at all -- the neighbouring lines rendered in default
-    black text, indistinguishable from the bolded repeat of the CURRENT line sitting right
-    above the colored `.o`/`.p` pair. Present in the DOM is not the same as visible on the
-    page; this pins that a reviewer can actually SEE the distinction, not just that the text
-    is technically there (a prior state that already passed on text-presence alone)."""
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    page = review_server.render_page(stem)
-
-    assert "the ship sailed" in page, "card 0's only neighbour must reach the page"
-    assert ".ctx" in review_server._CSS, "the context block needs its own rule or it is invisible"
-    # The neighbour text sits in a plain <span> inside .ctx; the current line is the <b>
-    # inside the same block. A rule on bare `.ctx` alone (no `.ctx b` override) would mute
-    # the CURRENT line along with its neighbours, which is the opposite of legible.
-    assert ".ctx b" in review_server._CSS, "the current line must stay visually distinct from its muted neighbours"
-
-
-def test_every_review_page_declares_a_viewport_so_a_phone_does_not_shrink_it(tmp_path, monkeypatch):
-    """Reported 2026-11-21: the review pages are adjudicated from a phone (omarchy's :8842 is
-    the LAN-visible one) and on iOS Safari they rendered at roughly a third scale -- 14px body
-    text, pinhead radios, and a sticky Save bar sitting under the floating URL pill.
-
-    The cause is not a broken rule: with no viewport meta, mobile Safari lays out at its 980px
-    default and scales the result down to fit, so a page that is legible on a desktop is
-    unreadable on a phone without a single declaration being wrong. The three render functions
-    are separate strings, so this pins all of them -- fixing the episode page alone leaves
-    /shared and the locked shell still shrunk."""
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    pages = {
-        "episode": review_server.render_page(stem),
-        "index": review_server.render_page(),
-        "shared": review_server.render_shared(),
-        "locked": review_server.render_locked("page"),
-    }
-    for name, page in pages.items():
-        assert 'name="viewport"' in page, f"the {name} page has no viewport meta -- a phone shrinks it"
-        assert "width=device-width" in page, f"the {name} page must lay out at the device width"
-
-    # A viewport only stops the shrink. The sticky bar is bottom-anchored, which is exactly where
-    # iOS floats its URL pill, and the radios are sub-44px tap targets on a phone.
-    assert "@media (max-width:640px)" in review_server._CSS, "narrow screens need their own rules"
-    assert "safe-area-inset-bottom" in review_server._CSS, "the sticky bar is bottom-anchored -- it has to clear the iOS URL pill"
-
-
-def test_the_token_is_never_placed_in_a_url(tmp_path, monkeypatch):
-    """A token in a query string lands in every proxy log, browser history and Referer
-    header it passes. The page must carry it in a header instead."""
-    monkeypatch.delenv("REVIEW_TOKEN", raising=False)
-    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-    tok = review_server.resolve_token(str(tmp_path))
-
-    page = review_server.render_page(stem)
-
-    assert tok not in page, "the operator pastes the token; the page must never embed it"
-
-
-def test_a_show_with_an_ampersand_in_its_name_is_still_usable(tmp_path, monkeypatch):
-    """html.escape is right for HTML TEXT and wrong for the JS and URL contexts.
-
-    A stem is a real file path, and directory names legitimately contain `&`. Escaped into
-    the page's `const STEM`, the value the browser posts back is `Tom &amp; Jerry`, which is
-    not the stem `_resolve()` knows -- so every verdict on that show is refused as "unknown
-    episode". The href has the same fault for a different reason: a raw `&` in a query value
-    terminates the parameter.
-
-    Not a security hole -- html.escape does neutralise `</script>` -- but a total functional
-    failure for an ordinary filename, and silent apart from a refusal the reviewer cannot
-    explain."""
-    show = tmp_path / "Tom & Jerry (1940)"
-    show.mkdir()
-    stem = str(show / "ep01")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "x"}], f)
-    unresolved.record(stem, "repair_applied", "accepted", original_text="x", proposed_text="y")
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    page = review_server.render_page(stem)
-    embedded = json.loads(page.split("const STEM=")[1].split(";")[0])
-
-    assert embedded == stem, "the page must post back the REAL stem, not an HTML-escaped one"
-    assert review_server.handle_episode(embedded).get("error") is None, "and that value must resolve"
-
-
-def test_an_angle_bracket_in_a_stem_is_escaped_for_the_script_block(tmp_path, monkeypatch):
-    """A stem cannot contain `</script>` -- `/` is a path separator, so that exact sequence
-    is not a legal filename, and the breakout risk from a stem is nil. `<` alone IS legal,
-    and is escaped anyway: the rule "never emit a raw `<` inside a script block" is the one
-    worth holding, because the next value interpolated there may not be a filename.
-
-    The `</script>` case that IS reachable is card text, covered by
-    test_episode_text_is_escaped_into_the_page."""
-    stem = str(tmp_path / "a<b")
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([], f)
-
-    page = review_server.render_page(stem)
-    js = page.split("const STEM=")[1].split(";")[0]
-
-    assert "\\u003c" in js, "a raw < must never be emitted inside a script block"
-    assert json.loads(js) == stem, "and it must still decode to the real stem"
-
-
-def test_the_index_link_url_encodes_the_stem(tmp_path, monkeypatch):
-    """A raw `&` in a query VALUE terminates the parameter, so the link to an episode of
-    "Tom & Jerry" would arrive at the server as a truncated stem and resolve to nothing.
-    html.escape does not help -- `&amp;` is still an ampersand once the HTML is parsed.
-    Caught by a mutation, not by design: the JS fix had a test and this one did not."""
-    show = tmp_path / "Tom & Jerry (1940)"
-    show.mkdir()
-    stem = str(show / "ep01")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "x"}], f)
-    unresolved.record(stem, "repair_applied", "accepted", original_text="x", proposed_text="y")
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    page = review_server.render_page()
-    # By NAME, not by position: the index carries other links (the shared-lines page), and a
-    # test that took the first href would pass or fail on their ordering rather than on the
-    # encoding it is about.
-    href = next(h for h in page.split('href="')[1:] if h.startswith("/?stem=")).split('"')[0]
-
-    assert "%26" in href, "the ampersand must be percent-encoded, not left to split the query"
-    from urllib.parse import parse_qs, urlparse
-
-    assert parse_qs(urlparse(href).query)["stem"][0] == stem, "and the link must round-trip to the real stem"
-
-
 # --- the transport layer -----------------------------------------------------
 # Driven directly, still without a socket: Handler is constructed unbound and given fake
 # streams. The previous suite tested route() only, and the body-cap defect below lived
@@ -634,6 +479,7 @@ class _Wire:
         self.wfile = io.BytesIO()
         self.headers = {"Content-Length": str(len(body) if declared is None else declared)}
         self.status: int | None = None
+        self.sent_headers: dict[str, str] = {}
 
     def as_handler(self, path="/api/decide"):
         wire = self
@@ -651,7 +497,7 @@ class _Wire:
                 wire.status = code
 
             def send_header(self, keyword, value):
-                pass
+                wire.sent_headers[keyword] = value
 
             def end_headers(self):
                 pass
@@ -796,40 +642,6 @@ def test_the_handler_has_a_socket_deadline():
     assert "settimeout" in __import__("inspect").getsource(socketserver.StreamRequestHandler.setup)
 
 
-def test_an_offered_verdict_is_encoded_for_the_javascript_context(monkeypatch, tmp_path):
-    """`html.escape` is not JavaScript escaping.
-
-    Today `OFFERED` is a closed constant set, so nothing reachable exploits this -- the
-    finding is latent, not live. It is fixed anyway because the renderer's contract is that
-    it handles queue data, and the cost of being right here is one call. A quote in an
-    offered value would otherwise close the JS string inside the onclick attribute."""
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-    monkeypatch.setattr(review_server, "DEFAULT_OFFERED", ("x');alert(1);//",))
-    monkeypatch.setattr(review_server, "OFFERED", {})
-
-    page = review_server.render_page(stem)
-
-    # Decoded the way a browser decodes an attribute value BEFORE the JS in it is parsed.
-    # Asserting on the raw page is the vacuous version of this test: html.escape turns the
-    # quote into &#x27;, which the HTML parser turns back into a quote, and the injection
-    # fires anyway. The first draft of this test asserted exactly that and passed.
-    import html as _html
-
-    assert "onclick=" not in page, "no inline handler: the value must not reach a JS literal at all"
-    # The payload appearing as attribute DATA and as button text is fine and expected -- both
-    # are inert. What must hold is that it never lands inside the script block, where
-    # attribute-entity decoding would hand it to the JS parser. Asserting it is absent from
-    # the whole page would fail on the harmless copies and prove nothing about the JS.
-    script = page[page.index("<script>") : page.index("</script>")]
-
-    assert "alert(1)" not in _html.unescape(script), "the value must never reach the script block"
-    assert 'type="radio" name="v' in page, (
-        "it travels as an inert attribute VALUE, read back through .value at submit time -- "
-        "the mechanism changed from data-* to a radio group, the property did not"
-    )
-
-
 def test_decide_reports_a_failed_resolve_instead_of_claiming_success(tmp_path, monkeypatch):
     """The two writes are independent files and cannot be made atomic across them. What CAN
     be honest is the report: if the verdict is durable but the queue entry did not clear,
@@ -946,24 +758,6 @@ def test_serve_uses_the_bounded_server(monkeypatch, tmp_path):
     assert built["handler"] is review_server.Handler
 
 
-def test_the_page_offers_a_way_to_apply_decisions_to_an_episode(tmp_path, monkeypatch):
-    """Recording a verdict and APPLYING it are two different things for an episode that is
-    already muxed: the verdict changes what the next repair run ships, and the write-back is
-    what re-opens an episode that has already shipped. `/api/apply` existed and nothing in
-    the page called it, so the write-back was reachable only by hand-crafting a POST.
-
-    The button says what it does. It rewrites the subtitle and drops the stamp, which costs
-    a re-mux of a multi-GB file -- not something to trigger by accident."""
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    page = review_server.render_page(stem)
-
-    assert 'id="apply"' in page, "an episode page needs a control that applies its decisions"
-    assert "/api/apply" in page, "wired to the route, not just present"
-    assert "re-mux" in page.lower(), "and it says what it costs before you press it"
-
-
 def test_every_start_says_where_the_token_is_even_when_it_is_not_new(tmp_path, monkeypatch, capsys):
     """The value is printed only when GENERATED. On every later start the token is read from
     the file and nothing was logged, so an operator coming back a week later -- after the log
@@ -1021,16 +815,6 @@ def test_the_index_separates_admitted_repairs_from_refusals(tmp_path, monkeypatc
     assert ep["pending"] == 2, "and the total still adds up"
 
 
-def test_the_index_page_shows_both_counts(tmp_path, monkeypatch):
-    """The split has to reach the page, or it is a field nobody sees."""
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    page = review_server.render_page()
-
-    assert "admitted" in page.lower() and "refused" in page.lower()
-
-
 # --- the index has to survive a real library ---------------------------------
 # Rendered against the owner's 294 episodes it was a flat wall of links, every row reading
 # "0 admitted", with no way to find a show. Built without ever being looked at at that size.
@@ -1074,38 +858,6 @@ def test_the_index_carries_show_and_season_and_sorts_by_admitted(tmp_path, monke
     assert [e["admitted"] for e in eps] == [7, 3, 0], "most admitted first, refusals last"
     assert eps[0]["show"] == "JUJUTSU KAISEN" and eps[0]["season"] == "Season 01"
     assert {e["show"] for e in eps} == {"One Pace", "Trigun", "JUJUTSU KAISEN"}
-
-
-def test_the_page_groups_by_show_and_season(tmp_path, monkeypatch):
-    """294 flat rows become a handful of collapsed groups. One Pace alone is 457 episodes in
-    this library, so show-level grouping is not enough on its own."""
-    stems = _lib(tmp_path, {("One Pace", "Season 31"): [("a", 2, 0)], ("One Pace", "Season 30"): [("b", 1, 0)]})
-    monkeypatch.setattr(review_server, "known_stems", lambda: stems)
-
-    page = review_server.render_page()
-
-    assert page.count("<details") >= 2, "a group per show, and per season inside it"
-    assert "One Pace" in page and "Season 31" in page and "Season 30" in page
-
-
-def test_the_page_hides_zero_admitted_behind_a_toggle_that_names_the_count(tmp_path, monkeypatch):
-    """Hiding is right -- 8,662 refusals is a backlog the owner explicitly does not want to
-    start on -- but hiding it SILENTLY would make real work invisible to someone who does not
-    know the toggle exists. So the control says how many it is concealing."""
-    stems = _lib(tmp_path, {("Trigun", "Season 01"): [("only_refusals", 0, 40)]})
-    monkeypatch.setattr(review_server, "known_stems", lambda: stems)
-
-    page = review_server.render_page()
-
-    assert 'id="showall"' in page, "a toggle, not a permanent hide"
-    assert "40" in page, "and it names what it is hiding"
-
-
-def test_the_page_has_a_filter(tmp_path, monkeypatch):
-    stems = _lib(tmp_path, {("One Pace", "Season 31"): [("a", 1, 0)]})
-    monkeypatch.setattr(review_server, "known_stems", lambda: stems)
-
-    assert 'id="filter"' in review_server.render_page()
 
 
 def _triage_episode(tmp_path, name="triage"):
@@ -1201,26 +953,6 @@ def test_a_refusal_sorts_after_every_admitted_repair(tmp_path, monkeypatch):
     assert stages == ["repair_applied"] * 3 + ["repair"], "the refusal sorts last despite substituting a word"
 
 
-def test_an_entry_carries_the_times_its_card_appears_at(tmp_path, monkeypatch):
-    """So the reviewer can seek to the line and hear what was actually said."""
-    stem = _triage_episode(tmp_path, "timed")
-    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
-    monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
-
-    by_risk = {e["risk"]: e for e in review_server.handle_episode(stem)["entries"]}
-
-    assert by_risk["punctuation"]["starts"] == [60.0]
-    assert by_risk["words"]["starts"] == [120.0]
-    page = review_server.render_page(stem)
-    assert "2:00" in page and "1:00" in page, "rendered as mm:ss, not raw seconds"
-
-
-def test_hms_is_readable_at_both_ends_of_an_episode():
-    assert review_server.hms(0) == "0:00"
-    assert review_server.hms(65.4) == "1:05"
-    assert review_server.hms(3725) == "1:02:05"
-
-
 def test_decide_batch_saves_every_verdict_in_one_store_write(tmp_path, monkeypatch):
     """The whole point. Per-verdict posting meant one store load, one store save and one
     queue rewrite EACH, all over the media mount, plus a full page reload between them."""
@@ -1291,39 +1023,6 @@ def test_the_batch_route_is_gated_by_the_token_like_every_other_write(tmp_path, 
     monkeypatch.setenv("REVIEW_TOKEN", "sekrit")
     status, _ = review_server.route("POST", "/api/decide", {"stem": "x", "decisions": []}, None)
     assert status == 401, "a batch of verdicts is still a write"
-
-
-def test_the_page_offers_radios_and_posts_nothing_until_save(tmp_path, monkeypatch):
-    """A verdict per click meant a POST and a full page reload each time, so a reviewer
-    working an episode lost their scroll position 31 times. Radios hold the answers; one
-    button hands the whole episode back."""
-    stem = _triage_episode(tmp_path, "radios")
-    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
-    monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
-
-    page = review_server.render_page(stem)
-
-    assert 'type="radio"' in page and 'name="v0"' in page, "one group per entry, keyed on its index"
-    assert "<button data-v=" not in page and 'data-v="accept"' not in page, "no per-entry submit remains"
-    assert 'id="save"' in page and 'id="apply"' in page, "saving verdicts and re-muxing stay two buttons"
-    assert "decisions:" in page, "the client posts the batch shape"
-
-
-def test_only_the_offered_verdicts_get_a_radio(tmp_path, monkeypatch):
-    """Same closed set the server enforces. Rendering `force` on an accepted entry would
-    invite a click the server then refuses, with the reviewer unable to tell why."""
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
-    monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
-    entries = {e["reason"]: e for e in review_server.handle_episode(stem)["entries"]}
-    page = review_server.render_page(stem)
-
-    admitted = entries["accepted"]["index"]
-    assert f'name="v{admitted}" value="accept"' in page
-    assert f'name="v{admitted}" value="force"' not in page, "force on an admitted entry is a gate bypass"
-    refused = entries["rejected_guard"]["index"]
-    assert f'name="v{refused}" value="force"' in page
-    assert f'name="v{refused}" value="accept"' not in page
 
 
 def test_a_line_decided_on_one_episode_is_hidden_on_every_other(tmp_path, monkeypatch):
@@ -1473,35 +1172,11 @@ def test_an_index_only_verdict_is_refused(tmp_path, monkeypatch):
     assert review_server.decisions.load("S", str(tmp_path)).get("decisions", []) == []
 
 
-def test_the_shared_page_submits_ids_not_offsets(tmp_path, monkeypatch):
-    _two_shared_pairs(tmp_path, monkeypatch)
-    page = review_server.render_shared()
-    row = review_server.handle_shared()["pairs"][0]
-    assert f'name="p{row["id"]}"' in page and "id:r.name.slice(1)" in page
-
-
 def test_the_shared_route_is_gated_like_every_other_write(tmp_path, monkeypatch):
     """Reads are open and writes are not, the same split the rest of the surface makes."""
     monkeypatch.setenv("REVIEW_TOKEN", "sekrit")
     assert review_server.route("POST", "/api/shared", {"decisions": []}, None)[0] == 401
     assert review_server.route("GET", "/api/shared", {}, "sekrit")[0] == 200, "GET /api/shared requires token"
-
-
-def test_the_shared_page_renders_one_row_per_line_with_its_count(tmp_path, monkeypatch):
-    """Radios and a Save, like an episode page -- and no Apply: a shared verdict spans
-    episodes, and re-muxing is a per-episode act with a per-episode cost."""
-    _shared_library(tmp_path)
-    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
-    monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
-    monkeypatch.setattr(review_server.decisions, "DECISIONS_DIR", str(tmp_path))
-    monkeypatch.setattr(review_server, "show_for", lambda s: "One Pace")
-
-    page = review_server.render_shared()
-
-    assert "in 3 episodes" in page
-    sid = review_server.handle_shared()["pairs"][0]["id"]
-    assert f'name="p{sid}" value="accept"' in page and f'name="p{sid}" value="force"' not in page
-    assert 'id="save"' in page and 'id="apply"' not in page
 
 
 def test_the_stem_cache_outlives_the_walk_that_fills_it(tmp_path, monkeypatch):
@@ -1733,150 +1408,6 @@ def test_an_entry_carries_the_cards_either_side_of_it(tmp_path, monkeypatch):
     assert first["context"] == [{"start": 0.0, "before": [], "after": ["the ship sailed"]}]
 
 
-def test_the_episode_page_renders_the_surrounding_cards(tmp_path, monkeypatch):
-    """Carrying the context in the JSON is not enough -- the reviewer reads the HTML. Text
-    is escaped like every other field on this page.
-
-    The break this catches: add the field to _decorate but never render it, and the feature
-    is invisible to the only person it is for."""
-    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
-    monkeypatch.setattr(review_server, "_STEMS_CACHE", None)
-    stem = _episode(tmp_path)
-    html_out = review_server.render_page(stem)
-
-    assert "he went thataway" in html_out, "the following card must reach the page"
-    assert "ctx" in html_out, "and be marked up so it can be styled apart from the entry itself"
-
-
-def test_the_episode_page_offers_client_side_sort_modes_with_risk_default(tmp_path, monkeypatch):
-    """Risk-first remains the measured default, while chronological is the reviewer mode
-    that permits one forward scrub. Queue order and longest-first are cheap extra views and
-    make the control useful for debugging and long-card triage too."""
-    stem = _triage_episode(tmp_path, "sort_modes")
-    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
-    monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
-
-    page = review_server.render_page(stem)
-
-    assert '<select id="episode-sort">' in page
-    assert '<option value="risk" selected>risk first</option>' in page
-    assert '<option value="chronological">chronological</option>' in page
-    assert '<option value="queue">queue order</option>' in page
-    assert '<option value="longest">longest first</option>' in page
-    assert "function sortEpisode" in page
-    assert "localStorage" in page and "dubtitlerr_episode_sort" in page
-
-
-def test_episode_sort_reorders_rows_without_changing_the_posted_index_set(tmp_path, monkeypatch):
-    """The one thing sorting must never do: land a verdict on a different queue entry.
-
-    A verdict posts the JSONL row number, carried in each radio's name. `_triage_episode`
-    queues WORST LAST on purpose, so risk-first display order is the REVERSE of the stored
-    order -- which makes this checkable without a JS runtime. If the names were ever
-    generated from the display position (an `enumerate` over the sorted rows) they would
-    read 0,1,2 down the page; because they come from the stored index they read 2,1,0.
-
-    Breaks the moment radio names are derived from position rather than from `e["index"]`,
-    which is exactly the regression that would silently misfile a reviewer's decision.
-
-    The client-side reorder itself cannot be executed here -- there is no JS runtime in this
-    suite and adding one for this is not worth it -- so what is pinned instead is that the
-    names are position-INDEPENDENT at the source, plus that the handler only moves existing
-    nodes and never re-requests the page."""
-    import re
-
-    stem = _triage_episode(tmp_path, "sort_identity")
-    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
-    monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
-    page = review_server.render_page(stem)
-
-    rows = re.findall(r'data-index="(\d+)".*?name="v(\d+)"', page, re.S)
-    assert rows, "no queue rows rendered"
-    assert all(dom == radio for dom, radio in rows), "a row's radio name must be its own stored index"
-
-    displayed = [int(radio) for _dom, radio in rows]
-    assert displayed == sorted(displayed, reverse=True), (
-        "the fixture queues worst last, so risk-first display order must expose the stored "
-        "indexes in reverse -- reading 0,1,.. would mean the names follow the page position"
-    )
-    assert set(displayed) == {0, 1, 2}, "every queued entry is still addressable exactly once"
-
-    sort_body = page.split("function sortEpisode", 1)[1].split("async function post", 1)[0]
-    assert "appendChild(row)" in sort_body, "reordering must move existing nodes"
-    assert "fetch(" not in sort_body and "location.reload" not in sort_body, "no round trip"
-    assert "name.slice(1)" in page, "posted indexes come from stable radio names, not visual position"
-
-
-def test_shared_page_keeps_most_repeated_default_and_offers_risk_sort(tmp_path, monkeypatch):
-    """Shared lines keep their measured most-repeated-first default: one decision clears the
-    most duplicate questions. Risk-first is available when the reviewer wants to audit the
-    dangerous word changes instead."""
-    _shared_library(tmp_path)
-    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
-    monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
-    monkeypatch.setattr(review_server.decisions, "DECISIONS_DIR", str(tmp_path))
-    monkeypatch.setattr(review_server, "show_for", lambda s: "One Pace")
-
-    page = review_server.render_shared()
-
-    assert '<select id="shared-sort">' in page
-    assert '<option value="repeated" selected>most repeated first</option>' in page
-    assert '<option value="risk">risk first</option>' in page
-    assert "function sortShared" in page
-    assert "localStorage" in page and "dubtitlerr_shared_sort" in page
-
-
-def test_shared_lines_are_grouped_by_show(tmp_path, monkeypatch):
-    """Reported 2026-09-01: shared lines from every show rendered as one flat, interleaved
-    list with the show name buried in small text per row -- a reviewer working through one
-    show's shared lines had no way to see them apart from another's without reading every
-    row. handle_shared()'s own identity key already scopes a group to one show
-    (`groups.setdefault((show, ...))`); the page just never reflected that. Matches the
-    <details class=show> convention the episode index already uses for exactly this job."""
-    song_a = ("running forever curiosity", "Running forever. Curiosity.")
-    song_b = ("we are the pirates of the sea", "We are the pirates of the sea!")
-    for show, song in (("Show A", song_a), ("Show B", song_b)):
-        d = tmp_path / show
-        d.mkdir()
-        for name in ("ep1", "ep2"):
-            stem = str(d / name)
-            with open(stem + ".dubtitles.conf.json", "w") as f:
-                json.dump([{"start": 0.0, "end": 2.0, "text": song[0]}], f)
-            unresolved.record(stem, "repair_applied", "accepted", original_text=song[0], proposed_text=song[1])
-    monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
-    monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
-    monkeypatch.setattr(review_server.decisions, "DECISIONS_DIR", str(tmp_path))
-    monkeypatch.setattr(review_server, "show_for", lambda s: "Show A" if str(tmp_path / "Show A") in s else "Show B")
-
-    page = review_server.render_shared()
-
-    assert page.count("<details class=show") == 2, "one group per show, not a flat interleaved list"
-    blocks = page.split("<details class=show")[1:]
-    a_block = next(b for b in blocks if "Show A" in b.split("</summary>")[0])
-    b_block = next(b for b in blocks if "Show B" in b.split("</summary>")[0])
-    assert "Running forever" in a_block and "pirates" not in a_block, "Show A's group must not leak Show B's line"
-    assert "pirates" in b_block and "Running forever" not in b_block, "Show B's group must not leak Show A's line"
-
-
-def test_every_queued_row_offers_a_way_to_clear_its_verdict(tmp_path, monkeypatch):
-    """A radio group cannot be un-set by clicking, so a reviewer who picks one and THEN
-    realises they need to check the timestamp has no way back to undecided -- they either
-    save a verdict they are not sure of, or reload and lose the rest of the page.
-
-    `chosen()` already submits only `:checked` rows, so clearing a row is enough to take it
-    out of the batch; the missing piece is the control. One per row, not one for the page:
-    the reviewer is undoing a single line, not abandoning the episode."""
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    entries = review_server.handle_episode(stem)["entries"]
-    page = review_server.render_page(stem)
-
-    assert page.count('class="clear"') == len(entries), "one clear control per queued row"
-    for e in entries:
-        assert f'data-clear="v{e["index"]}"' in page, f"row {e['index']} has no clear control"
-
-
 def test_healthz_ok_on_a_fresh_heartbeat(tmp_path, monkeypatch):
     monkeypatch.setattr(common, "HEARTBEAT_PATH", str(tmp_path / "heartbeat.json"))
     common.heartbeat(
@@ -1994,100 +1525,6 @@ def test_get_healthz_is_open_without_a_token(tmp_path, monkeypatch):
     assert wire.status == 200
 
 
-def test_render_locked_shared_uses_the_shared_title():
-    out = review_server.render_locked("shared")
-    assert "Shared lines" in out
-    assert "needs-token" in out
-
-
-def test_get_index_without_a_token_shows_the_locked_shell_not_the_queue(tmp_path, monkeypatch):
-    """Verified: handle_index() appends `{"stem": stem, "name": os.path.basename(stem),
-    ...}` per episode with anything pending, and render_page renders that name into
-    an <a href> -- so an unauthenticated GET / must never reach render_page() at all."""
-    monkeypatch.delenv("REVIEW_TOKEN", raising=False)
-    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
-    stem = _episode(tmp_path, name="S01E01")
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    wire = _Wire()
-    h = wire.as_handler("/")
-    h.do_GET()
-    body = wire.wfile.getvalue().decode()
-
-    assert wire.status == 200
-    assert "needs-token" in body
-    assert "S01E01" not in body
-
-
-def test_get_index_with_the_cookie_shows_the_real_queue(tmp_path, monkeypatch):
-    monkeypatch.delenv("REVIEW_TOKEN", raising=False)
-    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
-    stem = _episode(tmp_path, name="S01E01")
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-    tok = review_server.resolve_token(str(tmp_path))
-
-    wire = _Wire()
-    wire.headers["Cookie"] = f"dubtitlerr_token={tok}"
-    h = wire.as_handler("/")
-    h.do_GET()
-    body = wire.wfile.getvalue().decode()
-
-    assert wire.status == 200
-    assert "needs-token" not in body
-    assert "S01E01" in body
-
-
-def test_get_index_with_the_header_also_shows_the_real_queue(tmp_path, monkeypatch):
-    monkeypatch.delenv("REVIEW_TOKEN", raising=False)
-    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
-    stem = _episode(tmp_path, name="S01E01")
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-    tok = review_server.resolve_token(str(tmp_path))
-
-    wire = _Wire()
-    wire.headers[review_server.review_auth.API_KEY_HEADER] = tok
-    h = wire.as_handler("/")
-    h.do_GET()
-    body = wire.wfile.getvalue().decode()
-
-    assert wire.status == 200
-    assert "S01E01" in body
-
-
-def test_get_shared_without_a_token_shows_the_locked_shell(tmp_path, monkeypatch):
-    monkeypatch.delenv("REVIEW_TOKEN", raising=False)
-    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    wire = _Wire()
-    h = wire.as_handler("/shared")
-    h.do_GET()
-    body = wire.wfile.getvalue().decode()
-
-    assert wire.status == 200
-    assert "needs-token" in body
-    assert 'id="shared-sort"' not in body, "the real shared page's sort control must not render"
-
-
-def test_get_shared_with_the_cookie_shows_the_real_page(tmp_path, monkeypatch):
-    monkeypatch.delenv("REVIEW_TOKEN", raising=False)
-    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
-    stem = _episode(tmp_path)
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-    tok = review_server.resolve_token(str(tmp_path))
-
-    wire = _Wire()
-    wire.headers["Cookie"] = f"dubtitlerr_token={tok}"
-    h = wire.as_handler("/shared")
-    h.do_GET()
-    body = wire.wfile.getvalue().decode()
-
-    assert wire.status == 200
-    assert "needs-token" not in body
-    assert 'id="shared-sort"' in body
-
-
 def test_get_healthz_is_never_gated_by_the_token(tmp_path, monkeypatch):
     monkeypatch.delenv("REVIEW_TOKEN", raising=False)
     monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
@@ -2100,22 +1537,15 @@ def test_get_healthz_is_never_gated_by_the_token(tmp_path, monkeypatch):
     assert wire.status != 401
 
 
-def test_review_auth_off_keeps_every_page_open_with_no_token(tmp_path, monkeypatch):
-    """REVIEW_AUTH=off is sprint 010's contract for disabling auth entirely; this task
-    must not add a second, cookie-shaped way to accidentally require one."""
-    monkeypatch.setenv("REVIEW_AUTH", "off")
-    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
-    stem = _episode(tmp_path, name="S01E01")
-    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-
-    wire = _Wire()
-    h = wire.as_handler("/")
-    h.do_GET()
-    body = wire.wfile.getvalue().decode()
-
-    assert wire.status == 200
-    assert "needs-token" not in body
-    assert "S01E01" in body
+def test_the_old_page_urls_redirect_to_the_workspace():
+    """The server-rendered pages are gone. Their URLs keep working as redirects, so an old
+    bookmark lands on the one UI instead of a surface that no longer exists."""
+    for path, target in (("/", "/review/"), ("/index.html", "/review/"), ("/shared", "/review/#/shared")):
+        wire = _Wire()
+        h = wire.as_handler(path)
+        h.do_GET()
+        assert wire.status == 302, path
+        assert wire.sent_headers.get("Location") == target, path
 
 
 def test_get_api_episodes_without_token_is_401_with_the_literal_body(tmp_path, monkeypatch):
@@ -2147,17 +1577,6 @@ def test_head_on_api_paths_is_gated_the_same_as_get():
     through. A future do_HEAD inherits the same gate for free."""
     assert review_server.route("HEAD", "/api/episodes", {}, None)[0] == 401
     assert review_server.route("HEAD", "/api/episodes", {}, "wrong")[0] == 401
-
-
-def test_get_index_page_stays_open_without_a_token(tmp_path, monkeypatch):
-    monkeypatch.delenv("REVIEW_TOKEN", raising=False)
-    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
-    monkeypatch.setattr(review_server, "known_stems", lambda: [])
-
-    wire = _Wire()
-    h = wire.as_handler("/")
-    h.do_GET()
-    assert wire.status == 200
 
 
 def _strip_ts(stem):

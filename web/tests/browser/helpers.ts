@@ -47,13 +47,6 @@ export async function openInbox(page: Page) {
   await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
 }
 
-/** Open the phone's collapsed line toolbar before driving its search or filters. */
-export async function showLineTools(page: Page, projectName: string) {
-  if (projectName !== 'mobile') return;
-  const toggle = page.getByRole('button', { name: 'Review filters' });
-  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
-}
-
 /** Open the account menu (unless it is already open) and sign out. */
 export async function signOut(page: Page) {
   const menu = page.getByRole('button', { name: 'Account menu' });
