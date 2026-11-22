@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { navTo, openSignedIn, reset } from './helpers';
+import { navTo, openInbox, reset } from './helpers';
 
 /**
  * The phone composition: episodes are one screen, the open line is the next, and the verdicts
@@ -11,14 +11,14 @@ test.use({ viewport: { width: 390, height: 664 }, hasTouch: true, isMobile: true
 test.beforeEach(async ({ request }) => reset(request));
 
 async function openFirstEpisode(page: Page) {
-  await openSignedIn(page, '');
+  await openInbox(page);
   await page.locator('.episode-list .episode').first().click();
   await expect(page.locator('.review-panel')).toBeVisible();
   await expect(page.locator('.review-title h2')).not.toHaveText('Choose an episode');
 }
 
 test('the phone inbox and editor are separate screens', async ({ page }) => {
-  await openSignedIn(page, '');
+  await openInbox(page);
   await expect(page.locator('.episode-panel')).toBeVisible();
   await expect(page.locator('.review-panel')).toBeHidden();
 
@@ -88,7 +88,7 @@ test('the line filters stay one tap away', async ({ page }) => {
 });
 
 test('shared lines keep their editor and dock on a phone', async ({ page }) => {
-  await openSignedIn(page, '');
+  await openInbox(page);
   await navTo(page, 'Shared lines');
   await expect(page.locator('.review-panel')).toBeVisible();
   await expect(page.locator('.episode-panel')).toHaveCount(0);

@@ -47,7 +47,7 @@ import os
 import re
 import time
 
-from dubtitlerr.core import decisions
+from dubtitlerr.core import decisions, queue_policy
 from dubtitlerr.core.common import SIDECAR_MODE, atomic_write, out_for
 
 # Imported as a NAME so the CLI resolves a show exactly the way the store and the mux gate
@@ -56,6 +56,18 @@ from dubtitlerr.core.common import SIDECAR_MODE, atomic_write, out_for
 from dubtitlerr.core.decisions import show_for
 
 SUFFIX = ".dubtitles.unresolved.jsonl"
+# P33: the counters P33 keeps beside the (now bounded) evidence log, and the bounded audit the
+# expiry/undo path writes. Same window as the queue policy: nothing here grows forever.
+COUNTER_SUFFIX = ".dubtitles.unresolved.counters.json"
+AUDIT_SUFFIX = ".dubtitles.unresolved.audit.jsonl"
+SAMPLE_CAP = queue_policy.SAMPLE_CAP
+QUEUE_MAX = queue_policy.QUEUE_MAX
+EXPIRY_DAYS = queue_policy.EXPIRY_DAYS
+# A reason a HUMAN owes stays in the log whatever its class volume: it is the reviewer's own
+# verdict coming back refused, and sampling it away would hide exactly the loss it records.
+ALWAYS_EVIDENCE = frozenset(
+    {("repair", "decision_unfittable"), ("repair", "verdict_unfittable"), ("repair", "verdict_owed")}
+)
 
 # Reasons, per stage. Kept as a module constant so the --review CLI and the call sites cannot
 # drift apart, and so a typo'd reason is visible rather than silently creating a new bucket.
@@ -154,6 +166,183 @@ def items(stem: str) -> list:
 _WORD = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
 
 
+def counter_path(stem: str) -> str:
+    return out_for(stem + COUNTER_SUFFIX)
+
+
+def audit_path(stem: str) -> str:
+    return out_for(stem + AUDIT_SUFFIX)
+
+
+def _load_counters(stem: str) -> dict:
+    try:
+        with open(counter_path(stem), encoding="utf-8") as f:
+            doc = json.load(f)
+        if isinstance(doc, dict):
+            for key in ("counts", "days", "sampled", "sample_day"):
+                if not isinstance(doc.get(key), dict):
+                    doc[key] = {}
+            return doc
+    except (OSError, ValueError):
+        pass
+    return {"counts": {}, "days": {}, "sampled": {}, "sample_day": {}}
+
+
+def _trim_counters(doc: dict, days: int = EXPIRY_DAYS + 1) -> None:
+    """Keep only the last `days` days of per-day buckets; the lifetime totals stay."""
+    keep = sorted(doc.get("days") or {})[-days:]
+    doc["days"] = {d: doc["days"][d] for d in keep}
+    keep_sd = sorted(doc.get("sample_day") or {})[-days:]
+    doc["sample_day"] = {d: doc["sample_day"][d] for d in keep_sd}
+
+
+def _save_counters(stem: str, doc: dict) -> bool:
+    def render(f):
+        json.dump(doc, f, ensure_ascii=False, sort_keys=True)
+
+    return atomic_write(counter_path(stem), render, quiet=True)
+
+
+def _count_and_sample(stem: str, stage: str, reason: str, day: str) -> tuple[bool, bool]:
+    """Count every record; say whether THIS one keeps its evidence.
+
+    A class is counted in the per-day and lifetime aggregate always. Evidence lines are
+    sampled at ``SAMPLE_CAP`` per class per day, except for the reasons a human owes."""
+    cls = f"{stage}/{reason}"
+    doc = _load_counters(stem)
+    doc["counts"][cls] = int(doc["counts"].get(cls) or 0) + 1
+    day_counts = doc["days"].setdefault(day, {})
+    day_counts[cls] = int(day_counts.get(cls) or 0) + 1
+    kept = int(doc["sample_day"].setdefault(day, {}).get(cls) or 0)
+    keep = (stage, reason) in ALWAYS_EVIDENCE or kept < SAMPLE_CAP
+    if keep:
+        doc["sample_day"][day][cls] = kept + 1
+        doc["sampled"][cls] = int(doc["sampled"].get(cls) or 0) + 1
+    _trim_counters(doc)
+    return _save_counters(stem, doc), keep
+
+
+def metrics(stem: str) -> dict:
+    """Counters + bounded evidence, per day: how much the pipeline did, and how much drift.
+
+    The point of the counters is that a 12,840-line log is no longer the only record of what
+    happened. ``queue`` carries what is still open, so a page can show drift without reading
+    the pile. Fails open: an absent stem is an empty report, never an exception."""
+    doc = _load_counters(stem)
+    entries = items(stem)
+    open_items = [e for e in entries if not e.get("resolved") and not e.get("expired")]
+    return {
+        "counts": dict(sorted(doc.get("counts", {}).items())),
+        "days": {d: dict(sorted(v.items())) for d, v in sorted(doc.get("days", {}).items())},
+        "sampled": dict(sorted(doc.get("sampled", {}).items())),
+        "queue": {
+            "pending": len(open_items),
+            "expired": sum(1 for e in entries if e.get("expired")),
+            "evidence": len(entries),
+            "by_class": queue_policy.counts(open_items),
+        },
+    }
+
+
+def audit(stem: str, limit: int = 50) -> list:
+    """Newest-first queue audit (expiry, undo), bounded by queue_policy.AUDIT_MAX."""
+    return queue_policy.audit_read(audit_path(stem), limit)
+
+
+def _audit(stem: str, records: list) -> bool:
+    return queue_policy.audit_append(audit_path(stem), records)
+
+
+def expire(stem: str, now=None, days: float = EXPIRY_DAYS) -> dict:
+    """Dismiss open entries older than ``days`` -- audited and reversible (``undo_expire``).
+
+    Never deletes: the evidence stays in the log (marked) so the decision is inspectable and
+    an undo can restore the prior state. Idempotent, and a no-op leaves the file untouched."""
+    doc = items(stem)
+    _kept, expired = queue_policy.expire(doc, now=now, days=days)
+    if not expired:
+        return {"expired": 0, "bounded": 0}
+    # Index by identity, not ``list.index``: two entries can be equal dicts, and an audit record
+    # that names the wrong duplicate would let an undo restore the wrong question.
+    pos = {id(e): i for i, e in enumerate(doc)}
+    _rewrite(stem, doc)
+    at = time.time()
+    _audit(
+        stem,
+        [
+            queue_policy.audit_record(
+                "expiry",
+                index=pos[id(e)],
+                stage=e.get("stage"),
+                reason=e.get("reason"),
+                days=e.get("expired_days"),
+                original_text=str(e.get("original_text", ""))[:240],
+                at=at,
+            )
+            for e in expired
+        ],
+    )
+    return {"expired": len(expired), "bounded": 0}
+
+
+def enforce(stem: str, now=None, days: float = EXPIRY_DAYS, limit: int = QUEUE_MAX) -> dict:
+    """Expiry + hard cap in ONE rewrite: the queue a sweep leaves behind is bounded."""
+    doc = items(stem)
+    _kept, expired = queue_policy.expire(doc, now=now, days=days)
+    _kept, bounded = queue_policy.bound(doc, now=now, limit=limit)
+    bounded = [e for e in bounded if e not in expired]
+    if not expired and not bounded:
+        return {"expired": 0, "bounded": 0}
+    pos = {id(e): i for i, e in enumerate(doc)}
+    _rewrite(stem, doc)
+    at = time.time()
+    recs = [
+        queue_policy.audit_record(
+            kind,
+            index=pos[id(e)],
+            stage=e.get("stage"),
+            reason=e.get("reason"),
+            days=e.get("expired_days"),
+            original_text=str(e.get("original_text", ""))[:240],
+            at=at,
+        )
+        for kind, group in (("expiry", expired), ("queue-bound", bounded))
+        for e in group
+    ]
+    _audit(stem, recs)
+    return {"expired": len(expired), "bounded": len(bounded)}
+
+
+def undo_expire(stem: str, index: int) -> bool:
+    """Put one expired entry back in the queue and record the reversal.
+
+    The entry gets a fresh timestamp: an undo is a decision, so the restored question deserves
+    a full window before the age rule can retire it again."""
+    doc = items(stem)
+    if not (0 <= index < len(doc)):
+        return False
+    if not queue_policy.unexpire(doc[index]):
+        return False
+    doc[index]["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    doc[index]["expiry_undone_at"] = doc[index]["ts"]
+    if not _rewrite(stem, doc):
+        return False
+    e = doc[index]
+    _audit(
+        stem,
+        [
+            queue_policy.audit_record(
+                "undo-expiry",
+                index=index,
+                stage=e.get("stage"),
+                reason=e.get("reason"),
+                original_text=str(e.get("original_text", ""))[:240],
+            )
+        ],
+    )
+    return True
+
+
 def _join_known_phrases(text: str, phrases) -> str:
     """``text`` with every occurrence of a listed multi-word phrase written as one word ('Van der Decken' -> 'vanderdecken'), so a
     re-spacing of a known phrase ('Vanderdecken' <-> 'Van der Decken') is the same word on both sides."""
@@ -224,8 +413,14 @@ def pending(stem: str, primary_only: bool = False) -> list:
     """Unresolved entries; with ``primary_only``, only those worth a human's attention (and not dismissed as a large change).
 
     The filter lives here, not in the caller, so the review UI and the --review CLI cannot
-    disagree about what "the queue" means -- the same reason REASONS is a module constant."""
-    out = [e for e in items(stem) if not e.get("resolved")]
+    disagree about what "the queue" means -- the same reason REASONS is a module constant.
+
+    P33: the age rule is applied HERE too, not only when a sweep persists it. An entry past
+    ``EXPIRY_DAYS`` is no longer a question -- the sweep marks it expired and audits it, and
+    until that sweep runs the page must not present it as pending. Applying the rule at read
+    keeps the queue bounded even between sweeps, without a write on a GET route."""
+    out = [e for e in items(stem) if not e.get("resolved") and not e.get("expired")]
+    out = [e for e in out if (queue_policy.age_days(e) or 0.0) <= EXPIRY_DAYS]
     if primary_only:
         out = [e for e in out if (e.get("stage"), e.get("reason")) in PRIMARY and not _is_dismissed(e)]
     return out
@@ -376,9 +571,17 @@ def record(stem: str, stage: str, reason: str, **fields) -> bool:
     """Append one unresolved case. Extra fields are the evidence for triage — for repair that
     is original_text/proposed_text/source_start/source_end/avg_logprob; for punctuation the
     run's text. `proposed_text` matters most: today a rejected repair discards what the model
-    said, which is exactly what a human needs to judge whether the guard was right."""
+    said, which is exactly what a human needs to judge whether the guard was right.
+
+    P33: EVERY call increments the day/class counters; the evidence line itself is written
+    only while that class is under its daily sample cap (the human-owed reasons excepted).
+    That is what turns a 12,840-line-per-12h log into a bounded sample with exact totals."""
     entry = {"stage": stage, "reason": reason, "resolved": False, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     entry.update({k: v for k, v in fields.items() if v is not None})
+    day = entry["ts"][:10]
+    counted, keep = _count_and_sample(stem, stage, reason, day)
+    if not keep:
+        return counted
     path = path_for(stem)
     try:
         # O(1) append. The array version re-read and re-wrote the whole file per card --

@@ -55,6 +55,8 @@ import re
 import sys
 import time
 
+from dubtitlerr.core import queue_policy
+
 POLICY_VERSION = "p32-v1"
 
 DISMISS = "dismiss"
@@ -245,14 +247,16 @@ def audit_path(gloss_path: str) -> str:
 
 
 def _append_audit(gloss_path: str, records: list) -> None:
+    """Append this glossary's decision records to a BOUNDED ring (newest ``AUDIT_MAX``).
+
+    P33: an audit is evidence, and evidence that grows without limit is the next 12,840-line
+    log. The decision *history* survives as the glossary's own ``archived_flags`` counters;
+    this file is the bounded window the UI can inspect and undo. Never raises: the glossary
+    write is the durable state, and a lost audit line must not fail it.
+    """
     if not records:
         return
-    try:
-        with open(audit_path(gloss_path), "a", encoding="utf-8") as f:
-            for rec in records:
-                f.write(json.dumps(rec, ensure_ascii=False, sort_keys=True) + "\n")
-    except OSError:
-        pass  # the glossary write is the durable state; a lost audit line must not fail it
+    queue_policy.audit_append(audit_path(gloss_path), records, max_records=queue_policy.AUDIT_MAX)
 
 
 def apply_policy(gloss: dict, gloss_path: str | None = None, titles=None, now=None) -> dict:
@@ -540,3 +544,170 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# --- P33: the glossary queue obeys the same foreign policy as every other queue -------------
+# P32 resolved noise at generation; this drains what is already queued. Both use the same
+# decision-record shape, so one audit feed and one undo path serve the whole system.
+
+EXPIRY_DAYS = 14
+MAX_FLAGS = 200
+UNDO_WINDOW = 50  # dismissed entries kept in-document for undo; the JSONL holds the rest
+
+
+def _flag_meta(meta) -> dict:
+    """The stored flagged entry as a dict, keeping a legacy bare-string reason."""
+    if isinstance(meta, dict):
+        return dict(meta)
+    return {"reason": str(meta or "")}
+
+
+def _first_seen(rec: dict, now: float) -> float:
+    """Epoch seconds of a flag's first sighting; restamps ``now`` when absent or unparseable.
+
+    Tolerated on purpose: ``first_seen`` is stored data and can be a hand-edited ISO string.
+    A sweep that raised on one such glossary would leave every later queue unbounded, which is
+    exactly the failure this sweep exists to prevent. An unreadable age is restamped rather
+    than trusted, so it costs one window instead of deciding the question.
+    """
+    value = rec.get("first_seen")
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    parsed = queue_policy.parse_time(value)
+    if parsed is None:
+        parsed = now
+        rec["first_seen"] = now
+    return parsed
+
+
+def expire_flags(gloss: dict, gloss_path: str | None = None, now=None, days: float = EXPIRY_DAYS, limit: int = MAX_FLAGS) -> dict:
+    """Stamp unknown-age flags, dismiss the stale, and cap the queue. Mutates ``gloss``.
+
+    A flagged entry carries no timestamp, so the first sweep that sees it stamps ``first_seen``
+    and keeps it; only a later sweep can expire it. That is deliberate: an unknown age must
+    cost one window, never the question. Dismissed entries move to ``archived_flags`` with
+    their evidence and can be restored by ``undo_flag``.
+    """
+    now = time.time() if now is None else float(now)
+    flagged = gloss.get("flagged")
+    if not isinstance(flagged, dict):
+        return {"expired": [], "bounded": [], "queued": len(flagged or {}) if isinstance(flagged, list) else 0}
+    expired, kept = [], {}
+    for term, meta in flagged.items():
+        rec = _flag_meta(meta)
+        if not rec.get("first_seen"):
+            rec["first_seen"] = now
+            kept[term] = rec
+            continue
+        age_days = (now - _first_seen(rec, now)) / 86400.0
+        if age_days > days:
+            rec.update(expired=True, expired_at=now, expired_days=int(age_days), reversible=True)
+            expired.append({"term": term, **rec})
+        else:
+            kept[term] = rec
+    bounded = []
+    if len(kept) > limit:
+        oldest = sorted(kept.items(), key=lambda kv: _first_seen(kv[1], now))[: len(kept) - limit]
+        for term, rec in oldest:
+            rec.update(expired=True, expired_at=now, expired_days=int((now - _first_seen(rec, now)) / 86400.0))
+            rec["expired_reason"] = "queue-bound"
+            expired.append({"term": term, **rec})
+            bounded.append({"term": term, "reason": rec.get("reason")})
+            kept.pop(term, None)
+    if kept:
+        gloss["flagged"] = kept
+    else:
+        gloss.pop("flagged", None)
+    if expired:
+        arch = gloss.get("archived_flags") if isinstance(gloss.get("archived_flags"), dict) else {}
+        counts = dict(arch.get("counts") or {})
+        for rec in expired:
+            reason = str(rec.get("reason") or "")
+            counts[reason] = int(counts.get(reason) or 0) + 1
+        # `recent` is the bounded undo window, not a history: the full evidence goes to the
+        # archived JSONL (the audit trail), so this list cannot become the next growing pile.
+        recent = [r for r in (arch.get("recent") or []) if isinstance(r, dict)] + expired
+        gloss["archived_flags"] = {
+            "counts": dict(sorted(counts.items())),
+            "total": int(arch.get("total") or 0) + len(expired),
+            "expired": int(arch.get("expired") or 0) + len(expired),
+            "at": round(now, 3),
+            "recent": recent[-UNDO_WINDOW:],
+        }
+        gloss["queue_policy"] = {
+            "version": "p33-v1",
+            "at": round(now, 3),
+            "days": days,
+            "limit": limit,
+            "queued": len(kept),
+        }
+        if gloss_path:
+            # Full evidence to the archive log; `recent` above is only the bounded undo window.
+            try:
+                from dubtitlerr.glossary import glossary_verify
+
+                glossary_verify._append_archived(
+                    gloss_path + ".archived.jsonl",
+                    [
+                        {
+                            "term": r.get("term"),
+                            "reason": r.get("reason"),
+                            **{k: v for k, v in r.items() if k not in ("term", "reason")},
+                        }
+                        for r in expired
+                    ],
+                )
+            except OSError:
+                pass
+    return {"expired": expired, "bounded": bounded, "queued": len(kept)}
+
+
+def undo_flag(gloss: dict, term: str) -> dict | None:
+    """Restore one auto-dismissed flag. Returns the restored entry, or None if it was not expired.
+
+    The restored entry is given a fresh ``first_seen`` so the next sweep does not immediately
+    re-expire it -- an undo is a decision, and a decision deserves a full window."""
+    flagged = gloss.get("flagged")
+    flagged = dict(flagged) if isinstance(flagged, dict) else {}
+    key = _fold(term)
+    if any(_fold(t) == key for t in flagged):
+        return None
+    archived = gloss.get("archived_flags")
+    if not isinstance(archived, dict):
+        return None
+    recent = [r for r in (archived.get("recent") or []) if isinstance(r, dict)]
+    idx = next((i for i, r in enumerate(recent) if _fold(r.get("term")) == key), None)
+    if idx is None:
+        return None
+    rec = dict(recent.pop(idx))
+    name = str(rec.pop("term"))
+    for field in ("expired", "expired_at", "expired_days", "expired_reason", "reversible"):
+        rec.pop(field, None)
+    rec["first_seen"] = time.time()
+    rec["restored_at"] = rec["first_seen"]
+    flagged[name] = rec
+    gloss["flagged"] = flagged
+    archived["total"] = max(0, int(archived.get("total") or 0) - 1)
+    archived["expired"] = max(0, int(archived.get("expired") or 0) - 1)
+    archived["recent"] = recent
+    gloss["archived_flags"] = archived
+    return {"term": name, **rec}
+
+
+def decision_record(term, reason, decision, guard, now, show, **extra) -> dict:
+    """One audit record in the P32 shape -- the single decision vocabulary every reader uses."""
+    rec = {
+        "at": round(float(now), 3),
+        "term": term,
+        "reason": reason,
+        "decision": decision,
+        "tier": 0,
+        "canonical": None,
+        "applied": None,
+        "guard": guard,
+        "by": "auto",
+        "policy": "p33-v1",
+        "show": show,
+    }
+    rec.update(extra)
+    return rec

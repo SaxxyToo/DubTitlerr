@@ -110,7 +110,7 @@ test('the account menu closes on a click outside it and stays open on a click in
   const menu = page.getByRole('region', { name: 'Account' });
   await menu.getByLabel('Current password').click();
   await expect(menu).toBeVisible();
-  await page.getByRole('heading', { name: 'Review inbox', level: 1 }).click();
+  await page.getByRole('heading', { name: 'Recent decisions', level: 1 }).click();
   await expect(menu).toHaveCount(0);
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 });

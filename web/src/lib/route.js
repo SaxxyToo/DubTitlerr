@@ -1,26 +1,36 @@
 // Hash routing for the review workspace: the location hash names a view, nothing else.
 // Pure, so node:test can import it without a browser.
 
-export const VIEWS = /** @type {const} */ (['inbox', 'shared', 'dashboard', 'glossary', 'runs', 'settings']);
+export const VIEWS = /** @type {const} */ ([
+  'audit',
+  'inbox',
+  'shared',
+  'dashboard',
+  'glossary',
+  'runs',
+  'settings',
+]);
 
 /**
- * The view a location hash names. Empty, bare and unknown hashes fall back to the inbox.
+ * The view a location hash names. Empty, bare and unknown hashes fall back to the audit view:
+ * since P33 the workspace opens on what the app decided, and the pending queue is the exception
+ * list rather than the home page.
  * @param {string | null | undefined} hash
- * @returns {'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings'}
+ * @returns {'audit' | 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings'}
  */
 export function parseHash(hash) {
   const name = String(hash ?? '')
     .replace(/^#\/?/, '')
     .split(/[/?]/, 1)[0];
-  return VIEWS.find((v) => v === name) ?? 'inbox';
+  return VIEWS.find((v) => v === name) ?? 'audit';
 }
 
 /**
- * The canonical hash for a view; an unknown view gets the inbox hash.
+ * The canonical hash for a view; an unknown view gets the audit hash.
  * @param {string | null | undefined} view
  */
 export function hashFor(view) {
-  return '#/' + (VIEWS.find((v) => v === view) ?? 'inbox');
+  return '#/' + (VIEWS.find((v) => v === view) ?? 'audit');
 }
 
 /** The settings categories in sidebar order. tests/test_settings_registry.py checks this list against settings_registry.CATEGORIES. */

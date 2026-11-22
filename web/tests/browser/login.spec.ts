@@ -21,9 +21,10 @@ test('a wrong password is one plain sentence, the right one opens the workspace 
   await signIn(page, USERNAME, 'not the password');
   await expect(page.getByRole('alert')).toContainText('wrong username or password');
   await signIn(page);
-  await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
+  // P33: a signed-in workspace opens on Recent decisions (the audit), not on the pending inbox.
+  await expect(page.getByRole('heading', { name: 'Recent decisions', level: 1 })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recent decisions', level: 1 })).toBeVisible();
 });
 
 test('the session is an HttpOnly cookie the page cannot read, and no token is kept in storage', async ({
@@ -86,6 +87,22 @@ test('first run: the setup form creates the admin, checks the confirm field and 
   });
   await page.route('**/api/login', (route) => route.fulfill(json({ username: 'boss', role: 'admin' })));
   await page.route('**/api/episodes', (route) => route.fulfill(json({ episodes: [] })));
+  // The first admin lands on Recent decisions, which reads the audit feed and the queue health.
+  // Both are empty on a brand-new install -- that empty landing is asserted below, deliberately:
+  // audit-first is the default even before the pipeline has decided anything.
+  await page.route('**/api/audit**', (route) =>
+    route.fulfill(json({ decisions: [], counts: {}, undoable: 0, policy: 'p33-v1' })),
+  );
+  await page.route('**/api/queues', (route) =>
+    route.fulfill(
+      json({
+        policy: 'p33-v1',
+        expiry_days: 14,
+        max: 500,
+        glossary: { queued: 0, expired: 0, by_class: {}, report: [] },
+      }),
+    ),
+  );
   // No mock session cookie exists, so the real status call would 401 and flip the page back to
   // login while the test is still asserting the freshly created account.
   await page.route('**/api/v1/system/status', (route) =>
@@ -102,7 +119,9 @@ test('first run: the setup form creates the admin, checks the confirm field and 
   expect(created).toBeUndefined();
   await page.getByLabel('Confirm password').fill('a long enough pass');
   await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recent decisions', level: 1 })).toBeVisible();
+  // Nothing has been decided yet: the landing explains the empty feed instead of showing a blank page.
+  await expect(page.getByRole('heading', { name: 'No automatic decisions yet' })).toBeVisible();
   expect(created).toEqual({ username: 'boss', password: 'a long enough pass' });
 });
 
@@ -137,5 +156,5 @@ test('a reset forgets earlier failed sign-ins, so a lockout never leaks into the
   await reset(request);
   await page.goto('/review');
   await signIn(page);
-  await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recent decisions', level: 1 })).toBeVisible();
 });

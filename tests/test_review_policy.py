@@ -340,3 +340,86 @@ def test_a_dry_run_leaves_a_real_glossary_byte_identical(tmp_path):
 
     assert path.read_bytes() == before
     assert rep["files"][0]["archived"] == 2, "its two candidate-less no-match entries collapse"
+
+
+# --- P33: the glossary queue expires, is capped, and every dismissal is reversible ---------
+
+DAY = 86400.0
+
+
+def _flag_gloss(n=3, **extra):
+    g = {"show": "Show", "names": ["Fern"], "flagged": {f"Term{i}": {"reason": "unseen-needs-evidence"} for i in range(n)}}
+    g.update(extra)
+    return g
+
+
+def test_first_sweep_stamps_without_expiring():
+    """An unknown age costs one window, never the question."""
+    g = _flag_gloss(2)
+    rep = rp.expire_flags(g, now=1_800_000_000.0)
+    assert rep["expired"] == [] and len(g["flagged"]) == 2
+    assert all(v["first_seen"] == 1_800_000_000.0 for v in g["flagged"].values())
+
+
+def test_a_flag_older_than_the_window_is_dismissed_audited_and_reversible(tmp_path):
+    path = str(tmp_path / "Show.json")
+    g = _flag_gloss(2)
+    rp.expire_flags(g, path, now=1_800_000_000.0)
+    rep = rp.expire_flags(g, path, now=1_800_000_000.0 + 15 * DAY)
+    assert len(rep["expired"]) == 2 and "flagged" not in g
+    assert g["archived_flags"]["expired"] == 2
+    assert g["archived_flags"]["counts"] == {"unseen-needs-evidence": 2}
+    assert len(g["archived_flags"]["recent"]) == 2
+    # full evidence reaches the archive log, so the in-document window can stay bounded
+    archived = open(path + ".archived.jsonl", encoding="utf-8").read()
+    assert "Term0" in archived and "expired" in archived
+
+    rec = rp.undo_flag(g, "Term0")
+    assert rec["term"] == "Term0" and "expired" not in rec
+    assert "Term0" in g["flagged"]
+    assert g["archived_flags"]["total"] == 1
+    assert rp.undo_flag(g, "Term0") is None  # not expired any more
+
+
+def test_the_glossary_queue_is_capped_at_max_flags():
+    g = _flag_gloss(rp.MAX_FLAGS + 40)
+    for i in range(rp.MAX_FLAGS + 40):
+        g["flagged"][f"Term{i}"]["first_seen"] = 1_800_000_000.0 + i
+    rep = rp.expire_flags(g, now=1_800_000_000.0 + 40)
+    assert len(g["flagged"]) == rp.MAX_FLAGS
+    assert len(rep["bounded"]) == 40
+    # the oldest went first
+    assert rep["bounded"][0]["term"] == "Term0"
+
+
+def test_an_expiry_record_uses_the_p32_decision_shape():
+    rec = rp.decision_record("Term", "unseen-needs-evidence", "dismiss", "queue-expiry", 1_800_000_000.0, "Show")
+    assert set(rec) >= {"at", "term", "reason", "decision", "tier", "canonical", "applied", "guard", "by", "policy", "show"}
+    assert rec["by"] == "auto" and rec["guard"] == "queue-expiry"
+
+
+def test_a_hand_edited_first_seen_is_parsed_and_a_junk_one_costs_one_window():
+    """Stored data can be an ISO string or junk: neither may abort the sweep that bounds queues."""
+    iso = _flag_gloss(1)
+    iso["flagged"]["Term0"]["first_seen"] = "2026-01-01T00:00:00Z"
+    assert len(rp.expire_flags(iso, now=1_800_000_000.0)["expired"]) == 1
+
+    junk = _flag_gloss(1)
+    junk["flagged"]["Term0"]["first_seen"] = "not-a-time"
+    assert rp.expire_flags(junk, now=1_800_000_000.0)["expired"] == []
+    assert junk["flagged"]["Term0"]["first_seen"] == 1_800_000_000.0  # restamped, not trusted
+
+
+def test_the_decision_audit_is_a_bounded_ring_not_a_growing_log(tmp_path):
+    """The undo/inspection window is bounded; the history lives in the glossary's counters."""
+    from dubtitlerr.core import queue_policy as qp
+
+    path = str(tmp_path / "Show.json")
+    records = [
+        rp.decision_record(f"T{i}", "english-word", "dismiss", None, 1_800_000_000.0 + i, "Show")
+        for i in range(qp.AUDIT_MAX + 100)
+    ]
+    rp._append_audit(path, records)
+    lines = [line for line in open(rp.audit_path(path), encoding="utf-8") if line.strip()]
+    assert len(lines) == qp.AUDIT_MAX
+    assert f'"T{qp.AUDIT_MAX + 99}"' in lines[-1]  # newest survive

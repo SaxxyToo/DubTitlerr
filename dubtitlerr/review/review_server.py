@@ -64,6 +64,7 @@ from dubtitlerr.core.decisions import show_for
 from dubtitlerr.review import (
     review_api_v1,
     review_apply,
+    review_audit,
     review_auth,
     review_glossary,
     review_requests,
@@ -1181,6 +1182,18 @@ def _route(method: str, path: str, bare: str, body: dict, decision, client: str,
         )
     if method == "GET" and path == "/api/shared":
         return 200, handle_shared()
+    # P33 audit-first: what the app decided, why, and the one-tap undo. The pending queues are
+    # still here (/api/episode, /api/glossary) but they are the exception list now, not the home.
+    if method == "GET" and path == "/api/audit":
+        try:
+            limit = int(body.get("limit") or review_audit.DEFAULT_LIMIT)
+        except (TypeError, ValueError):
+            limit = review_audit.DEFAULT_LIMIT
+        return 200, review_audit.feed(limit=limit, show=str(body.get("show") or ""))
+    if method == "POST" and path == "/api/audit/undo":
+        return review_audit.undo(str(body.get("id") or ""))
+    if method == "GET" and path == "/api/queues":
+        return 200, review_audit.queues()
     if method == "POST" and path == "/api/shared":
         d = body.get("decisions")
         return 200, handle_shared_decide(d if isinstance(d, list) else [])

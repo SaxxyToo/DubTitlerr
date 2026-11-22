@@ -148,7 +148,10 @@ def test_a_sweep_reports_sweep_completed_with_the_counts_it_already_has(tmp_path
     assert "1 show(s), 0 failed, 0 review item(s) pending" in call["summary"]
 
 
-def test_review_pending_is_reported_only_when_the_show_has_open_items(tmp_path):
+def test_a_sweep_never_nags_per_item_and_the_digest_carries_the_review_counts(tmp_path):
+    """P33: no per-item review.pending from the loop. The sweep's own hygiene run emits ONE
+    review.digest (covered end to end in tests/test_queue_hygiene.py); the loop only reports
+    the sweep. The count still rides on sweep.completed so the owner is not blind."""
     pending = "\n".join(
         [
             json.dumps({"stage": "repair", "reason": "rejected_guard", "original_text": "a", "proposed_text": "b"}),
@@ -157,14 +160,12 @@ def test_review_pending_is_reported_only_when_the_show_has_open_items(tmp_path):
             "{torn final line",
         ]
     )
-    proc, log, anime = _run_gen_loop(tmp_path, _GENERATE_OK, "Frieren", unresolved={"Frieren": pending + "\n"})
+    proc, log, _anime = _run_gen_loop(tmp_path, _GENERATE_OK, "Frieren", unresolved={"Frieren": pending + "\n"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     events = _events(log)
-    assert events == ["sweep.completed", "review.pending"], events
+    assert events == ["sweep.completed"], events
     assert _call(log, "sweep.completed")["counts"]["review_pending"] == 2
-    pending_call = _call(log, "review.pending")
-    assert pending_call["counts"] == {"pending": 2}
-    assert pending_call["loop"] == "generate"
+    assert "python3 -m dubtitlerr.core.queue_hygiene --notify" in (REPO / "gen_loop.sh").read_text()
 
 
 def test_no_review_pending_event_when_every_entry_is_resolved(tmp_path):

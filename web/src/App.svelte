@@ -24,6 +24,7 @@
   import Sidebar from './lib/Sidebar.svelte';
   import StatusBadge from './lib/StatusBadge.svelte';
   import Dashboard from './pages/Dashboard.svelte';
+  import Audit from './pages/Audit.svelte';
   import Glossary from './pages/Glossary.svelte';
   import Runs from './pages/Runs.svelte';
   import Settings from './pages/Settings.svelte';
@@ -49,8 +50,9 @@
     verdictLabels,
   } from './review';
 
-  type View = 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
+  type View = 'audit' | 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
   const VIEW_TITLES: Record<View, string> = {
+    audit: 'Recent decisions',
     inbox: 'Review inbox',
     shared: 'Shared lines',
     dashboard: 'Dashboard',
@@ -796,6 +798,8 @@
         <Glossary {api} bind:dirty={glossaryDirty} role={account.role} />
       {:else if view === 'dashboard'}
         <Dashboard {api} />
+      {:else if view === 'audit'}
+        <Audit {api} pending={toReview} onopeninbox={() => navigate('inbox')} />
       {:else if view === 'runs'}
         <Runs api={optionsApi} role={account.role} />
       {:else if view === 'settings'}
@@ -885,7 +889,8 @@
                   </div>{/each}
               </div>
               <div class="panel-footer">
-                Episodes with repairs to check come first. Nothing is approved automatically.
+                Episodes with repairs to check come first. Machine noise is dismissed automatically and every
+                automatic decision is reversible under Recent decisions.
               </div>
             </section>
           {/if}

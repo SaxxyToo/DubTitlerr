@@ -67,6 +67,7 @@ EVENTS = (
     "merge.completed",
     "pass.failed",
     "review.pending",
+    "review.digest",
     "episode.delivered",
     "episode.refused",
 )
@@ -240,6 +241,7 @@ EVENT_TITLES: dict[str, str] = {
     "merge.completed": "Merge pass complete",
     "pass.failed": "Pass failed",
     "review.pending": "Review waiting",
+    "review.digest": "Review digest",
     "episode.delivered": "Episode delivered",
     "episode.refused": "Episode parked",
 }
@@ -249,6 +251,7 @@ EVENT_COLORS: dict[str, int] = {
     "merge.completed": 0x2ECC71,
     "episode.delivered": 0x2ECC71,
     "review.pending": 0xE67E22,
+    "review.digest": 0x3498DB,
     "episode.refused": 0xE67E22,
     "pass.failed": 0xE74C3C,
 }
@@ -259,6 +262,7 @@ EVENT_VIEWS: dict[str, str] = {
     "pass.failed": "dashboard",
     "episode.delivered": "dashboard",
     "review.pending": "inbox",
+    "review.digest": "audit",
     "episode.refused": "dashboard",
 }
 UNKNOWN_EVENT_COLOR = 0x95A5A6  # the test event, and anything the tables above do not name

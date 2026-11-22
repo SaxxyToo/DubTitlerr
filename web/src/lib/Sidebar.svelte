@@ -5,6 +5,7 @@
     AudioLines,
     BookOpen,
     ExternalLink,
+    History,
     Inbox,
     Layers,
     LayoutDashboard,
@@ -12,7 +13,7 @@
     Settings,
   } from '@lucide/svelte';
 
-  type View = 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
+  type View = 'audit' | 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
 
   let {
     view,
@@ -46,6 +47,7 @@
   } = $props();
 
   const ITEMS = [
+    { key: 'audit', label: 'Recent decisions', icon: History },
     { key: 'inbox', label: 'Review inbox', icon: Inbox },
     { key: 'shared', label: 'Shared lines', icon: Layers },
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },

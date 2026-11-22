@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openSignedIn, reset } from './helpers';
+import { openInbox, reset } from './helpers';
 
 const FAKE = 60;
 
@@ -35,7 +35,7 @@ test('narrow layout: the episode list scrolls inside itself and the editor is br
 }) => {
   await page.setViewportSize({ width: 940, height: 1000 });
   await padInbox(page);
-  await openSignedIn(page, '');
+  await openInbox(page);
   const list = page.locator('.episode-list');
   const listBox = await list.boundingBox();
   expect(listBox!.height).toBeLessThanOrEqual(1000 * 0.4 + 1);
@@ -48,7 +48,7 @@ test('narrow layout: the episode list scrolls inside itself and the editor is br
 test('wide layout: choosing an episode does not scroll the page', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
   await padInbox(page);
-  await openSignedIn(page, '');
+  await openInbox(page);
   await page.locator('.episode-list .episode', { hasText: 'Pad Show S01E05' }).click();
   await expect(page.locator('section.review-panel')).toBeVisible();
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
