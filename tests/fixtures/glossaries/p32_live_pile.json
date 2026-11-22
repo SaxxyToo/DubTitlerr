@@ -1,0 +1,215 @@
+{
+  "show": "Frieren Beyond Journey's End (2023) {tvdb-424536}",
+  "wiki": "https://frieren.fandom.com/api.php",
+  "_curated": true,
+  "initial_prompt": "This is Frieren Beyond Journey's End, a Japanese anime (English dub). Spell names correctly: Frieren, Fern, Stark, Himmel, Heiter, Eisen, Aura, Serie, Land, Denken, Macht, Übel, Wirbel.",
+  "names": [
+    "Frieren",
+    "Fern",
+    "Stark",
+    "Himmel",
+    "Heiter",
+    "Eisen",
+    "Aura",
+    "Serie",
+    "Land",
+    "Denken",
+    "Übel",
+    "Wirbel"
+  ],
+  "phrases": [
+    "Continental Magic Association",
+    "Hero of the South"
+  ],
+  "hard_fixes": {
+    "Frierin": "Frieren",
+    "Zol": "Zoro"
+  },
+  "acquired": {
+    "Zol": {
+      "canonical": "Zoro",
+      "count": 3,
+      "canonical_count": 14,
+      "score": 0.91,
+      "bound": 0.62,
+      "reason": "dominant",
+      "run": "review"
+    }
+  },
+  "known": [
+    "Robin"
+  ],
+  "verified": [
+    "Frieren",
+    "Fern",
+    "Stark",
+    "Magic",
+    "Northern",
+    "Imperial",
+    "English",
+    "Journey",
+    "Freeren",
+    "Raftel",
+    "Vegapunk",
+    "Freeran",
+    "Zol",
+    "Kasumi",
+    "Word",
+    "Nobody",
+    "Robin"
+  ],
+  "flagged": {
+    "Magic": {
+      "reason": "english-word",
+      "canonical": "Magic Knight",
+      "variant_count": 41,
+      "canonical_count": 0,
+      "score": 0.887,
+      "bound": 0.0,
+      "context": [
+        "A First-Class Mage must be registered with the Continental Magic Association."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "English": {
+      "reason": "english-word",
+      "canonical": "English",
+      "variant_count": 9,
+      "canonical_count": 0,
+      "score": 0.9,
+      "bound": 0.0,
+      "context": [
+        "I learned the English names for all of them."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Journey": {
+      "reason": "english-word",
+      "canonical": "Journey's End",
+      "variant_count": 17,
+      "canonical_count": 0,
+      "score": 0.842,
+      "bound": 0.0,
+      "context": [
+        "The journey continues beyond the end."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Northern": {
+      "reason": "below-floor",
+      "canonical": "Northern Plateau",
+      "variant_count": 1,
+      "canonical_count": 0,
+      "score": 0.861,
+      "bound": 0.0,
+      "context": [
+        "Logistics in the Northern Plateau."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Imperial": {
+      "reason": "sentence-initial-only",
+      "canonical": "Imperial Mage",
+      "variant_count": 2,
+      "canonical_count": 0,
+      "score": 0.795,
+      "bound": 0.0,
+      "context": [
+        "Imperial mages are not welcome here."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Fern": {
+      "reason": "english-word",
+      "canonical": "Fern",
+      "variant_count": 63,
+      "canonical_count": 0,
+      "score": 0.94,
+      "bound": 0.0,
+      "context": [
+        "Fern, stay behind me."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Freeren": {
+      "reason": "respelling-needs-review",
+      "canonical": "Frieren",
+      "variant_count": 5,
+      "canonical_count": 0,
+      "score": 0.91,
+      "bound": 0.0,
+      "context": [
+        "Freeren, what do you think?"
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Raftel": {
+      "reason": "respelling-needs-review",
+      "canonical": "Ratel",
+      "variant_count": 4,
+      "canonical_count": 0,
+      "score": 0.883,
+      "bound": 0.0,
+      "context": [
+        "The Raftel is not on any map."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Vegapunk": {
+      "reason": "possessive_floor_crossing",
+      "bare": 1,
+      "possessive": 4
+    },
+    "Freeran": {
+      "reason": "unseen-needs-evidence",
+      "canonical": "Frieren",
+      "variant_count": 3,
+      "canonical_count": 0,
+      "score": 0.834,
+      "bound": 0.0,
+      "context": [
+        "Freeran has been alive for a thousand years."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Zol": {
+      "reason": "conflicts-with-curated-fix",
+      "canonical": "Zorro",
+      "variant_count": 3,
+      "canonical_count": 14,
+      "score": 0.902,
+      "bound": 0.62,
+      "context": [
+        "Zol drew his blade."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Kasumi": {
+      "reason": "no-wiki-match",
+      "canonical": "Misty",
+      "variant_count": 6,
+      "canonical_count": 0,
+      "bound": 0.0,
+      "context": [
+        "I saw Kasumi walk."
+      ],
+      "source": "transcript",
+      "scope": 28
+    },
+    "Word": {
+      "reason": "common-word",
+      "canonical": "Word Long"
+    },
+    "Nobody": "no-match"
+  }
+}

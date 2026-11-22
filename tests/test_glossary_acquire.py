@@ -779,11 +779,11 @@ def test_c1_acquire_rejects_a_tier_b_canonical_that_is_not_a_real_wiki_title(tmp
     rep = ga.acquire(str(gp), str(tmp_path), apply=True)
     assert rep["tier_b"] == {"Zunesha": ""}
     g = json.loads(gp.read_text())
-    # P24: a no-wiki-match verdict is a guard class, so it lands in archived_flags (counts)
-    # and the .archived.jsonl evidence, not in the review queue.
-    assert g["archived_flags"]["counts"] == {"no-wiki-match": 1}
-    archived = [json.loads(ln) for ln in (tmp_path / "One Pace.json.archived.jsonl").read_text().splitlines()]
-    assert archived[0]["term"] == "Zunesha" and archived[0]["canonical"] == ""
+    # P32: no-wiki-match is a true queue reason (a candidate to accept or reject), so it is
+    # entry-form and reachable by the reviewer.
+    assert g["flagged"]["Zunesha"]["reason"] == "no-wiki-match"
+    assert g["flagged"]["Zunesha"]["canonical"] == ""
+    assert "archived_flags" not in g
     assert "Zou Elephant" not in json.dumps(g)
     # and a human 'y' on this entry must not turn it into a hard_fix either (record_decision's
     # own defence-in-depth, exercised directly in test_record_decision_... below).
@@ -1000,13 +1000,11 @@ def test_acquire_apply_persists_tier_b_into_flagged_as_no_wiki_match(tmp_path, m
     rep = ga.acquire(str(gp), str(tmp_path), apply=True)
     assert rep["tier_b"] == {"Kasumi": "Misty"}
     g = json.loads(gp.read_text())
-    # P24: guard class -> counts + evidence, kept out of the human review queue.
-    assert g["archived_flags"]["counts"] == {"no-wiki-match": 1}
-    assert "flagged" not in g
-    archived = [json.loads(ln) for ln in (tmp_path / "One Pace.json.archived.jsonl").read_text().splitlines()]
-    assert archived[0]["term"] == "Kasumi"
-    assert archived[0]["canonical"] == "Misty"
-    assert "I saw Kasumi walk." in archived[0]["context"]
+    # P32: tier-B's no-wiki-match is a candidate the reviewer can accept or reject: queue it.
+    assert g["flagged"]["Kasumi"]["reason"] == "no-wiki-match"
+    assert g["flagged"]["Kasumi"]["canonical"] == "Misty"
+    assert "I saw Kasumi walk." in g["flagged"]["Kasumi"]["context"]
+    assert "archived_flags" not in g
 
 
 def test_record_decision_accept_clears_a_stale_known_entry():
@@ -1218,8 +1216,8 @@ def test_i5_flagged_count_is_not_inflated_by_pre_existing_glossary_entries(tmp_p
     rep = ga.acquire(str(gp), str(tmp_path), apply=True)
     assert rep["flagged"] == 0  # no tier-A flag proposals here -- tier_b/pre-existing must not count
     g = json.loads(gp.read_text())
-    assert set(g["flagged"]) == {"Preexisting"}  # the decision entry is untouched...
-    assert g["archived_flags"]["counts"] == {"no-wiki-match": 1}  # ...tier_b's guard verdict is a count
+    assert set(g["flagged"]) == {"Preexisting", "Kasumi"}  # the decision entry is untouched...
+    assert g["flagged"]["Kasumi"]["reason"] == "no-wiki-match"  # ...tier_b's candidate is queued (P32)
 
 
 def test_r4_revert_exempts_a_human_approved_entry():

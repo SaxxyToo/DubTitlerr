@@ -795,7 +795,6 @@ ARCHIVED_FLAG_REASONS = frozenset(
         "common-word",
         "below-floor",
         "no-match",
-        "no-wiki-match",
     }
 )
 
@@ -822,42 +821,18 @@ def _archived_entries_by_key(path: str) -> set:
     return keys
 
 
-def finalize_flags(gloss: dict, gloss_path: str | None = None) -> dict:
-    """Route guard-classified flags into ``archived_flags`` counts; keep decisions as entries.
+def finalize_flags(gloss: dict, gloss_path: str | None = None, titles=None) -> dict:
+    """Resolve the review queue by policy (P32); kept as the verify/acquire write-path entry point.
 
-    Mutates ``gloss`` in place (guard entries move into ``archived_flags``; decision
-    entries stay in ``flagged``) and returns the report ``{"archived": n, "counts": {...},
-    "flagged": n}``. With ``gloss_path`` the full entries are appended to
-    ``<glossary>.archived.jsonl`` -- every distinct term+reason once -- so the archive stays
-    bounded while the evidence is preserved.
+    Guard classes are dismissed only behind their guardrail (no wiki title, no cast, no hard_fix)
+    and every such verdict is remembered in ``review_rulings``; decision classes are archived to
+    counts, and tier-2 entries are applied or surfaced. ``titles`` is the show's wiki title list --
+    without it a tier-1 verdict is left queued, because the exact-title exemption cannot be applied.
+    Returns ``{"archived": n, "counts": {...}, "flagged": n}`` plus the policy report's other keys.
     """
-    flagged = gloss.get("flagged")
-    counts: dict[str, int] = {}
-    if not isinstance(flagged, dict):
-        flagged = {}
-    kept, archived = {}, []
-    for term, meta in flagged.items():
-        reason = flag_reason(meta)
-        if reason in ARCHIVED_FLAG_REASONS:
-            counts[reason] = counts.get(reason, 0) + 1
-            entry = {"term": term}
-            entry.update(meta if isinstance(meta, dict) else {"reason": meta})
-            entry["reason"] = reason
-            archived.append(entry)
-        else:
-            kept[term] = meta
-    if kept:
-        gloss["flagged"] = kept
-    else:
-        gloss.pop("flagged", None)
-    if archived:
-        gloss["archived_flags"] = {"counts": dict(sorted(counts.items())), "total": len(archived)}
-        if gloss_path:
-            _append_archived(gloss_path + ".archived.jsonl", archived)
-    # An earlier run's counts are KEPT when this run archives nothing: VERIFY marks a term
-    # `verified` and never re-adjudicates it, so a rerun sees no guard verdicts at all and
-    # dropping the record would make the archive vanish on the second sweep.
-    return {"archived": len(archived), "counts": dict(sorted(counts.items())), "flagged": len(kept)}
+    from dubtitlerr.glossary import review_policy
+
+    return review_policy.apply_policy(gloss, gloss_path, titles=titles)
 
 
 def _append_archived(path: str, entries: list) -> None:
@@ -1773,7 +1748,7 @@ def _verify(gloss_path: str, override: str | None = None, force: bool = False) -
     new = apply_results(gloss, results)
     new.setdefault("wiki", api)
     # P24: guard verdicts become counts, not entries (evidence moves to .archived.jsonl).
-    archived = finalize_flags(new, gloss_path)
+    archived = finalize_flags(new, gloss_path, titles)
     # Imported at call time for the same cycle reason as is_expansion below.
     from dubtitlerr.glossary.glossary_acquire import _write_json
 
@@ -1810,6 +1785,11 @@ def _verify(gloss_path: str, override: str | None = None, force: bool = False) -
         **({"common_word": _common_word_block(common_word_blocked)} if cw_on else {}),
         "flagged": len(new.get("flagged", {})),
         **({"archived_flags": archived["counts"]} if archived["archived"] else {}),
+        **(
+            {"review_policy": archived["tiers"]}
+            if archived.get("tiers") and (archived["archived"] or archived["tiers"]["apply"]["applied"])
+            else {}
+        ),
         **({"pending": pending} if pending else {}),
         **({"malformed": malformed} if malformed else {}),
         **({"note": "stopped"} if stopped else {}),

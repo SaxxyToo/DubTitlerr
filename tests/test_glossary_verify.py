@@ -592,16 +592,15 @@ GUARD_FLAGS = {
 def test_finalize_flags_archives_the_guard_classes_and_keeps_the_decisions(tmp_path):
     g = gl(flagged=dict(GUARD_FLAGS))
 
-    rep = gv.finalize_flags(g, str(tmp_path / "g.json"))
+    rep = gv.finalize_flags(g, str(tmp_path / "g.json"), titles=["Village"])
 
     assert set(g["flagged"]) == {"Raftel", "Freeran"}, "only real decisions stay entry-form"
     assert g["archived_flags"]["counts"] == {"below-floor": 1, "english-word": 1, "no-match": 1, "sentence-initial-only": 1}
     assert g["archived_flags"]["total"] == 4
-    assert rep == {
-        "archived": 4,
-        "flagged": 2,
-        "counts": {"below-floor": 1, "english-word": 1, "no-match": 1, "sentence-initial-only": 1},
-    }
+    assert rep["archived"] == 4
+    assert rep["counts"] == {"below-floor": 1, "english-word": 1, "no-match": 1, "sentence-initial-only": 1}
+    assert rep["flagged"] == 2
+    assert rep["tiers"]["dismiss"]["dismissed"] == 3
 
     lines = (tmp_path / "g.json.archived.jsonl").read_text().splitlines()
     assert len(lines) == 4, "every archived entry keeps its evidence"
@@ -613,9 +612,9 @@ def test_finalize_flags_archives_the_guard_classes_and_keeps_the_decisions(tmp_p
 def test_finalize_flags_rerun_does_not_duplicate_or_grow_the_archive(tmp_path):
     """Same input twice: counts identical, jsonl unchanged, flagged unchanged."""
     path = str(tmp_path / "g.json")
-    first = gv.finalize_flags(gl(flagged=dict(GUARD_FLAGS)), path)
+    first = gv.finalize_flags(gl(flagged=dict(GUARD_FLAGS)), path, titles=["Village"])
     first_lines = (tmp_path / "g.json.archived.jsonl").read_text().splitlines()
-    second = gv.finalize_flags(gl(flagged=dict(GUARD_FLAGS)), path)
+    second = gv.finalize_flags(gl(flagged=dict(GUARD_FLAGS)), path, titles=["Village"])
 
     assert first["counts"] == second["counts"]
     assert (tmp_path / "g.json.archived.jsonl").read_text().splitlines() == first_lines
@@ -625,10 +624,10 @@ def test_a_run_that_archives_nothing_keeps_the_previous_counts(tmp_path):
     """VERIFY never re-adjudicates a `verified` term, so the second sweep sees no guard
     verdicts at all -- the record must survive that, or the archive vanishes on rerun."""
     g = gl(flagged={"Magic": "english-word"})
-    gv.finalize_flags(g, str(tmp_path / "g.json"))
+    gv.finalize_flags(g, str(tmp_path / "g.json"), titles=["Village"])
     counts = dict(g["archived_flags"]["counts"])
 
-    gv.finalize_flags(g, str(tmp_path / "g.json"))
+    gv.finalize_flags(g, str(tmp_path / "g.json"), titles=["Village"])
 
     assert g["archived_flags"]["counts"] == counts
 

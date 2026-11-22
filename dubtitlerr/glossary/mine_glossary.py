@@ -543,6 +543,18 @@ def _mine(show_dir, show, gpath, bootstrap=False, bootstrap_limit=DEFAULT_BOOTST
     if dropped:
         print(f"mine[{show}]: lowercase gate dropped {len(dropped)} ordinary word(s) -> {dropped[:15]}")
     queued = queue_for_review(cfg, queue)  # D5: the crossing lane goes to a human, never auto-appended
+    if cfg.get("flagged"):
+        # P32: resolve the crossing lane by policy before writing -- a durable verdict (or an
+        # already-canonical term) must not reach the queue. Fail-open: a policy error leaves
+        # the flags in place, which is the safe direction (the queue is bounded by P33).
+        try:
+            from dubtitlerr.glossary import review_policy
+
+            review_policy.apply_policy(cfg, gpath if os.path.exists(gpath) else None)
+        except Exception as e:  # noqa: BLE001 -- never lose a queued term to a policy crash
+            print(f"mine[{show}]: review policy skipped: {type(e).__name__}: {e}")
+        still = cfg.get("flagged") or {}
+        queued = [t for t in queued if any(str(k).lower() == t.lower() for k in still)]
     if not new and not queued:
         print(f"mine[{show}]: {mined_eps} new ep(s), no new terms (dict has {len(existing)})")
         return
