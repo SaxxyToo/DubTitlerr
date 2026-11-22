@@ -125,6 +125,13 @@ _QUEUE_CACHE: dict = {}
 # stem -> queue sidecar mtime as ISO 8601 UTC (None when unreadable). Filled and dropped with _QUEUE_CACHE: a stat per episode
 # on every index call is exactly the touch that cache exists to avoid.
 _QUEUE_MTIME: dict = {}
+# A miss sentinel for the two readers below, and it has to be an object rather than None:
+# ``_QUEUE_MTIME`` stores None for an unreadable sidecar, so ``.get(stem)`` returning None
+# cannot tell a cached "unreadable" from "not cached yet". Reading through a single ``.get``
+# also closes the window the old check-then-subscript left open -- ``known_stems()`` clears
+# both dicts, and this server is a ThreadingHTTPServer, so one request could clear the cache
+# between another request's membership test and its subscript (KeyError, surfacing as a 500).
+_CACHE_MISS = object()
 CONF_SUFFIX = ".dubtitles.conf.json"
 
 
@@ -284,8 +291,9 @@ def open_entries(stem: str) -> list:
     NOT filtered by the decisions store. That file is small, is read once per request, and
     changes on every save -- so filtering stays live and a verdict is reflected everywhere
     the moment it lands. Callers apply unresolved.undecided themselves."""
-    if stem in _QUEUE_CACHE:
-        return _QUEUE_CACHE[stem]
+    cached = _QUEUE_CACHE.get(stem, _CACHE_MISS)
+    if cached is not _CACHE_MISS:
+        return cached
     entries = unresolved.live_only(stem, unresolved.pending(stem, primary_only=True))
     _QUEUE_CACHE[stem] = entries
     return entries
@@ -357,13 +365,16 @@ def _store_for(stem: str, cache: dict) -> dict:
 def queue_written_at(stem: str):
     """When this episode's queue sidecar was last written, ISO 8601 UTC, or None: the fallback for entries that carry no ts.
     Cached per walk, like the entries it describes."""
-    if stem not in _QUEUE_MTIME:
-        try:
-            when = datetime.datetime.fromtimestamp(os.path.getmtime(unresolved.path_for(stem)), datetime.timezone.utc)
-            _QUEUE_MTIME[stem] = when.strftime("%Y-%m-%dT%H:%M:%SZ")
-        except OSError:
-            _QUEUE_MTIME[stem] = None
-    return _QUEUE_MTIME[stem]
+    cached = _QUEUE_MTIME.get(stem, _CACHE_MISS)
+    if cached is not _CACHE_MISS:
+        return cached
+    try:
+        when = datetime.datetime.fromtimestamp(os.path.getmtime(unresolved.path_for(stem)), datetime.timezone.utc)
+        value = when.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except OSError:
+        value = None
+    _QUEUE_MTIME[stem] = value
+    return value
 
 
 def handle_index() -> dict:

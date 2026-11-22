@@ -355,7 +355,12 @@ def align(cards: list[dict], words: list[dict]) -> list[tuple[int, int] | None]:
             out.append(None)
             continue
         first, last = chunk[0], chunk[-1]
-        assert first is not None and last is not None
+        # Both are ints, not Optional: the guard above already refused any chunk holding a None or
+        # an out-of-order pair. Narrowed with an explicit test rather than an `assert`, which
+        # `python -O` strips -- the same hazard the settings registry was hardened for.
+        if first is None or last is None:  # pragma: no cover - the guard above refuses any None in the chunk
+            out.append(None)
+            continue
         out.append((first, last))
     return out
 

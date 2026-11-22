@@ -1,3 +1,9 @@
+# A real .env beside the tracked .env.example holds live tokens (PLEX_TOKEN, REVIEW_TOKEN,
+# provider keys). This repo is public, so the file must never be committable.
+.env
+.env.*
+!.env.example
+
 __pycache__/
 *.pyc
 .venv/
