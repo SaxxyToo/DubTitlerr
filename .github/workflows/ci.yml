@@ -58,7 +58,7 @@ jobs:
       - name: Test
         run: |
           if [ "${{ matrix.python }}" = "3.13" ]; then
-            pytest --cov=dubtitlerr --cov-branch
+            pytest --cov=dubtitlerr --cov-branch --cov-report=term --cov-report=xml
           else
             pytest
           fi
