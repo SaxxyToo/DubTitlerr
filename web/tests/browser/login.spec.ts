@@ -86,11 +86,6 @@ test('first run: the setup form creates the admin, checks the confirm field and 
   });
   await page.route('**/api/login', (route) => route.fulfill(json({ username: 'boss', role: 'admin' })));
   await page.route('**/api/episodes', (route) => route.fulfill(json({ episodes: [] })));
-  // No mock session cookie exists, so the real status call would 401 and flip the page back to
-  // login while the test is still asserting the freshly created account.
-  await page.route('**/api/v1/system/status', (route) =>
-    route.fulfill(json({ ok: true, version: { app: 'test' } })),
-  );
   await page.goto('/review');
   await expect(page.getByRole('heading', { name: 'Create the first admin account' })).toBeVisible();
   await expectNoAxeViolations(page);

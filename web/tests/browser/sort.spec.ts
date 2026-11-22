@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { navTo, openSignedIn, reset, showLineTools } from './helpers';
+import { navTo, openSignedIn, reset } from './helpers';
 
 test.beforeEach(async ({ request }) => reset(request));
 
@@ -80,21 +80,17 @@ test('an unknown stored sort falls back to the default', async ({ page }) => {
   await expect(page.getByLabel('Sort episodes')).toHaveValue('default');
 });
 
-test('the in-episode sort is remembered across episodes and reloads', async ({ page }, testInfo) => {
+test('the in-episode sort is remembered across episodes and reloads', async ({ page }) => {
   await openSignedIn(page);
   await page.getByLabel('Search episodes').fill('Neon Harbor');
   await page.getByRole('button', { name: /Neon Harbor.*S01E01/ }).click();
   await expect(page.getByTestId('evidence')).toBeVisible();
-  await showLineTools(page, testInfo.project.name);
   const lines = page.getByLabel('Sort review lines');
   await expect(lines).toHaveValue('risk');
   await lines.selectOption('time');
   expect(await page.evaluate(() => localStorage.getItem('dubtitlerr_line_sort'))).toBe('time');
 
   // Opening the episode again keeps the stored order instead of resetting it to risk.
-  // On a phone the editor replaces the list, so return to the episodes screen first.
-  if (testInfo.project.name === 'mobile')
-    await page.getByRole('button', { name: 'Episodes', exact: true }).click();
   await page.getByRole('button', { name: /Neon Harbor.*S01E01/ }).click();
   await expect(page.getByTestId('evidence')).toBeVisible();
   await expect(lines).toHaveValue('time');
@@ -109,6 +105,5 @@ test('the in-episode sort is remembered across episodes and reloads', async ({ p
   await page.reload();
   await page.getByLabel('Search episodes').fill('Neon Harbor');
   await page.getByRole('button', { name: /Neon Harbor.*S01E01/ }).click();
-  await showLineTools(page, testInfo.project.name);
   await expect(page.getByLabel('Sort review lines')).toHaveValue('time');
 });

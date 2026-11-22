@@ -8,7 +8,7 @@ web
 
 ## Users
 
-A single expert operator — the deployment's owner — runs DubTitlerr end to end and makes every review decision. Multi-account support exists in the code, but there are no other regular human users in practice; the interface may assume expert knowledge, and onboarding for strangers is not a goal. Review happens on a desktop with headphones in a dark-first workspace, in focused passes: waveform audio, keyboard verbs, dense information. The same work also happens from a phone on the same LAN: the inbox and the open line are separate screens, with the verdicts in a fixed thumb-reach dock and the same evidence on screen.
+A single expert operator — the deployment's owner — runs DubTitlerr end to end and makes every review decision. Multi-account support exists in the code, but there are no other regular human users in practice; the interface may assume expert knowledge, and onboarding for strangers is not a goal. Review happens on a desktop with headphones in a dark-first workspace, in focused passes: waveform audio, keyboard verbs, dense information.
 
 ## Product Purpose
 
@@ -22,7 +22,6 @@ Machine repair under human authority: every proposal is reviewable evidence, ver
 
 - Runs in a homelab media stack (Plex/Jellyfin, *arr tooling, local LLM backends); the review workspace is served from the same container as the pipeline.
 - Typical loop: sweeps transcribe and repair overnight; the operator opens the review inbox, decides flagged lines in a keyboard-driven pass (keep repair / keep original / write correction; J/K to move; Space to hear the dub), then applies verdicts, which queue a remux.
-- From a phone, the same loop is a one-line-per-screen pass: tap an episode, read the diff, hear the dub, tap a verdict (which advances), and save from the dock. The episode list and the line are separate screens, and the line filters collapse to one tap.
 - The operator is fluent in subtitles, dubbing, .ass conventions, reference tracks and ASR confidence — none of it needs explaining in the UI.
 - The workspace also carries the wider control surface (glossary review queue, run queue, settings, accounts, notifications and API surfaces); deciding repairs is its center of gravity.
 
