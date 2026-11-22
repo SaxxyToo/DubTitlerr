@@ -189,6 +189,17 @@ if [ "${ADOPT_DUB_EN:-0}" = "1" ]; then
 		mv -n "$f" "$stem.eng.dubtitles.$ext" || true
 	done
 fi
+# P29 presentation re-pass: an already-delivered episode is skipped below -- repair and
+# mux must not run again -- but its CARD STRUCTURE and TIMING still have to reach the
+# running PRESENTATION_EPOCH. One in-app rebuild per episode per epoch: the stage reads
+# the episode's own words.json and subtitle, rewrites only the dialogue cards, re-gates,
+# and stamps the epoch. A no-op or a refused rebuild stamps too, so nothing churns; one
+# unreadable episode is reported and the pass carries on. PRESENTATION_REPASS=0 disables
+# just this pass.
+if [ "${PRESENTATION_REPASS:-1}" != "0" ]; then
+	python3 -m dubtitlerr.pipeline.presentation --sweep "$@" </dev/null 2>&1 | sed 's/^/  /' || true
+fi
+
 # episodes with a sidecar (srt or ass) -> dedup to the stem
 find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" \) |
 	# Extras are matched BELOW the root only: the paths are absolute, and a library mounted

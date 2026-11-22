@@ -56,6 +56,7 @@ FIRST_WAVE = {
         "OUTPUT_MODE",
         "PUBLISH_GATE",
         "GATE_FIX",
+        "PRESENTATION_REPASS",
         "SIDECAR_SUFFIX",
         "ADOPT_DUB_EN",
         "MUX_KEEP_ALL_SUBS",
