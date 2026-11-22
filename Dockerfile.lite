@@ -28,9 +28,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 # wamerican: the common-word guard (glossary.py, punctuation.py) reads /usr/share/dict.
 # tzdata: MERGE_WINDOW and the schedule window read local time.
+# libarchive-tools: bsdtar, for the .rar archives Jimaku entries ship (core/refs/acquire.py).
 # hadolint ignore=DL3008,DL3013
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg mkvtoolnix ca-certificates wamerican tzdata \
+ && apt-get install -y --no-install-recommends ffmpeg mkvtoolnix libarchive-tools ca-certificates wamerican tzdata \
  && rm -rf /var/lib/apt/lists/*
 
 # jellyfish: glossary.py's phonetic name tier switches itself off when the import fails.

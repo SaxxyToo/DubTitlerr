@@ -499,7 +499,9 @@ JIMAKU_API_KEY=... python3 -m dubtitlerr.core.refs.acquire \
 ```
 
 Exit status `0` means a reference was admitted, `1` means none passed (reasons on stdout as JSON),
-`2` is a usage or key error. Downloads are https-only and restricted to `jimaku.cc` hosts.
+`2` is a usage or key error. Downloads are https-only and restricted to `jimaku.cc` hosts. `.zip`
+members are read with the stdlib; `.rar` needs `bsdtar` from `libarchive-tools`, which both images
+carry — without it the archive is reported as unextractable rather than silently skipped.
 
 ---
 
