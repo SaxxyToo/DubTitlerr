@@ -57,6 +57,8 @@ FIRST_WAVE = {
         "PUBLISH_GATE",
         "GATE_FIX",
         "PRESENTATION_REPASS",
+        "RESTORATION_REPASS",
+        "RESTORATION_PASS",
         "SIDECAR_SUFFIX",
         "ADOPT_DUB_EN",
         "MUX_KEEP_ALL_SUBS",
