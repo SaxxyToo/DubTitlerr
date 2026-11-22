@@ -1264,18 +1264,24 @@ def test_the_live_berserk_s01e06_griffith_card_is_ended_at_its_repeated_run(tmp_
     assert words_of(stem) == before_words
 
 
-def test_a_short_first_utterance_with_no_repeat_still_parks(tmp_path):
-    """No repetition to fall back to: the trim cannot make a readable card, so it parks."""
+def test_a_one_token_card_with_a_short_utterance_is_given_the_readable_minimum(tmp_path):
+    """One word spoken in 0.2 s inside an 8 s card: nothing to split, nothing to repeat.
+
+    The trim lands at 0.5 s -- below ``reflow.MIN_DUR``, unreadable. A single-token card
+    cannot be split, so the end moves to the minimum readable duration (0.83 s) instead of
+    leaving the ASR's 8 s stretch on screen (P28: this used to park).
+    """
     words = [{"text": " Yes.", "start": 100.0, "end": 100.2, "prob": 0.9}]
     cues = padded(100.0, 108.0, "Yes.")
     stem = write_episode(tmp_path, cues, words=words)
-    before = read(stem + ".eng.dubtitles.ass")
 
     result = gate_fix.attempt(stem)
 
-    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
-    assert "single unbroken token" in result["summary"], result["summary"]
-    assert read(stem + ".eng.dubtitles.ass") == before
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["trim-end"]
+    fix = result["fixes"][0]
+    assert round(fix["after"][0]["dur"], 2) == 0.83, fix
+    assert gate_fails(stem) == []
 
 
 def test_a_repeated_run_longer_than_the_budget_is_clamped_to_it(tmp_path):
@@ -1290,3 +1296,147 @@ def test_a_repeated_run_longer_than_the_budget_is_clamped_to_it(tmp_path):
     assert [a["action"] for a in result["fixes"]] == ["trim-end"]
     assert gate_fails(stem) == []
     assert result["fixes"][0]["after"][0]["dur"] <= publish_gate.MAX_DUR
+
+
+# --- P28: a card that is ONE token has nothing to wrap or split at -------------------
+# Three live parks (epoch 5, v0.4.16) ended in the same refusal -- "single unbroken token
+# of N chars: there is no word boundary to wrap or split at" -- under two distinct shapes.
+#
+#   1. A repeated utterance the words repeat but the card's TEXT no longer spells the same
+#      way: Toradora S01E18 #338 displays `Ryuuji?` over 13.4 s while the word stream says
+#      `Ryuji?` five times in a row. The glossary renames the character after the ASR wrote
+#      the words, so the exact text match found no utterance at all. The card ends where its
+#      first shout ends, as any other repetition artifact does.
+#   2. A genuinely stray span with nothing in it to trim to: Bebop S01E20 #187 displays
+#      `Hello?` over 19.1 s and the episode shipped no word stream at all, and Toradora
+#      S01E24 #0 displays `Ryu!` over the whole 27.5 s OP (its first "utterance" is 7.55 s
+#      of a one-syllable word). The display is clamped to the gate's own 7.5 s budget.
+#
+# Neither changes a character: in shape 1 the end moves to where the speech ends, in shape
+# 2 to where the gate's duration budget ends. Both are recorded with before/after in the
+# audit, and the gate is still the judge of the file that gets written.
+
+BEBOP_FIXTURE = "bebop_s01e20_hello.srt"
+TORA18_FIXTURE = "toradora_s01e18_ryuuji.dubtitles.ass"
+TORA24_FIXTURE = "toradora_s01e24_ryu.dubtitles.ass"
+
+
+def test_the_live_bebop_s01e20_hello_card_is_clamped_to_the_gate_budget(tmp_path):
+    """#187 `Hello?` over 19.07 s with no word stream: nothing to trim to, nothing to split."""
+    stem = _live_episode(tmp_path, BEBOP_FIXTURE)
+    assert gate_fails(stem) == ["1 card(s) over 7.5s (max 19.1s)"], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["clamp-duration"], result["fixes"]
+    fix = result["fixes"][0]
+    assert (round(fix["before"]["start"], 2), round(fix["before"]["dur"], 2)) == (1162.23, 19.07)
+    assert round(fix["after"][0]["end"], 2) == 1169.73, fix
+    assert fix["after"][0]["dur"] <= publish_gate.MAX_DUR
+    assert "no word boundary" in fix["reason"], fix
+    assert gate_fails(stem) == []
+    assert "Hello?" in [t for _, _, t in publish_gate.load_cues(stem)[1]]
+    # the clamp is a timing repair: every other card keeps its exact bytes and timing
+    assert read(stem + ".eng.dubtitles.srt").count("Hello?") == 1
+
+
+def test_the_live_toradora_s01e18_ryuuji_card_is_ended_at_its_first_shout(tmp_path):
+    """#338 `Ryuuji?` over 13.37 s; the words say `Ryuji?` five times, spellings apart."""
+    stem = _live_episode(tmp_path, TORA18_FIXTURE, words="toradora_s01e18_ryuuji_words.json")
+    before_words = words_of(stem)
+    assert gate_fails(stem) == ["1 card(s) over 7.5s (max 13.4s)"], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["trim-end"], result["fixes"]
+    fix = result["fixes"][0]
+    assert (round(fix["before"]["start"], 2), round(fix["before"]["dur"], 2)) == (1187.93, 13.37)
+    # the first shout ends at 1190.43, plus LINGER
+    assert round(fix["after"][0]["end"], 2) == 1190.73, fix
+    assert gate_fails(stem) == []
+    assert words_of(stem) == before_words, "the trim may not change a word"
+    assert "Ryuuji?" in [t for _, _, t in publish_gate.load_cues(stem)[1]]
+
+
+def test_the_live_toradora_s01e24_ryu_card_is_clamped_to_the_gate_budget(tmp_path):
+    """#0 `Ryu!` over the whole OP: its own first shout is already 7.55 s of one syllable."""
+    stem = _live_episode(tmp_path, TORA24_FIXTURE, words="toradora_s01e24_ryu_words.json")
+    before_words = words_of(stem)
+    assert gate_fails(stem) == ["1 card(s) over 7.5s (max 27.5s)"], gate_fails(stem)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["clamp-duration"], result["fixes"]
+    fix = result["fixes"][0]
+    assert (round(fix["before"]["start"], 2), round(fix["before"]["dur"], 2)) == (0.57, 27.54)
+    assert round(fix["after"][0]["end"], 2) == 8.07, fix
+    assert gate_fails(stem) == []
+    assert words_of(stem) == before_words
+    assert "Ryu!" in [t for _, _, t in publish_gate.load_cues(stem)[1]]
+
+
+def test_a_one_token_card_without_words_is_clamped_not_parked(tmp_path):
+    """The general remainder: no words at all, one token, and over the budget."""
+    cues = padded(100.0, 119.0, "Hello?")
+    stem = write_episode(tmp_path, cues)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["clamp-duration"]
+    fix = result["fixes"][0]
+    assert fix["before"]["start"] == 100.0
+    assert round(fix["after"][0]["end"] - 100.0, 2) == 7.5
+    assert gate_fails(stem) == []
+    # the text and the start did not move; only the end did
+    assert (100.0, "Hello?") == (
+        publish_gate.load_cues(stem)[1][PAD][0],
+        publish_gate.load_cues(stem)[1][PAD][2],
+    )
+
+
+def test_the_clamp_never_runs_into_the_next_card(tmp_path):
+    """A card followed 1.8 s later: the clamp stops MIN_GAP short of it, not at 7.5 s."""
+    cues = [(float(i), float(i) + 1.0, f"Line number {i} is spoken here.") for i in range(PAD)]
+    cues.append((100.0, 118.0, "Hello?"))
+    cues += [(104.0 + i, 105.0 + i, f"And line {i} again.") for i in range(PAD)]
+    stem = write_episode(tmp_path, cues)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    fix = result["fixes"][0]
+    assert [a["action"] for a in result["fixes"]] == ["clamp-duration"]
+    assert round(fix["after"][0]["end"], 3) == round(104.0 - 0.083, 3), fix
+    assert gate_fails(stem) == []
+
+
+def test_a_multi_word_over_duration_card_is_never_clamped(tmp_path):
+    """The clamp is for text a break cannot reach; a sentence is split, not hid early."""
+    cues = padded(100.0, 120.0, "I need you now.")
+    stem = write_episode(tmp_path, cues)
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert "clamp-duration" not in [a["action"] for a in result["fixes"]], result["fixes"]
+    assert gate_fails(stem) == []
+    # a split moves the cards' boundaries, never a word: the file's words are unchanged
+    assert words_of(stem) == [w for _, _, t in cues for w in t.split()]
+
+
+def test_the_clamp_keeps_every_other_card_byte_identical(tmp_path):
+    cues = padded(100.0, 119.0, "Hello?")
+    stem = write_episode(tmp_path, cues)
+    path = stem + ".eng.dubtitles.ass"
+    before = read(path).splitlines()
+
+    gate_fix.attempt(stem)
+
+    after = read(path).splitlines()
+    assert len(after) == len(before)
+    changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+    assert len(changed) == 1, changed
