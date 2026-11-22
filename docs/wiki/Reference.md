@@ -1021,6 +1021,35 @@ python3 -m dubtitlerr.glossary.review_policy "/config/glossaries/<Show>.json" --
 A bulk rewrite first copies the glossary to `<file>.bak-p32-<UTC stamp>`. Exit `0` = drained or
 nothing due, `1` = a load/write failure, `2` = bad arguments.
 
+### Queue hygiene: the app owns its backlog (P33)
+
+P32 stops the noise at the source; the queues that remain are still bounded and self-reporting, and
+every automatic decision is inspectable and reversible from the workspace.
+
+| Rule | Value | What it does |
+| ---- | ----- | ------------ |
+| Expiry | 14 days | An open review item with no action is dismissed, audited and reversible (`undo`). Applied at read, persisted by the sweep |
+| Bound | 200 per queue | Oldest open items are expired first, so a pile can never sit at 700. Sampled evidence is capped at 25 lines per class per day |
+| Self-report | class ≥ 50 | The sweep reports each class over threshold with a resolution proposal instead of waiting for someone to notice |
+| Audit | 500 lines per file | A bounded ring: newest records survive, so the audit cannot become the next growing log |
+
+The review workspace opens on **Recent decisions** (`#/audit`): what the app decided, why, and a
+one-tap undo. The pending queues (`#/inbox`, `/api/episode`) are the exception list. Undo restores
+the prior state and records the reversal (`decision: "restore"`, `by: "operator"`):
+
+```sh
+python3 -m dubtitlerr.core.queue_hygiene [--glossary-dir DIR] [--media-root DIR] [--dry-run] [--json] [--notify]
+```
+
+The sweep runs at the end of every generate pass. Notifications are batched: one `review.digest`
+event per sweep, and `review.pending` fires only for the exception classes (P32 tier 3 plus
+`decision_unfittable`/`verdict_owed`) — there are no per-item notifications.
+
+`.unresolved.jsonl` is now counters + sampled evidence, not an append-only log: every record bumps
+`<stem>.dubtitles.unresolved.counters.json` (per day and per class), while evidence lines are kept
+only up to the daily sample cap. `unresolved.metrics(stem)` returns the per-day aggregates, and
+queue expiry/undo events go to `<stem>.dubtitles.unresolved.audit.jsonl`.
+
 ### Bounded flag storage
 
 Guard verdicts still land in `archived_flags` as counts by class

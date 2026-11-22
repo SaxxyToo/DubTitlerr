@@ -485,11 +485,10 @@ while :; do
 	notify_send --event sweep.completed --loop generate \
 		--summary "sweep complete: $sweep_shows show(s), $sweep_failed failed, $sweep_review_pending review item(s) pending" \
 		--counts "{\"shows\": $sweep_shows, \"failed\": $sweep_failed, \"review_pending\": $sweep_review_pending}"
-	if [ "$sweep_review_pending" -gt 0 ]; then
-		notify_send --event review.pending --loop generate \
-			--summary "$sweep_review_pending unresolved review item(s) waiting for a human" \
-			--counts "{\"pending\": $sweep_review_pending}"
-	fi
+	# P33: the app owns its backlog. One hygiene sweep stamps, expires and caps every queue,
+	# then sends ONE batched digest. review.pending fires only for the exception classes that
+	# historically needed a person -- no per-item nagging, no second walk of the library.
+	python3 -m dubtitlerr.core.queue_hygiene --notify 2>/dev/null || true
 	idle_target="${RESCAN_INTERVAL:-21600}"
 	elapsed=0
 	last_check=0
