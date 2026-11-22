@@ -1,16 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { SETTINGS_CATEGORIES, settingsHash } from './route.js';
-  import {
-    AudioLines,
-    BookOpen,
-    ExternalLink,
-    Inbox,
-    Layers,
-    LayoutDashboard,
-    ListChecks,
-    Settings,
-  } from '@lucide/svelte';
+  import { AudioLines, BookOpen, Inbox, Layers, LayoutDashboard, ListChecks, Settings } from '@lucide/svelte';
 
   type View = 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
 
@@ -96,7 +87,6 @@
     {/each}
   </nav>
   <div class="sidebar-bottom">
-    <a href="/" class="classic-link"><ExternalLink size={15} aria-hidden="true" />Classic review</a>
     <div class="version-line">{version ? `DubTitlerr ${version}` : 'DubTitlerr'}</div>
   </div>
 </aside>

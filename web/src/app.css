@@ -272,16 +272,6 @@ textarea:disabled {
   gap: 14px;
   padding: 0;
 }
-.classic-link {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 13px;
-}
-.classic-link:hover {
-  color: var(--text);
-}
 .version-line {
   border-top: 1px solid var(--border);
   padding-top: 12px;
@@ -1807,11 +1797,28 @@ textarea {
   }
   .transport .verdict,
   .transport .deck-nav {
+    min-height: 44px;
     padding: 7px 10px;
     font-size: 12.5px;
+  }
+  /* The same workspace, with touch-sized controls: no layout is rearranged. */
+  .line-strip button {
+    min-width: 44px;
+    height: 44px;
+    font-size: 13px;
+  }
+  .search-field,
+  select {
+    min-height: 44px;
   }
   .transport-remaining {
     flex-basis: 100%;
     margin-left: 0;
+  }
+}
+/* A touch screen has no keyboard to press; the shortcut chips are desktop-only noise. */
+@media (pointer: coarse) {
+  kbd {
+    display: none;
   }
 }

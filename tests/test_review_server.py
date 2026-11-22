@@ -11,11 +11,21 @@ import os
 import stat
 import time
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
 from dubtitlerr.core import common, decisions, unresolved
 from dubtitlerr.review import review_server
+
+
+@pytest.fixture(autouse=True)
+def _unbuilt_workspace(monkeypatch, tmp_path):
+    """GET / redirects to the workspace once web/dist exists. These handler tests describe the
+    no-build fallback and the ?stem= deep link, so a developer's checked-out dist must not turn
+    them into redirects halfway through the suite."""
+    monkeypatch.setattr(review_server, "UI_DIST", tmp_path / "web-dist-not-built")
+
 
 # Card texts and queue entries are kept in CORRESPONDENCE on purpose. repair.py only ever
 # queues a line it processed, so every entry's original_text is a real card of this episode.
@@ -634,6 +644,7 @@ class _Wire:
         self.wfile = io.BytesIO()
         self.headers = {"Content-Length": str(len(body) if declared is None else declared)}
         self.status: int | None = None
+        self.sent_headers: dict[str, str] = {}
 
     def as_handler(self, path="/api/decide"):
         wire = self
@@ -651,7 +662,7 @@ class _Wire:
                 wire.status = code
 
             def send_header(self, keyword, value):
-                pass
+                wire.sent_headers[keyword] = value
 
             def end_headers(self):
                 pass
@@ -2158,6 +2169,49 @@ def test_get_index_page_stays_open_without_a_token(tmp_path, monkeypatch):
     h = wire.as_handler("/")
     h.do_GET()
     assert wire.status == 200
+
+
+def _built_workspace(tmp_path, monkeypatch):
+    dist = tmp_path / "web-dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>workspace</title>")
+    monkeypatch.setattr(review_server, "UI_DIST", dist)
+    return dist
+
+
+def test_get_root_redirects_to_the_workspace_once_it_is_built(tmp_path, monkeypatch):
+    """One UI: a built workspace owns / (and /index.html). The classic page is not a second
+    entry point that a bookmark can keep serving after a deploy."""
+    _built_workspace(tmp_path, monkeypatch)
+    monkeypatch.delenv("REVIEW_TOKEN", raising=False)
+    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
+
+    for path in ("/", "/index.html"):
+        wire = _Wire()
+        h = wire.as_handler(path)
+        h.do_GET()
+        assert wire.status == 302, path
+        assert wire.sent_headers.get("Location") == "/review/", path
+
+
+def test_a_stem_deep_link_keeps_the_classic_page_when_the_workspace_is_built(tmp_path, monkeypatch):
+    """An old ?stem= bookmark still names an episode the workspace cannot open directly, so that
+    one shape keeps the server-rendered page."""
+    _built_workspace(tmp_path, monkeypatch)
+    monkeypatch.delenv("REVIEW_TOKEN", raising=False)
+    monkeypatch.setattr(review_server, "TOKEN_DIR", str(tmp_path))
+    stem = _episode(tmp_path, name="S01E01")
+    monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
+    tok = review_server.resolve_token(str(tmp_path))
+
+    wire = _Wire()
+    wire.headers["Cookie"] = f"dubtitlerr_token={tok}"
+    h = wire.as_handler("/?stem=" + quote(stem, safe=""))
+    h.do_GET()
+    body = wire.wfile.getvalue().decode()
+
+    assert wire.status == 200
+    assert "S01E01" in body
 
 
 def _strip_ts(stem):

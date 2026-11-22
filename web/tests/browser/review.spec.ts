@@ -118,7 +118,7 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Apply saved decisions' }).click();
   await expect(page.getByRole('status')).toContainText('subtitles rebuilt and remux queued');
-  await page.getByRole('button', { name: 'Keyboard shortcuts', exact: true }).click();
+  await page.getByLabel('Keyboard shortcuts').click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).not.toBeVisible();

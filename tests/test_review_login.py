@@ -294,7 +294,9 @@ def test_login_accepts_only_json_and_a_small_body(server):
     assert request(server, "POST", "/api/login", raw=b"not json", headers=JSON)[0] == 401, "an unreadable body is a failed login"
 
 
-def test_the_classic_pages_accept_a_session_and_otherwise_point_at_setup_or_login(server, env):
+def test_the_classic_pages_accept_a_session_and_otherwise_point_at_setup_or_login(server, env, monkeypatch, tmp_path):
+    # A built workspace redirects / to /review/; this test is about the classic page fallback.
+    monkeypatch.setattr(rs, "UI_DIST", tmp_path / "web-dist-not-built")
     cookie = cookie_of(login()[2])
     page = request(server, "GET", "/", headers={"Cookie": cookie})
     assert page[0] == 200 and b"needs-token" not in page[1]

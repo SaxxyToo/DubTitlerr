@@ -1739,10 +1739,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(200, render_locked("shared", setup=why == 409).encode(), "text/html; charset=utf-8")
             return self._send(200, render_shared().encode(), "text/html; charset=utf-8")
         if u.path in ("/", "/index.html"):
+            stem = (parse_qs(u.query).get("stem") or [""])[0]
+            # One UI: the review workspace. The classic server-rendered page remains the fallback
+            # when web/dist was never built, and the deep-link target for ?stem= bookmarks that
+            # name an episode.
+            if not stem and (UI_DIST / "index.html").is_file():
+                return self._send(302, b"", "text/html; charset=utf-8", {"Location": "/review/"})
             _role, why = review_auth.role_for("GET", u.path, hdrs)
             if why is not None:
                 return self._send(200, render_locked("page", setup=why == 409).encode(), "text/html; charset=utf-8")
-            stem = (parse_qs(u.query).get("stem") or [""])[0]
             return self._send(200, render_page(stem).encode(), "text/html; charset=utf-8")
         if u.path == "/healthz":
             status, payload = handle_healthz()

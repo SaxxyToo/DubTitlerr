@@ -8,7 +8,7 @@ web
 
 ## Users
 
-A single expert operator — the deployment's owner — runs DubTitlerr end to end and makes every review decision. Multi-account support exists in the code, but there are no other regular human users in practice; the interface may assume expert knowledge, and onboarding for strangers is not a goal. Review happens on a desktop with headphones in a dark-first workspace, in focused passes: waveform audio, keyboard verbs, dense information.
+A single expert operator — the deployment's owner — runs DubTitlerr end to end and makes every review decision. Multi-account support exists in the code, but there are no other regular human users in practice; the interface may assume expert knowledge, and onboarding for strangers is not a goal. Review happens on a desktop with headphones in a dark-first workspace, in focused passes: waveform audio, keyboard verbs, dense information. The same workspace is used from a phone: the panels stack in one column, in the same order, with touch-sized controls.
 
 ## Product Purpose
 
@@ -27,7 +27,7 @@ Machine repair under human authority: every proposal is reviewable evidence, ver
 
 ## Capabilities and Constraints
 
-- Single-page web app (Svelte 5 + TypeScript + Vite) served by the Python review server; a legacy single-page review view stays reachable.
+- Single-page web app (Svelte 5 + TypeScript + Vite) served by the Python review server; the server-rendered classic page remains as the fallback when the workspace is not built, and for `?stem=` deep links. `/` redirects to `/review/` once the workspace is built.
 - Accounts, roles, audit logging, and API keys exist and must keep working.
 - Verdicts are staged, then applied; applying queues a remux — review actions reach the real library, so the UI must communicate consequence honestly and never imply automation it cannot ensure.
 - Keyboard operability and WCAG AA contrast are standing commitments; CI runs svelte-check, unit tests, and Playwright browser tests including axe scans.

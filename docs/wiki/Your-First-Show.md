@@ -197,6 +197,8 @@ If you provided `REVIEW_USERNAME` and `REVIEW_PASSWORD` in your Compose environm
 
 After signing in, open your episode in the review workspace. You are looking at only the lines the pipeline was unsure about, not the whole episode. Each row shows what was transcribed, what the repair model proposed, the lines either side for context, and a chip naming what the repair was anchored on — **Dub-anchored**, **Translation-anchored**, **Unanchored** or **Unclassified**. Follow the dub audio, not the chip; the chip tells you how reliable the reference is.
 
+On a phone, the same workspace is served at `/review`: the episode list and the line editor stack in one column, in the same order, with touch-sized controls. `/` redirects here once the workspace is built.
+
 For each one, choose:
 
 - **accept**: the proposal is right
