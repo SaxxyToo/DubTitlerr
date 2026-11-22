@@ -185,7 +185,7 @@ def resolve_token(token_dir: str = "") -> str:
         return env
     path = os.path.join(d, "review_token")
     try:
-        existing = open(path, encoding="utf-8").read().strip()
+        existing = open(path, encoding="utf-8").read().strip()  # noqa: SIM115
         if existing:
             return existing
     except OSError:

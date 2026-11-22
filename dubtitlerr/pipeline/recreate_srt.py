@@ -21,7 +21,7 @@ def recreate(conf: str) -> str | None:
     srt = stem + ".eng.dubtitles.srt"
     if os.path.exists(srt):
         return None
-    d = json.load(open(conf))
+    d = json.load(open(conf))  # noqa: SIM115
     # conf.json stores text FLATTENED (generate.py replaces '\n' with ' '), so re-wrap
     # here -- same defect, same fix as repair.py's srt rewrite. Without it every episode
     # recreated this way ships as unwrapped single lines.

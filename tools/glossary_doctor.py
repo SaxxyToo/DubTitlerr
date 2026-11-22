@@ -119,7 +119,7 @@ def main(argv=None):
     bad = 0
     for p in paths:
         try:
-            g = json.load(open(p, encoding="utf-8"))
+            g = json.load(open(p, encoding="utf-8"))  # noqa: SIM115
         except (OSError, ValueError) as e:
             print(f"  SKIP {os.path.basename(p)}: {e}")
             continue

@@ -192,7 +192,7 @@ SRT_SUFFIX = ".eng.dubtitles.srt"
 def _conf_text(path: str) -> str:
     """All dialogue text from one conf.json, newline-joined, or '' if unreadable."""
     try:
-        rows = json.load(open(path, encoding="utf-8"))
+        rows = json.load(open(path, encoding="utf-8"))  # noqa: SIM115
     except (OSError, ValueError):
         return ""
     if not isinstance(rows, list):
@@ -203,7 +203,7 @@ def _conf_text(path: str) -> str:
 def _srt_text(path: str) -> str:
     """Dialogue lines from an SRT: drop indices and timecodes, keep the rest."""
     try:
-        raw = open(path, encoding="utf-8", errors="replace").read()
+        raw = open(path, encoding="utf-8", errors="replace").read()  # noqa: SIM115
     except OSError:
         return ""
     out = []
@@ -1248,7 +1248,7 @@ def _acquire_run(gloss_path: str, show_dir: str, apply: bool, override: str | No
 
 def _acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str | None = None) -> dict:
     try:
-        gloss = json.load(open(gloss_path, encoding="utf-8"))
+        gloss = json.load(open(gloss_path, encoding="utf-8"))  # noqa: SIM115
     except (OSError, ValueError) as e:
         return {"note": f"load-failed: {e}"}
     show = gloss.get("show") or os.path.basename(gloss_path)[:-5]
@@ -1523,7 +1523,7 @@ def _read_pending(gloss_path: str, quarantine: bool = True) -> list:
     if not os.path.exists(path):
         return []
     try:
-        doc = json.load(open(path, encoding="utf-8"))
+        doc = json.load(open(path, encoding="utf-8"))  # noqa: SIM115
         rows = doc["answers"]
         if not isinstance(rows, list) or not all(_valid_answer(r) for r in rows):
             raise ValueError("malformed answer row")
@@ -1592,7 +1592,7 @@ def _commit_answers(gloss_path: str, answers: list, stage: str = "review") -> bo
             todo = _read_pending(gloss_path)
             if not todo:
                 return True
-            g = json.load(open(gloss_path, encoding="utf-8"))
+            g = json.load(open(gloss_path, encoding="utf-8"))  # noqa: SIM115
             for term, accept, *seen in todo:
                 flag = (g.get("flagged") or {}).get(term)
                 if flag is None:
@@ -1617,7 +1617,7 @@ def _commit_answers(gloss_path: str, answers: list, stage: str = "review") -> bo
 def _prune_cli(a) -> None:
     from dubtitlerr.glossary import glossary_lock
 
-    g = json.load(open(a.glossary, encoding="utf-8"))
+    g = json.load(open(a.glossary, encoding="utf-8"))  # noqa: SIM115
     pruned, n = prune_no_match(g)
     if not a.apply:
         log(json.dumps({"pruned": n, "written": False, "note": "dry run: add --apply to write"}))
@@ -1626,7 +1626,7 @@ def _prune_cli(a) -> None:
         if not ok:
             log(json.dumps({"pruned": 0, "written": False}))
             return
-        pruned, n = prune_no_match(json.load(open(a.glossary, encoding="utf-8")))  # fresh, under the lock
+        pruned, n = prune_no_match(json.load(open(a.glossary, encoding="utf-8")))  # fresh, under the lock  # noqa: SIM115
         _write_json(a.glossary, pruned)
     log(json.dumps({"pruned": n, "written": True}))
 
@@ -1664,7 +1664,7 @@ def main():
             # Read-only: replaying them would write the glossary and delete the file while reporting written:false.
             plural = "s" if n_saved != 1 else ""
             log(f"{n_saved} saved answer{plural} from an earlier --review kept, not applied: add --apply to apply them")
-        g = json.load(open(a.glossary, encoding="utf-8"))
+        g = json.load(open(a.glossary, encoding="utf-8"))  # noqa: SIM115
         answers = []  # (term, accept) in order; applied to the FRESH file at the end, not to this stale copy
         decisions, no_match = review_groups(g)
         if no_match and not a.all:
@@ -1702,7 +1702,7 @@ def main():
             # file as it is NOW, under the lock; a busy glossary is waited for, and the answers are kept if it stays busy.
             summary["written"] = _commit_answers(a.glossary, answers)
             with contextlib.suppress(OSError, ValueError):
-                g = json.load(open(a.glossary, encoding="utf-8"))  # report what is ON DISK
+                g = json.load(open(a.glossary, encoding="utf-8"))  # report what is ON DISK  # noqa: SIM115
             if saved := _read_pending(a.glossary):
                 summary["saved"] = len(saved)
         elif n_saved:
@@ -1712,7 +1712,7 @@ def main():
         return
     if a.revert:
         try:
-            g = json.load(open(a.glossary, encoding="utf-8"))
+            g = json.load(open(a.glossary, encoding="utf-8"))  # noqa: SIM115
         except (OSError, ValueError) as e:
             log(json.dumps({"note": f"load-failed: {e}"}))
             return
@@ -1723,7 +1723,7 @@ def main():
 
             with glossary_lock.locked(a.glossary, "revert", wait=glossary_lock.interactive_wait_seconds(), announce=True) as ok:
                 if ok:
-                    g = json.load(open(a.glossary, encoding="utf-8"))  # fresh, under the lock
+                    g = json.load(open(a.glossary, encoding="utf-8"))  # fresh, under the lock  # noqa: SIM115
                     out = revert(g)
                     _write_json(a.glossary, out)
                     written = True

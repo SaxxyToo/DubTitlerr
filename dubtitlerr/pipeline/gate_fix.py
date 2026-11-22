@@ -921,7 +921,7 @@ def load_artifact(stem):
     path, cues = publish_gate.load_cues(stem)
     if not path:
         return None, [], None
-    text = open(path, encoding="utf-8-sig", errors="replace").read()
+    text = open(path, encoding="utf-8-sig", errors="replace").read()  # noqa: SIM115
     if path.endswith(".srt"):
         return path, cues, lambda new, org, touched, dropped=frozenset(): render_srt(text, new, org, touched, dropped)
     return path, cues, lambda new, org, touched, dropped=frozenset(): render_ass(text, new, org, touched, dropped)

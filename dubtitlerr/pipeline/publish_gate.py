@@ -111,7 +111,7 @@ def load_cues(stem):
         path = stem + suffix
         if not os.path.exists(path):
             continue
-        text = open(path, encoding="utf-8-sig", errors="replace").read()
+        text = open(path, encoding="utf-8-sig", errors="replace").read()  # noqa: SIM115
         if parser is parse_ass:
             # A styled sidecar also carries signs, lyrics and title cards. Those are not
             # dialogue: they run long, they have no sentence punctuation, and counting them
@@ -148,7 +148,7 @@ def glossary_mishears(path):
     replacement is a different word (`oscar` -> `Asuka`) are evidence of an ASR error.
     """
     try:
-        doc = json.load(open(path))
+        doc = json.load(open(path))  # noqa: SIM115
     except (OSError, ValueError):
         return []
     pairs = list((doc.get("hard_fixes") or {}).items())

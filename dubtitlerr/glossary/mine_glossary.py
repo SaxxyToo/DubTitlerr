@@ -457,7 +457,7 @@ def _mine(show_dir, show, gpath, bootstrap=False, bootstrap_limit=DEFAULT_BOOTST
     cfg = {"show": show, "initial_prompt": "", "names": [], "hard_fixes": {}}
     if os.path.exists(gpath):
         try:
-            cfg.update(json.load(open(gpath)))
+            cfg.update(json.load(open(gpath)))  # noqa: SIM115
         except Exception as e:
             print("mine: bad glossary, starting fresh:", e)
     existing = {n.lower() for n in cfg.get("names", [])}
