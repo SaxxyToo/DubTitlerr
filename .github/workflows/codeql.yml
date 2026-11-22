@@ -1,0 +1,40 @@
+name: CodeQL
+# Static analysis for the Python pipeline and the Svelte/TypeScript review UI. CodeQL is free
+# for public repositories and uploads SARIF to the Security tab; it is deliberately a separate
+# workflow from ci.yml because it needs security-events: write and the CI gate must stay
+# contents: read.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1" # weekly, Monday 06:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # Neither language needs a compilation step: Python is interpreted and the web app is
+      # source-scanned. build-mode: none also keeps the job from installing the whole toolchain.
+      - uses: github/codeql-action/init@d2aacf54c2fbc910db8d7ec338fdb54ea48c692d # v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@d2aacf54c2fbc910db8d7ec338fdb54ea48c692d # v3
+        with:
+          category: "/language:${{ matrix.language }}"

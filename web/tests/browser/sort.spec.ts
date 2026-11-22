@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { navTo, openSignedIn, reset } from './helpers';
+import { navTo, openInbox, reset } from './helpers';
 
 test.beforeEach(async ({ request }) => reset(request));
 
@@ -32,7 +32,7 @@ test('the episode list sorts by episode order and pending count, and remembers t
   page,
 }) => {
   await mockEpisodes(page);
-  await openSignedIn(page);
+  await openInbox(page);
   const sort = page.getByLabel('Sort episodes');
   await expect(sort).toHaveValue('default');
   expect(await names(page)).toEqual(['Neon Harbor S01E10', 'Alpha Show S10E01', 'Neon Harbor S01E02']);
@@ -64,7 +64,7 @@ test('the episode list sorts by episode order and pending count, and remembers t
 test('a sort stored under the old Oldest activity label still restores', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('dubtitlerr_episode_sort', 'oldest'));
   await mockEpisodes(page);
-  await openSignedIn(page);
+  await openInbox(page);
   await expect(page.getByLabel('Sort episodes')).toHaveValue('oldest');
   await expect
     .poll(() => names(page))
@@ -76,12 +76,12 @@ test('an unknown stored sort falls back to the default', async ({ page }) => {
     localStorage.setItem('dubtitlerr_episode_sort', 'nonsense');
   });
   await mockEpisodes(page);
-  await openSignedIn(page);
+  await openInbox(page);
   await expect(page.getByLabel('Sort episodes')).toHaveValue('default');
 });
 
 test('the in-episode sort is remembered across episodes and reloads', async ({ page }) => {
-  await openSignedIn(page);
+  await openInbox(page);
   await page.getByLabel('Search episodes').fill('Neon Harbor');
   await page.getByRole('button', { name: /Neon Harbor.*S01E01/ }).click();
   await expect(page.getByTestId('evidence')).toBeVisible();

@@ -59,7 +59,11 @@ run then does is decided by the persisted processing state (below), not by a har
 escalation pairs. Releases up to 0.2.2 check it only before a glossary step starts, so an
 acquire step runs to its end or to `ACQUIRE_TIMEOUT`.
 
-The container runs as **root**, so `generate.py` can chown into the media tree. `Dockerfile` builds a merge-only image (signs and dub merge, no transcribe or repair) and is deprecated. `Dockerfile.builder` is the recommended image.
+The container runs as **root** so the pipeline can chown into a bind-mounted media tree:
+`python3 -m dubtitlerr.pipeline.generate` writes each sidecar as `MEDIA_UID:MEDIA_GID`, and
+`chown` needs `CAP_CHOWN`. The two supported images are `Dockerfile.builder` (local Whisper,
+review UI, ~13 GB) and `Dockerfile.lite` (endpoint ASR only, under 1 GB); `Dockerfile.builder`
+is the recommended full build.
 
 ---
 
@@ -297,6 +301,20 @@ breaks and the card's text is byte-identical, and its timing does not move. The 
 `action: "wrap-run"`. The break cannot rescue a card whose **total** is over 88 characters (a
 446-character run is over even wrapped), and a token that *alternates* rather than repeats
 (`Kekekekeke…`, whose minority is half the token) is not a run — both of those refusals stand.
+
+A card whose whole text is **one token** has no boundary at all, so when its duration is the only
+fault there is nothing for a wrap or a split to do. Two shapes still resolve without touching a
+character. A word the stream repeats — the card is a repetition artifact — ends where its **first**
+utterance ends, and that now holds even when the card's text and the word stream disagree on the
+spelling: the glossary renames a character after the words were written, as in Toradora S01E18,
+where `Ryuuji?` is displayed over 13.4 s while the words say `Ryuji?` five times in a row. A card
+with nothing to trim to — Cowboy Bebop S01E20 shipped `Hello?` over 19.1 s with no word stream at
+all, and Toradora S01E24 shipped `Ryu!` across the whole 27.5 s OP — has its display **clamped to
+the gate's own 7.5 s budget**. That is a documented duration exception, not a layout repair:
+everything the viewer must read is on screen from the card's first frame, no character and no start
+time moves, the clamp never reaches the next card, and the gate still judges the file. The audit
+records `action: "clamp-duration"` with that reason. A repeated-character run is deliberately not
+clamped: it keeps its own break-then-refuse path.
 
 Faults that need a transcript edit rather than a layout one — coverage, punctuation, a cold open, a
 single unbroken token that is not a run — are reported as unsupported rather than attempted. A
@@ -885,6 +903,8 @@ python3 -m dubtitlerr.core.notify subscribed --event episode.delivered   # exit 
 | `flagged`            | object | Terms a human still has to decide, or that the verifier could not confirm. Each value is a reason string or an object `{"reason", "canonical", ...}`. See the table below |
 | `known`              | list   | Terms a human marked correct as they stand                                                                                                                                |
 | `acquired`           | object | Provenance of each name acquisition or a human review wrote                                                                                                               |
+| `review_rulings`     | object | Durable review verdicts, keyed by the casefolded term: `{decision: "dismiss"\|"apply", reason, canonical, by: "auto"\|"operator", policy}`. A dismissed variant never re-queues |
+| `review_policy`      | object | Last per-tier counter snapshot written by the review policy (P33 reads this)                                                                                              |
 | `arc_titles`         | object | Arc name (or `scope:<rung>:<season>`) to the wiki titles stored for it. Written by `--tag-arcs`                                                                           |
 | `arc_coverage`       | object | Per arc: how many titles, whether redirects finished, whether it is waived or stale. The gate trusts this                                                                 |
 | `arc_titles_missing` | list   | Arcs whose fetch came back empty, partial or under `ARC_MIN_TITLES`. While it is non-empty the arc gate does nothing                                                      |
@@ -903,6 +923,9 @@ python3 -m dubtitlerr.core.notify subscribed --event episode.delivered   # exit 
 | `expansion-guarded`         | An expansion a guard blocked, shown only when `VERIFY_QUEUE_BLOCKED_EXPANSIONS=1` and the title has more tokens | Writes the expansion to `phrases`   |
 | `low-confidence`            | The model had a candidate and was not sure                                                                      | Accepts the candidate               |
 | `possessive_floor_crossing` | A possessive form that crossed the mining floor                                                                 | Keeps both forms                    |
+| `unseen-needs-evidence`     | A real spelling difference the transcript never corroborates                                                    | Accepts the candidate               |
+| `conflicts-with-curated-fix`| The proposal disagrees with a fix a person owns                                                                 | Overrides the curated fix           |
+| `no-wiki-match`             | A tier-B candidate from a different lookup, not on this wiki's title list                                       | Accepts the candidate               |
 | `no-match`                  | No candidate. Not queued unless `VERIFY_QUEUE_NO_MATCH=1`                                                       | Marks the term correct as it stands |
 
 `--review` lists decisions first, in that order, and collapses the no-match terms into one line;
@@ -949,7 +972,7 @@ non-https URL, or an internal/link-local host is refused before any request.
 
 `glossary_audit` cross-references a glossary's `names` against its own `flagged` map and the wiki
 cache, and **acts on** entries that are junk-classified yet still listed as names: a flag reason
-(`english-word`, `sentence-initial-only`, `common-word`, `no-match`, `no-wiki-match`, `below-floor`)
+(`english-word`, `sentence-initial-only`, `common-word`, `no-match`, `below-floor`)
 or a capitalised ordinary English word with no exact wiki page. An exact wiki title protects a name
 however ordinary it looks (`Fern`, `Hero`, `Land`), and a lowercase entry (`mana`, `mage`) is treated
 as curated prompt vocabulary, never junk. It runs in the nightly sweep right after VERIFY with
@@ -966,16 +989,80 @@ Exit `0` = nothing left to fix (clean, or clean after `--fix`), `1` = junk repor
 (`--fix` had no wiki to decide on, or the report-only mode was used), `2` = the glossary could not be
 read.
 
-### Bounded flag storage
+### Review policy: tiers, durable verdicts and backfill
 
 VERIFY and ACQUIRE re-classify the same unsettled terms every sweep, so guard verdicts used to pile
-up as review entries (Frieren: ~666 of 798). They now land in `archived_flags` as counts by class
+up as review entries (Frieren: ~666 of 798; the live library reached 1,877, 82% of them
+`english-word`). The review policy now resolves each generated verdict by tier, at generation time:
+
+| Tier | Reasons | What happens |
+| ---- | ------- | ------------ |
+| 1 | `english-word`, `below-floor`, `sentence-initial-only` | Dismissed into `archived_flags` counts + `.archived.jsonl`. **Guardrail:** only when the variant matches no exact wiki title, no cast term (`names`/`phrases`/`known`/`acquired`) and no `hard_fix`; without cached wiki titles the verdict is queued (fail-closed) |
+| 2 | `respelling-needs-review`, `possessive_floor_crossing` | The correction is applied as a `hard_fix` only when the canonical is already a glossary canonical (names/phrases/fix value), the effect is a spelling fix, and no curated fix disagrees. Anything else is queued |
+| 3 | `unseen-needs-evidence`, `conflicts-with-curated-fix`, `no-wiki-match`, and every unknown reason | Queued: the only entries that need a person |
+| — | `common-word`, `no-match` | Collapsed to counts (P24); neither carries a decision |
+
+Every dismissal/approval (auto or operator) writes a durable `review_rulings` entry, so the same
+variant+reason cannot re-enter the queue on a later sweep. Auto decisions also append a JSON line to
+`<glossary>.review-audit.jsonl` with the shape shared with the P33 audit view:
+
+```json
+{"at": 1795319493.2, "term": "Magic", "reason": "english-word", "decision": "dismiss",
+ "tier": 1, "canonical": "Magic Knight", "applied": null, "guard": null,
+ "by": "auto", "policy": "p32-v1", "show": "Frieren ..."}
+```
+
+`undo` removes an auto ruling and the fix only if the policy wrote it (a human-owned `run: review`
+fix is never touched). Drain an existing pile with the backfill tool; it reads each show's cached
+wiki titles and leaves the file byte-identical when nothing is due:
+
+```sh
+python3 -m dubtitlerr.glossary.review_policy "/config/glossaries/<Show>.json" [--titles FILE] [--dry-run]
+python3 -m dubtitlerr.glossary.review_policy --dir /config/glossaries --dry-run   # whole library
+python3 -m dubtitlerr.glossary.review_policy "/config/glossaries/<Show>.json" --undo <Term>
+```
+
+A bulk rewrite first copies the glossary to `<file>.bak-p32-<UTC stamp>`. Exit `0` = drained or
+nothing due, `1` = a load/write failure, `2` = bad arguments.
+
+### Queue hygiene: the app owns its backlog (P33)
+
+P32 stops the noise at the source; the queues that remain are still bounded and self-reporting, and
+every automatic decision is inspectable and reversible from the workspace.
+
+| Rule | Value | What it does |
+| ---- | ----- | ------------ |
+| Expiry | 14 days | An open review item with no action is dismissed, audited and reversible (`undo`). Applied at read, persisted by the sweep |
+| Bound | 200 per queue | Oldest open items are expired first, so a pile can never sit at 700. Sampled evidence is capped at 25 lines per class per day |
+| Self-report | class ≥ 50 | The sweep reports each class over threshold with a resolution proposal instead of waiting for someone to notice |
+| Audit | 500 lines per file | A bounded ring: newest records survive, so the audit cannot become the next growing log |
+
+The review workspace opens on **Recent decisions** (`#/audit`): what the app decided, why, and a
+one-tap undo. The pending queues (`#/inbox`, `/api/episode`) are the exception list. Undo restores
+the prior state and records the reversal (`decision: "restore"`, `by: "operator"`):
+
+```sh
+python3 -m dubtitlerr.core.queue_hygiene [--glossary-dir DIR] [--media-root DIR] [--dry-run] [--json] [--notify]
+```
+
+The sweep runs at the end of every generate pass. Notifications are batched: one `review.digest`
+event per sweep, and `review.pending` fires only for the exception classes (P32 tier 3 plus
+`decision_unfittable`/`verdict_owed`) — there are no per-item notifications.
+
+`.unresolved.jsonl` is now counters + sampled evidence, not an append-only log: every record bumps
+`<stem>.dubtitles.unresolved.counters.json` (per day and per class), while evidence lines are kept
+only up to the daily sample cap. `unresolved.metrics(stem)` returns the per-day aggregates, and
+queue expiry/undo events go to `<stem>.dubtitles.unresolved.audit.jsonl`.
+
+### Bounded flag storage
+
+Guard verdicts still land in `archived_flags` as counts by class
 (`{"counts": {"english-word": 412, "below-floor": 180, ...}, "total": 666}`), recomputed on each
 write and therefore stable across reruns, while their full entries are appended (deduplicated by
 term+reason) to `<glossary>.archived.jsonl`. Entry-form `flagged` is kept for the classes a human
 actually decides: `respelling-needs-review`, `low-confidence`, `unseen-needs-evidence`,
-`conflicts-with-curated-fix`, `possessive_floor_crossing`, `transcript-new-term` (and acquire's
-`share-too-close`/`not-in-arc-pages`/`expansion-guarded`).
+`conflicts-with-curated-fix`, `possessive_floor_crossing`, `transcript-new-term`, `no-wiki-match`
+(and acquire's `share-too-close`/`not-in-arc-pages`/`expansion-guarded`).
 
 `glossary_verify` can be run by hand:
 

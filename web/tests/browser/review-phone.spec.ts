@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openSignedIn, reset } from './helpers';
+import { navTo, openInbox, reset } from './helpers';
 
 /**
  * A phone gets the same workspace the desktop gets, not a second layout. These assertions run at
@@ -11,7 +11,7 @@ test.use({ viewport: { width: 390, height: 664 }, hasTouch: true, isMobile: true
 test.beforeEach(async ({ request }) => reset(request));
 
 test('a phone renders the desktop workspace, stacked in one column', async ({ page }) => {
-  await openSignedIn(page, '');
+  await openInbox(page);
   await expect(page.locator('.page-header h1')).toBeVisible();
   await expect(page.locator('.episode-panel')).toBeVisible();
   await expect(page.locator('.phone-dock')).toHaveCount(0);
@@ -44,4 +44,13 @@ test('a phone renders the desktop workspace, stacked in one column', async ({ pa
 
   // A touch screen has no keyboard: the shortcut chips would only be noise.
   expect(await page.locator('kbd:visible').count()).toBe(0);
+});
+
+test('shared lines keep the desktop workspace on a phone', async ({ page }) => {
+  await openInbox(page);
+  await navTo(page, 'Shared lines');
+  await expect(page.locator('.review-panel')).toBeVisible();
+  await expect(page.locator('.episode-panel')).toHaveCount(0);
+  await expect(page.locator('.phone-dock')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });

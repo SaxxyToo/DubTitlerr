@@ -11,12 +11,12 @@ import {
 } from '../src/lib/route.js';
 
 test('every known hash resolves to its view', () => {
-  for (const view of ['inbox', 'shared', 'dashboard', 'glossary', 'runs', 'settings']) {
+  for (const view of ['audit', 'inbox', 'shared', 'dashboard', 'glossary', 'runs', 'settings']) {
     assert.equal(parseHash('#/' + view), view);
   }
 });
 
-test('empty, bare and unknown hashes fall back to the inbox', () => {
+test('empty, bare and unknown hashes fall back to the audit view (P33 audit-first)', () => {
   for (const hash of [
     '',
     '#',
@@ -30,7 +30,7 @@ test('empty, bare and unknown hashes fall back to the inbox', () => {
     undefined,
     null,
   ]) {
-    assert.equal(parseHash(hash), 'inbox', String(hash));
+    assert.equal(parseHash(hash), 'audit', String(hash));
   }
 });
 
@@ -51,20 +51,20 @@ test('hashFor builds the canonical hash and round-trips through parseHash', () =
   }
 });
 
-test('hashFor normalizes an unknown view to the inbox hash', () => {
-  assert.equal(hashFor('nope'), '#/inbox');
-  assert.equal(hashFor(undefined), '#/inbox');
+test('hashFor normalizes an unknown view to the audit hash', () => {
+  assert.equal(hashFor('nope'), '#/audit');
+  assert.equal(hashFor(undefined), '#/audit');
 });
 
-test('VIEWS lists the six views in sidebar order', () => {
-  assert.deepEqual([...VIEWS], ['inbox', 'shared', 'dashboard', 'glossary', 'runs', 'settings']);
+test('VIEWS lists the seven views in sidebar order, audit first', () => {
+  assert.deepEqual([...VIEWS], ['audit', 'inbox', 'shared', 'dashboard', 'glossary', 'runs', 'settings']);
 });
 
 test('runs has its own hash and is not confused with a prefix match', () => {
   assert.equal(parseHash('#/runs'), 'runs');
   assert.equal(parseHash('#/runs/'), 'runs');
-  assert.equal(parseHash('#/runs-queue'), 'inbox');
-  assert.equal(parseHash('#/run'), 'inbox');
+  assert.equal(parseHash('#/runs-queue'), 'audit');
+  assert.equal(parseHash('#/run'), 'audit');
   assert.equal(hashFor('runs'), '#/runs');
 });
 
@@ -113,5 +113,5 @@ test('canonicalHash keeps a settings category and normalizes every other view', 
   assert.equal(canonicalHash('#/settings/repair?a=b'), '#/settings/repair');
   assert.equal(canonicalHash('#/settings/nope'), '#/settings');
   assert.equal(canonicalHash('#/glossary?show=x'), '#/glossary');
-  assert.equal(canonicalHash('#/nope'), '#/inbox');
+  assert.equal(canonicalHash('#/nope'), '#/audit');
 });

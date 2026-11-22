@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openSignedIn, reset, scanAccessibility } from './helpers';
+import { openInbox, reset, scanAccessibility } from './helpers';
 
 // R5: the reviewer has to be able to tell a dub-caption anchor (the dub's own words, a
 // near-certain repair) from a translation anchor (a judgement call) from no anchor at all.
@@ -11,7 +11,7 @@ test('the queue labels what each repair was anchored on and filters by it', asyn
   await reset(request);
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(err.message));
-  await openSignedIn(page);
+  await openInbox(page);
   await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
   await page.getByLabel('Search episodes').fill('Neon Harbor');
   await page.getByRole('button', { name: /Neon Harbor.*S01E01/ }).click();

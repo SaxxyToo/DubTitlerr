@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .coverage
+coverage.xml
 htmlcov/
 # setuptools metadata written by `pip install -e .`; build output, never committed
 *.egg-info/
@@ -34,7 +35,6 @@ glossaries/*.lastrun.json
 
 # Maintainer tooling state (per-project config, backlog, generated mirrors, local lockfiles)
 # is working state, not project content. Regenerated locally; never tracked.
-.procoder/
 skills/
 
 # agent-harness scratch worktrees (created under the repo root, never meant to ship)

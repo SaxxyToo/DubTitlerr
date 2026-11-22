@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/SaxxyToo/DubTitlerr/tree/main/docs/wiki
+    about: Install, first-show walkthrough, how-to guides, every variable and route.
+  - name: Report a security vulnerability
+    url: https://github.com/SaxxyToo/DubTitlerr/security/advisories/new
+    about: Report an exploit path privately; do not open a public issue for it.

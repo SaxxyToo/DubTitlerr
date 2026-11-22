@@ -28,6 +28,9 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
   await expect(page.getByRole('alert')).toContainText('wrong username or password');
   await page.getByLabel('Password').fill('browser-fixture-password');
   await page.getByLabel('Password').press('Enter');
+  // P33: the workspace opens on Recent decisions. The exception list is one click from its header.
+  await expect(page.getByRole('heading', { name: 'Recent decisions', level: 1 })).toBeVisible();
+  await page.getByRole('button', { name: /Review exceptions/ }).click();
   await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
   await expect(page.getByLabel('Search episodes')).toBeVisible();
   await page.getByLabel('Search episodes').fill('Neon Harbor');

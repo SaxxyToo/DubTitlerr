@@ -4,6 +4,7 @@ ladder for the subtitle path (glossary_acquire already has one; repair/punctuati
 import json
 import os
 import stat
+import time
 
 from dubtitlerr.core import decisions, unresolved
 
@@ -551,3 +552,116 @@ def test_resolve_and_resolve_many_keep_the_ts_of_every_entry_they_rewrite(tmp_pa
     after = unresolved.items(stem)
     assert [e["ts"] for e in after] == before
     assert after[0]["resolved"] and after[1]["resolved"] and not after[2]["resolved"]
+
+
+# --- P33: the log is bounded, counted, and expires -----------------------------------------
+
+
+def _aged(stem, days_ago, reason="rejected_guard", stage="repair", **fields):
+    """Record one entry and rewrite its ts so it is `days_ago` old (what a sweep sees)."""
+    import time
+
+    unresolved.record(stem, stage, reason, **fields)
+    doc = unresolved.items(stem)
+    doc[-1]["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - days_ago * 86400))
+    unresolved._rewrite(stem, doc)
+
+
+def test_counters_aggregate_every_record_while_evidence_is_sampled(tmp_path):
+    """12,840 lines in 12h is the failure this replaces: the count must stay exact, the log must not grow."""
+    stem = str(tmp_path / "ep")
+    n = unresolved.SAMPLE_CAP + 25
+    for i in range(n):
+        unresolved.record(stem, "repair", "no_reference", original_text=f"line {i}")
+    assert len(unresolved.items(stem)) == unresolved.SAMPLE_CAP
+    m = unresolved.metrics(stem)
+    assert m["counts"]["repair/no_reference"] == n
+    assert m["sampled"]["repair/no_reference"] == unresolved.SAMPLE_CAP
+
+
+def test_a_human_decision_reason_is_never_sampled_away(tmp_path):
+    """decision_unfittable is the reviewer's own verdict coming back refused -- always kept."""
+    stem = str(tmp_path / "ep")
+    for i in range(unresolved.SAMPLE_CAP + 3):
+        unresolved.record(stem, "repair", "decision_unfittable", original_text=f"line {i}")
+    assert len(unresolved.items(stem)) == unresolved.SAMPLE_CAP + 3
+
+
+def test_metrics_reports_per_day_aggregates_so_drift_is_visible(tmp_path):
+    stem = str(tmp_path / "ep")
+    _aged(stem, 0.5, original_text="today")
+    _aged(stem, 1.5, original_text="yesterday")
+    m = unresolved.metrics(stem)
+    days = sorted(m["days"])
+    assert len(days) >= 1
+    assert sum(sum(d.values()) for d in m["days"].values()) >= 2
+    assert m["queue"]["pending"] == 2
+
+
+def test_pending_expires_after_the_window_and_the_entry_stays_in_the_audit_trail(tmp_path):
+    stem = str(tmp_path / "ep")
+    _aged(stem, 20, original_text="stale")
+    _aged(stem, 1, original_text="fresh")
+    out = unresolved.expire(stem)
+    assert out["expired"] == 1
+    assert [e["original_text"] for e in unresolved.pending(stem)] == ["fresh"]
+    assert len(unresolved.items(stem)) == 2  # evidence kept, not deleted
+    assert unresolved.audit(stem)[0]["kind"] == "expiry"
+
+
+def test_undo_expire_restores_the_prior_state_and_records_the_reversal(tmp_path):
+    stem = str(tmp_path / "ep")
+    _aged(stem, 20, original_text="misjudged")
+    unresolved.expire(stem)
+    assert unresolved.pending(stem) == []
+    assert unresolved.undo_expire(stem, 0) is True
+    assert [e["original_text"] for e in unresolved.pending(stem)] == ["misjudged"]
+    assert unresolved.audit(stem)[0]["kind"] == "undo-expiry"
+
+
+def test_enforce_bounds_a_pile_at_queue_max(tmp_path):
+    """An always-kept class (a human verdict comes back refused) is what reaches the cap."""
+    stem = str(tmp_path / "ep")
+    for i in range(unresolved.QUEUE_MAX + 20):
+        unresolved.record(stem, "repair", "decision_unfittable", original_text=f"line {i}")
+    out = unresolved.enforce(stem, now=__import__("time").time() + 60)
+    assert len(unresolved.pending(stem)) == unresolved.QUEUE_MAX
+    assert out["bounded"] >= 1
+
+
+def test_a_sampled_noise_class_cannot_fill_the_queue_at_all(tmp_path):
+    """The other half of the bound: the evidence log never receives more than SAMPLE_CAP a day."""
+    stem = str(tmp_path / "ep")
+    for i in range(unresolved.QUEUE_MAX + 300):
+        unresolved.record(stem, "repair", "no_reference", original_text=f"line {i}")
+    assert len(unresolved.pending(stem)) == unresolved.SAMPLE_CAP
+
+
+def test_metrics_fail_open_on_an_absent_stem(tmp_path):
+    m = unresolved.metrics(str(tmp_path / "nothing"))
+    assert m["counts"] == {} and m["queue"]["pending"] == 0
+
+
+def test_pending_applies_the_age_rule_even_before_the_sweep_persists_it(tmp_path):
+    """Between sweeps the page must not present a 14-day-old item as pending."""
+    stem = str(tmp_path / "ep")
+    _aged(stem, 20, original_text="stale")
+    _aged(stem, 2, original_text="fresh")
+    assert [e["original_text"] for e in unresolved.pending(stem)] == ["fresh"]
+    assert len(unresolved.items(stem)) == 2  # nothing was written or dropped by the read
+
+
+def test_two_identical_entries_get_distinct_audit_indexes(tmp_path):
+    """Equal dicts must not alias: the audit names the entry it dismissed, so undo restores it."""
+    stem = str(tmp_path / "ep")
+    old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 20 * 86400))
+    entry = {"stage": "repair", "reason": "rejected_guard", "resolved": False, "ts": old, "original_text": "same"}
+    unresolved._rewrite(stem, [dict(entry), dict(entry)])
+    assert unresolved.items(stem)[0] == unresolved.items(stem)[1]  # the hazard .index() would alias
+
+    unresolved.expire(stem)
+
+    assert sorted(r["index"] for r in unresolved.audit(stem)) == [0, 1]
+    assert unresolved.undo_expire(stem, 1) is True
+    # the restored entry has no `expired` key at all -- unexpire pops it rather than storing False
+    assert [bool(e.get("expired")) for e in unresolved.items(stem)] == [True, False]

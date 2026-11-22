@@ -17,6 +17,7 @@ import subprocess
 import sys
 
 from dubtitlerr.core import common
+from dubtitlerr.pipeline import presentation
 
 MERGE_PASS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "merge_pass.sh")
 
@@ -31,7 +32,7 @@ def _fake_bin(tmp_path, name):
     return str(bindir)
 
 
-def _run(tmp_path, root):
+def _run(tmp_path, root, extra_env=None):
     # merge_pass.sh guards check ffmpeg (line 16), mkvmerge (line 20), and pysubs2 import (line 24).
     # We stub the binaries; pysubs2 resolves via the real sys.path in CI.
     fakebin_mkvmerge = _fake_bin(tmp_path, "mkvmerge")
@@ -43,6 +44,7 @@ def _run(tmp_path, root):
     # These tests drive stage mechanics with stub subtitles, not dubtitle quality: the publish
     # gate has its own suite (tests/test_publish_gate.py) and a dedicated merge-pass test.
     env["PUBLISH_GATE"] = "0"
+    env.update(extra_env or {})
     return subprocess.run(
         ["/bin/sh", MERGE_PASS],
         env=env,
@@ -134,7 +136,7 @@ def test_apostrophe_stem_records_real_crash_fallback(tmp_path, monkeypatch):
     bindir = tmp_path / "fakebin"
     wrapper = bindir / "python3"
     wrapper.write_text(
-        "#!/bin/sh\ncase \"$*\" in\n  *dubtitlerr.pipeline.mux*--apply*) exit 1 ;;\nesac\n"
+        '#!/bin/sh\ncase "$*" in\n  *dubtitlerr.pipeline.mux*--apply*) exit 1 ;;\nesac\n'
         f'exec {shlex.quote(sys.executable)} "$@"\n'
     )
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -321,9 +323,7 @@ def test_a_failed_stage_scan_never_prints_complete(tmp_path, monkeypatch):
     common.write_stage(stem, "repair", "ok")
     _fake_bin(tmp_path, "ffmpeg")
     wrapper = tmp_path / "fakebin" / "python3"
-    wrapper.write_text(
-        f'#!/bin/sh\ncase "$2" in *failed_stage*) exit 1 ;;\nesac\nexec {shlex.quote(sys.executable)} "$@"\n'
-    )
+    wrapper.write_text(f'#!/bin/sh\ncase "$2" in *failed_stage*) exit 1 ;;\nesac\nexec {shlex.quote(sys.executable)} "$@"\n')
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     res = _run(tmp_path, root)
     assert "MERGE PASS COMPLETE" not in res.stdout, res.stdout + res.stderr
@@ -755,3 +755,75 @@ def test_an_extras_folder_is_still_skipped_when_the_root_itself_contains_an_extr
     (tmp_path / "calls.log").write_text("")
     res, calls = _gated_run(tmp_path, root)
     assert [c for c in calls if c.startswith("repair")] == ["repair ep01"], (calls, res.stdout, res.stderr)
+
+
+def test_presentation_repass_stamps_a_delivered_episode_once(tmp_path, monkeypatch):
+    # [P29] An already-delivered episode is skipped by the stem loop, so its card structure and
+    # timing must reach the running PRESENTATION_EPOCH from the sweep that runs before that skip.
+    # The fixture is a real delivered sidecar plus its words.json, so this drives the same code
+    # path the library does, not a stub.
+    art = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts")
+    monkeypatch.setattr(common, "OUTPUT_ROOT", "")
+    root = tmp_path / "library"
+    stem = str(root / "Show" / "ep01")
+    os.makedirs(os.path.dirname(stem), exist_ok=True)
+    shutil.copy(os.path.join(art, "toradora_s01e24_presentation.ass"), stem + ".eng.dubtitles.ass")
+    shutil.copy(os.path.join(art, "toradora_s01e24_presentation.words.json"), stem + ".dubtitles.words.json")
+    open(stem + ".dubtitles.done", "w").write("{}")
+
+    res = _run(tmp_path, root)
+    stamp = json.load(open(stem + ".dubtitles.presentation.json"))
+    assert stamp["epoch"] == presentation.PRESENTATION_EPOCH, (stamp, res.stdout, res.stderr)
+    assert stamp["outcome"] in ("rebuilt", "no-op"), (stamp, res.stdout, res.stderr)
+    assert "presentation: scanned=1" in res.stdout, res.stdout
+
+    # The stamp is what makes it exactly once: a second pass finds nothing stale and does not
+    # rewrite the delivered file.
+    delivered = open(stem + ".eng.dubtitles.ass", encoding="utf-8").read()
+    _run(tmp_path, root)
+    assert open(stem + ".eng.dubtitles.ass", encoding="utf-8").read() == delivered
+    assert json.load(open(stem + ".dubtitles.presentation.json"))["epoch"] == presentation.PRESENTATION_EPOCH
+
+
+def test_presentation_repass_is_off_when_disabled(tmp_path, monkeypatch):
+    art = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts")
+    monkeypatch.setattr(common, "OUTPUT_ROOT", "")
+    root = tmp_path / "library"
+    stem = str(root / "Show" / "ep01")
+    os.makedirs(os.path.dirname(stem), exist_ok=True)
+    shutil.copy(os.path.join(art, "toradora_s01e24_presentation.ass"), stem + ".eng.dubtitles.ass")
+    open(stem + ".dubtitles.done", "w").write("{}")
+
+    before = open(stem + ".eng.dubtitles.ass", encoding="utf-8").read()
+    res = _run(tmp_path, root, extra_env={"PRESENTATION_REPASS": "0", "RESTORATION_REPASS": "0"})
+    assert not os.path.exists(stem + ".dubtitles.presentation.json"), res.stdout + res.stderr
+    assert open(stem + ".eng.dubtitles.ass", encoding="utf-8").read() == before
+
+
+def _restoration_stem(tmp_path, monkeypatch):
+    art = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts")
+    monkeypatch.setattr(common, "OUTPUT_ROOT", "")
+    root = tmp_path / "library"
+    stem = str(root / "Show" / "ep01")
+    os.makedirs(os.path.dirname(stem), exist_ok=True)
+    shutil.copy(os.path.join(art, "e86_s01e01_presentation.ass"), stem + ".eng.dubtitles.ass")
+    shutil.copy(os.path.join(art, "e86_s01e01_presentation.words.json"), stem + ".dubtitles.words.json")
+    open(stem + ".dubtitles.done", "w").write("{}")
+    return root, stem
+
+
+def test_restoration_repass_runs_on_a_delivered_episode(tmp_path, monkeypatch):
+    # [P31] The sweep is the in-app re-pass: no operator step, driven by the episode's
+    # own delivered bytes. A bogus backend proves the wiring without spending a model
+    # call; the stage must still run and must leave the episode unstamped for a retry.
+    root, stem = _restoration_stem(tmp_path, monkeypatch)
+    res = _run(tmp_path, root, extra_env={"RESTORE_BACKEND": "bogus"})
+    assert "restoration: scanned=1" in res.stdout, res.stdout + res.stderr
+    assert not os.path.exists(stem + ".dubtitles.restoration.json"), res.stdout
+
+
+def test_restoration_repass_is_off_when_disabled(tmp_path, monkeypatch):
+    root, stem = _restoration_stem(tmp_path, monkeypatch)
+    res = _run(tmp_path, root, extra_env={"RESTORATION_REPASS": "0", "RESTORE_BACKEND": "bogus"})
+    assert "restoration: scanned=" not in res.stdout, res.stdout + res.stderr
+    assert not os.path.exists(stem + ".dubtitles.restoration.json"), res.stdout

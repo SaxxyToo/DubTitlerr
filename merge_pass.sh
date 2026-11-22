@@ -189,6 +189,27 @@ if [ "${ADOPT_DUB_EN:-0}" = "1" ]; then
 		mv -n "$f" "$stem.eng.dubtitles.$ext" || true
 	done
 fi
+# P29 presentation re-pass: an already-delivered episode is skipped below -- repair and
+# mux must not run again -- but its CARD STRUCTURE and TIMING still have to reach the
+# running PRESENTATION_EPOCH. One in-app rebuild per episode per epoch: the stage reads
+# the episode's own words.json and subtitle, rewrites only the dialogue cards, re-gates,
+# and stamps the epoch. A no-op or a refused rebuild stamps too, so nothing churns; one
+# unreadable episode is reported and the pass carries on. PRESENTATION_REPASS=0 disables
+# just this pass.
+if [ "${PRESENTATION_REPASS:-1}" != "0" ]; then
+	python3 -m dubtitlerr.pipeline.presentation --sweep "$@" </dev/null 2>&1 | sed 's/^/  /' || true
+fi
+# P31 presentation restoration: the P29 sweep fixes STRUCTURE; this pass fixes the TEXT
+# those sentence units show -- terminal punctuation, sentence-initial capitals, spacing and
+# the house style (…, curly quotes, (sound descriptions)). Same discipline: one in-app pass
+# per episode per RESTORATION_EPOCH, driven by the episode's own delivered file, no operator
+# step. It runs on the cards the presentation pass just wrote. An episode whose model was
+# unreachable is left unstamped and retried next pass; the sweep stops after two in a row.
+# RESTORATION_REPASS=0 disables just this pass.
+if [ "${RESTORATION_REPASS:-1}" != "0" ]; then
+	python3 -m dubtitlerr.pipeline.restoration --sweep "$@" </dev/null 2>&1 | sed 's/^/  /' || true
+fi
+
 # episodes with a sidecar (srt or ass) -> dedup to the stem
 find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" \) |
 	# Extras are matched BELOW the root only: the paths are absolute, and a library mounted
@@ -284,6 +305,13 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 			echo "skip mux: signs failed ($bad)"
 			continue
 		fi
+	fi
+	# P31 presentation restoration on a NEW delivery: the same stage the delivered-file
+	# sweep runs, so an episode assembled this pass gets its punctuation, capitals, spacing
+	# and house style before the gate reads it. The stamp makes it once per epoch; the gate
+	# below is still the authority on whether the result ships.
+	if [ "${RESTORATION_REPASS:-1}" != "0" ]; then
+		python3 -m dubtitlerr.pipeline.restoration "$stem" </dev/null 2>&1 | sed 's/^/  /' || true
 	fi
 	if stop_requested; then
 		echo "skip mux: soft stop (the assembled sidecar waits for the next pass)"

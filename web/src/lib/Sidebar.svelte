@@ -1,9 +1,18 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { SETTINGS_CATEGORIES, settingsHash } from './route.js';
-  import { AudioLines, BookOpen, Inbox, Layers, LayoutDashboard, ListChecks, Settings } from '@lucide/svelte';
+  import {
+    AudioLines,
+    BookOpen,
+    History,
+    Inbox,
+    Layers,
+    LayoutDashboard,
+    ListChecks,
+    Settings,
+  } from '@lucide/svelte';
 
-  type View = 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
+  type View = 'audit' | 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
 
   let {
     view,
@@ -37,6 +46,7 @@
   } = $props();
 
   const ITEMS = [
+    { key: 'audit', label: 'Recent decisions', icon: History },
     { key: 'inbox', label: 'Review inbox', icon: Inbox },
     { key: 'shared', label: 'Shared lines', icon: Layers },
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },

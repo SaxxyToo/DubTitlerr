@@ -1137,6 +1137,17 @@ def record_decision(gloss: dict, term: str, accept: bool) -> dict:
     for k in ("flagged", "known", "hard_fixes", "acquired"):
         if not g.get(k):
             g.pop(k, None)
+    # P32: a human verdict is durable too, so the same variant+reason can never re-queue.
+    if not any(str(k).lower() == term.lower() for k in (g.get("flagged") or {})):
+        from dubtitlerr.glossary import review_policy as policy
+
+        g.setdefault("review_rulings", {})[term.casefold()] = {
+            "reason": meta.get("reason", ""),
+            "decision": policy.APPLY if accept else policy.DISMISS,
+            "canonical": canon,
+            "by": "operator",
+            "policy": policy.POLICY_VERSION,
+        }
     return g
 
 
@@ -1428,7 +1439,7 @@ def _acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str 
                     }
             # P24: guard verdicts become counts, not entries; the full evidence is appended
             # to <glossary>.archived.jsonl beside the file.
-            archived = glossary_verify.finalize_flags(out, gloss_path)
+            archived = glossary_verify.finalize_flags(out, gloss_path, titles)
             _write_json(gloss_path, out)
         except Exception as e:
             try:
@@ -1448,6 +1459,11 @@ def _acquire(gloss_path: str, show_dir: str, apply: bool = False, override: str 
         "known": len(known),
         "flagged": len(flag_props),
         **({"archived_flags": archived["counts"]} if archived["archived"] else {}),
+        **(
+            {"review_policy": archived["tiers"]}
+            if archived.get("tiers") and (archived["archived"] or archived["tiers"]["apply"]["applied"])
+            else {}
+        ),
         "dry_run": not apply,
         "scope": len(scope),
         "scope_episodes": [os.path.basename(s) for s in scope],

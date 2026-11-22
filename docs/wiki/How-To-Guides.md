@@ -1022,12 +1022,12 @@ user can observe:
 4. **Merge it to `main`.** The tag goes on the merge commit of `main`, never on a feature branch —
    a tag is what people fetch, so it has to name a commit that contains nothing unmerged.
 5. **Tag it, annotated:** `git tag -a vX.Y.Z -m "dubtitlerr X.Y.Z" && git push origin vX.Y.Z`.
-   An annotated tag records who released it and when; a lightweight tag is a bare pointer. Pushing
-   the tag starts the release workflow (below) — images publish from the tag, never from `main`.
-6. **Create the release notes (after the images publish):**
-   `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file notes.md`
-   with what changed, what an operator must do (a `TRANSCRIBE_VERSION` bump, a glossary or config
-   change), and any known regression.
+   An annotated tag records who released it and when; a lightweight tag is a bare pointer. The
+   release workflow rejects a tag that is not semver or that points at a commit outside `main`.
+6. **Review the release page.** After both images publish, the workflow creates the GitHub
+   release with `--generate-notes`. Edit that page to add what an operator must do (a
+   `TRANSCRIBE_VERSION` bump, a glossary or config change) and any known regression. Do not
+   delete or move the tag to fix notes; the tag is the release's identity.
 
 **The tag publishes the images; hosts pull.** Pushing `vX.Y.Z` runs the release workflow
 (`.github/workflows/release.yml`): the full CI gate re-runs first, then both images build and
@@ -1049,11 +1049,13 @@ for the `dubtitlerr <version>` boot banner, `GET /api/v1/system/status` → `ver
 review page's sidebar footer. All four read the same constant; if one disagrees, the image was built
 from a different tree.
 
-**What runs on a tag.** Pushing `vX.Y.Z` triggers the release workflow: the full CI gate re-runs
-first, then the builder (~40 min; CUDA base plus baked model weights) and the lite image publish in
-parallel. Watch it with `gh run list --workflow release` / `gh run watch`. If a job fails, fix the
-cause and re-run that run (`gh run rerun <id> --failed`) rather than deleting the tag — the tag
-names the release; the images it failed to produce are the thing that is missing, not the tag.
+**What runs on a tag.** Pushing `vX.Y.Z` triggers the release workflow: `validate-tag` rejects a
+non-semver tag or one whose commit is not on `main`, the full CI gate re-runs, then the builder
+(~40 min; CUDA base plus baked model weights) and the lite image publish in parallel. A final
+job creates the GitHub release page if it does not exist. Watch it with
+`gh run list --workflow release` / `gh run watch`. If a job fails, fix the cause and re-run that
+run (`gh run rerun <id> --failed`) rather than deleting the tag — the tag names the release; the
+images it failed to produce are the thing that is missing, not the tag.
 
 ---
 

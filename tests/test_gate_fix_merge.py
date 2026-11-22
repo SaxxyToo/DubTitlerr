@@ -128,6 +128,9 @@ def _run(tmp_path, cues, words=None, **extra_env):
     env["PATH"] = str(_fake_bin(tmp_path)) + os.pathsep + env["PATH"]
     env.update(MERGE_ROOTS=str(library), APP_DIR=str(app), PYTHONPATH=str(app),
                CONFIG_DIR=str(tmp_path / "config"), PUBLISH_GATE="1",
+               # These tests supply deliberately unpresentable text and drive gate_fix:
+               # P31's restoration would repair the same defects first, so isolate it.
+               RESTORATION_REPASS="0",
                CALLLOG=str(tmp_path / "calls.log"), NOTIFYLOG=str(tmp_path / "notify.log"))
     env.update(extra_env)
     res = subprocess.run(["/bin/sh", str(REPO / "merge_pass.sh")], env=env,

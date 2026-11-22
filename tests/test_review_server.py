@@ -1587,33 +1587,40 @@ def _strip_ts(stem):
             f.write(json.dumps(e) + "\n")
 
 
+def _recent_ts(days_ago):
+    """A queue ts `days_ago` old. Fixed calendar dates go stale: P33 expires anything past 14 days."""
+    import time
+
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - days_ago * 86400))
+
+
 def test_oldest_pending_at_is_the_earliest_entry_ts_among_the_undecided(tmp_path, monkeypatch):
     stem = _episode(tmp_path, "busy")
     rows = unresolved.items(stem)
-    rows[0]["ts"] = "2026-01-03T00:00:00Z"
-    rows[1]["ts"] = "2026-01-02T00:00:00Z"  # rejected_guard: pending, the oldest
-    rows[2]["ts"] = "2026-01-04T00:00:00Z"
-    rows[3]["ts"] = "2025-12-01T00:00:00Z"  # llm_empty is not a primary reason: not counted
+    rows[0]["ts"] = _recent_ts(3)
+    rows[1]["ts"] = _recent_ts(4)  # rejected_guard: pending, the oldest
+    rows[2]["ts"] = _recent_ts(2)
+    rows[3]["ts"] = _recent_ts(6)  # llm_empty is not a primary reason: not counted
     with open(unresolved.path_for(stem), "w") as f:
         for e in rows:
             f.write(json.dumps(e) + "\n")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
-    assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == "2026-01-02T00:00:00Z"
+    assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == rows[1]["ts"]
 
 
 def test_oldest_pending_at_ignores_a_decided_entry(tmp_path, monkeypatch):
     stem = _episode(tmp_path, "busy")
     rows = unresolved.items(stem)
-    for e, ts in zip(rows, ("2026-01-05T00:00:00Z", "2026-01-01T00:00:00Z", "2026-01-06T00:00:00Z", "2026-01-07T00:00:00Z")):
-        e["ts"] = ts
+    for e, days in zip(rows, (2, 5, 1, 3)):
+        e["ts"] = _recent_ts(days)
     rows[1]["resolved"] = True  # the oldest is settled
     with open(unresolved.path_for(stem), "w") as f:
         for e in rows:
             f.write(json.dumps(e) + "\n")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
-    assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == "2026-01-05T00:00:00Z"
+    assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == rows[0]["ts"]
 
 
 def test_oldest_pending_at_falls_back_to_the_sidecar_mtime_when_no_entry_has_a_ts(tmp_path, monkeypatch):

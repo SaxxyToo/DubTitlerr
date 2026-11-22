@@ -49,8 +49,15 @@ def _add(
     key, category, label, help, type_, default, scope, applies, *, advanced=False, first_wave=False, managed_by=None, **rules
 ):
     scope = [scope] if isinstance(scope, str) else list(scope)
-    assert key not in REGISTRY, key
-    assert category in CATEGORY_IDS and type_ in TYPES and applies in APPLIES and set(scope) <= set(SCOPES), key
+    # Explicit checks, not asserts: `python -O` strips asserts, and a duplicate or mis-scoped
+    # setting that silently overwrites a registry entry would be invisible until an operator
+    # found the wrong default on the Settings page.
+    if key in REGISTRY:
+        raise ValueError(f"duplicate setting key: {key}")
+    if category not in CATEGORY_IDS or type_ not in TYPES or applies not in APPLIES or not set(scope) <= set(SCOPES):
+        raise ValueError(
+            f"invalid definition for setting {key}: category={category!r} type={type_!r} applies={applies!r} scope={scope!r}"
+        )
     REGISTRY[key] = {
         "key": key,
         "category": category,
@@ -115,6 +122,9 @@ _wave('REVIEW_GATE_STALE_DAYS', 'output', 'Review gate stale after (days)', 'Day
 _wave('OUTPUT_MODE', 'output', 'Output mode', 'mux embeds the subtitle as a Dubtitles track and rewrites the video; sidecar leaves it beside the video and never rewrites the video.', 'enum', 'mux', 'merge', 'next_merge_pass', enum=['mux', 'sidecar'])
 _wave('PUBLISH_GATE', 'output', 'Publish gate', 'Refuse to deliver a subtitle that is not one: uncovered, unpunctuated, off-screen or misheard. Off publishes whatever the pipeline assembled.', 'bool', True, 'merge', 'next_merge_pass')
 _wave('GATE_FIX', 'output', 'Repair a gate refusal', 'On a publish-gate refusal, make one deterministic repair attempt (re-wrap, split, trim to the card\'s own speech) and re-gate before parking the episode. Off parks it as refused immediately.', 'bool', True, 'merge', 'next_merge_pass')
+_wave('PRESENTATION_REPASS', 'output', 'Re-pass card structure', 'Rebuild a delivered episode card structure and display timing from its word timestamps, once per presentation epoch, before repair and mux skip it. Off leaves delivered files untouched.', 'bool', True, 'merge', 'next_merge_pass')
+_wave('RESTORATION_REPASS', 'output', 'Restore card presentation', 'Restore punctuation, capitalisation, spacing and house style on a delivered episode once per restoration epoch, before repair and mux skip it. Off leaves delivered files untouched.', 'bool', True, 'merge', 'next_merge_pass')
+_wave('RESTORATION_PASS', 'output', 'Restore card text', 'Run the punctuation, capitalisation, spacing and house-style pass itself. Off leaves every card as the source produced it.', 'bool', True, 'merge', 'next_merge_pass')
 _wave('SIDECAR_SUFFIX', 'output', 'Sidecar filename suffix', 'Sidecar mode only: the text between the episode name and the subtitle extension, e.g. ".dub.en" gives Episode.dub.en.srt.', 'string', '.eng.dubtitles', 'merge', 'next_merge_pass', pattern=r"[.A-Za-z0-9_-]{0,64}", pattern_help='use a filename suffix such as .dub.en')
 _wave('ADOPT_DUB_EN', 'output', 'Adopt .dub.en sidecars', 'Feed an existing .dub.en.srt/.ass from another pipeline through repair and signs merge instead of ignoring it. Off: the pass never moves files it did not produce.', 'bool', False, 'merge', 'next_merge_pass')
 _wave('MUX_KEEP_ALL_SUBS', 'output', 'Keep all subtitle tracks', 'Keep every embedded subtitle track when muxing; off applies the KEEP_LANGS whitelist, which can drop a mislabeled English track.', 'bool', False, 'merge', 'next_merge_pass')
