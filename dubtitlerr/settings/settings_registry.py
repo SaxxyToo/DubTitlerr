@@ -49,8 +49,15 @@ def _add(
     key, category, label, help, type_, default, scope, applies, *, advanced=False, first_wave=False, managed_by=None, **rules
 ):
     scope = [scope] if isinstance(scope, str) else list(scope)
-    assert key not in REGISTRY, key
-    assert category in CATEGORY_IDS and type_ in TYPES and applies in APPLIES and set(scope) <= set(SCOPES), key
+    # Explicit checks, not asserts: `python -O` strips asserts, and a duplicate or mis-scoped
+    # setting that silently overwrites a registry entry would be invisible until an operator
+    # found the wrong default on the Settings page.
+    if key in REGISTRY:
+        raise ValueError(f"duplicate setting key: {key}")
+    if category not in CATEGORY_IDS or type_ not in TYPES or applies not in APPLIES or not set(scope) <= set(SCOPES):
+        raise ValueError(
+            f"invalid definition for setting {key}: category={category!r} type={type_!r} applies={applies!r} scope={scope!r}"
+        )
     REGISTRY[key] = {
         "key": key,
         "category": category,

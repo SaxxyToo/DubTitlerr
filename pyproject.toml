@@ -51,6 +51,19 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = ["real_accounts: exercises the real review_auth account functions (first-run, 401 vs 409); every other suite gets accounts stubbed as installed by conftest.py"]
 
+# Branch coverage, not line coverage: the failure this project fears is a decision path that no
+# test ever takes (a park class, a gate refusal, a fallback arm), and line coverage cannot see it.
+# CI's 3.13 leg runs this report; it is evidence, not a merge gate yet.
+[tool.coverage.run]
+branch = true
+source = ["dubtitlerr"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+precision = 1
+
+
 [tool.ruff]
 line-length = 130
 # Deliberately py39 while the runtime floor is 3.11: raising it turns on 71 pyupgrade

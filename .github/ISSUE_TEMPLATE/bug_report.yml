@@ -1,0 +1,90 @@
+name: Bug report
+description: Something did not work the way the README or the documentation says it should.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The pipeline changes media and burns GPU/API time, so a report
+        with the release, the show's shape and the stage outcome is worth more than a long one.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+      placeholder: |
+        Expected: the episode got a .dub.en.ass sidecar.
+        Actual: the merge pass stopped at "repair failed" and the episode was parked.
+    validations:
+      required: true
+
+  - type: input
+    id: release
+    attributes:
+      label: Release
+      description: Output of `python3 -m dubtitlerr --version` (or the image tag).
+      placeholder: "dubtitlerr 0.4.18"
+    validations:
+      required: true
+
+  - type: textarea
+    id: show
+    attributes:
+      label: Show and file shape
+      description: |
+        Show name, season/episode, and the release group or filename pattern. The beta is
+        validated end to end on One Pace, Sword Art Online and Digimon; other shows are useful
+        reports, but expect more rough edges.
+      placeholder: |
+        Show: Frieren
+        File: [Group] Frieren - S01E03 (1080p).mkv
+        Audio: English 2.0 (aac), Japanese 2.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Delivery mode
+      options:
+        - mux (writes the track into the video)
+        - sidecar (writes a subtitle beside the video)
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and stage outcome
+      description: |
+        `docker logs <container>` around the episode, plus `<stem>.dubtitles.stages.json` if it
+        exists. Redact `PLEX_TOKEN`, `REVIEW_TOKEN`, `OPENROUTER_API_KEY` or any other credential
+        if it appears in a URL.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: Environment variables that differ from the README defaults.
+      placeholder: |
+        ASR_BACKEND=endpoint
+        ASR_MODEL=whisper-large-v3-turbo
+        OUTPUT_MODE=sidecar
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I removed credentials, media paths and personal information from the logs.
+          required: true

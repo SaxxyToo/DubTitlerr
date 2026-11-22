@@ -1,9 +1,18 @@
 name: CI
-# workflow_dispatch: run CI by hand from the Actions tab or `gh workflow run CI`. On a fork GitHub
-# runs no workflow at all until the owner enables them once in the Actions tab.
-on: [push, pull_request, workflow_call, workflow_dispatch]
+# One run per pull request update and one per push to main. Feature-branch pushes used to run
+# this workflow twice (once on `push`, once on `pull_request` for the same commit); the PR run
+# is the contract, so `push` is scoped to main and tags are covered by release.yml's reusable
+# call. workflow_dispatch stays for a manual rerun from the Actions tab or `gh workflow run CI`.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
 
-# Stacked pushes to the same ref waste runners on commits nobody will ship.
+# Stacked pushes to the same ref waste runners on commits nobody will ship. The workflow name
+# is in the group on purpose: a tag push runs ci.yml directly and once more through release.yml,
+# and those two runs must not cancel each other.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -15,7 +24,8 @@ jobs:
   # Both Python versions are load-bearing, not a duplicate of each other: 3.11 is the floor
   # pyproject declares (requires-python = ">=3.11") and 3.13 is a current release. This was
   # previously two separate workflow FILES, which drifted -- they pinned different versions
-  # of the same two actions -- so they are one matrix now.
+  # of the same two actions -- so they are one matrix now. The 3.13 leg also measures branch
+  # coverage; 3.11 proves the floor, not the report.
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -23,13 +33,16 @@ jobs:
       matrix:
         python: ["3.11", "3.13"]
     # Without this a hung job holds a runner for GitHub's six-hour default.
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       # Actions are pinned to commit SHAs: a tag can be silently repointed at new code, and
       # these run with access to the checkout.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with: { python-version: "${{ matrix.python }}" }
+        with:
+          python-version: "${{ matrix.python }}"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       # pysubs2 and jellyfish are import-time dependencies of the suite; without them every
       # test module fails at collection and this job never really ran. faster_whisper is
       # stubbed in tests (test_generate) and webrtcvad is monkeypatched (test_vad), so
@@ -38,8 +51,24 @@ jobs:
       # must not fail a build on its own. pysubs2 1.9 needs Python 3.12; 1.8.1 is the newest that
       # installs on the 3.11 leg (and is what the images' Python 3.11 resolves to).
       - run: pip install pytest==9.2.0 pysubs2==1.8.1 jellyfish==1.3.0
+      - if: matrix.python == '3.13'
+        run: pip install pytest-cov==7.1.0
       # pyproject's [tool.pytest.ini_options] already sets addopts = "-q" and testpaths.
-      - run: pytest
+      # Branch coverage lives in [tool.coverage.*]; a report is evidence, not a gate yet.
+      - name: Test
+        run: |
+          if [ "${{ matrix.python }}" = "3.13" ]; then
+            pytest --cov=dubtitlerr --cov-branch --cov-report=term --cov-report=xml
+          else
+            pytest
+          fi
+      - if: matrix.python == '3.13'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 14
 
   lint:
     runs-on: ubuntu-latest
@@ -47,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with: { python-version: "3.13" }
+        with: { python-version: "3.13", cache: pip, cache-dependency-path: pyproject.toml }
       - run: pip install ruff==0.17.5
       # The whole tree, not a hand-maintained file list. The previous list named ten modules
       # and had stopped covering thirteen others as the repo grew -- including
@@ -60,9 +89,27 @@ jobs:
       # unformatted file or on a baselined file that was edited and can now be formatted.
       - run: ruff format --check .
 
+  # The Svelte app's compiler, formatter, unit tests and production build. Split out of
+  # review-ui so a TypeScript error fails in ~1 minute instead of after a Playwright install
+  # and a browser run. The browser job below still builds the app it serves.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run format:check && npm run check && npm test && npm run build
+        working-directory: web
+
   review-ui:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -71,12 +118,14 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with: { python-version: "3.13" }
+        with: { python-version: "3.13", cache: pip, cache-dependency-path: pyproject.toml }
       - run: pip install pysubs2==1.8.1 jellyfish==1.3.0
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm ci
         working-directory: web
-      - run: npm run format:check && npm run check && npm test && npm run build
+      # The fixture server serves web/dist, so the build is part of this job even though the
+      # `web` job also builds it: a browser test must never run against a stale bundle.
+      - run: npm run build
         working-directory: web
       - run: npx playwright install --with-deps chromium
         working-directory: web
@@ -118,3 +167,44 @@ jobs:
         with:
           scan-args: |-
             --lockfile=./uv.lock
+
+  # The release workflow publishes this image, but nothing built it before a tag. A broken
+  # Dockerfile.lite now fails on the PR that broke it, not during a release. PR-only: a release
+  # calls this workflow and then builds the same image again in its own `lite` job.
+  docker:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Build the lite image
+        run: docker build -f Dockerfile.lite -t dubtitlerr:lite-ci .
+      - name: Smoke-test the image
+        run: docker run --rm --entrypoint python3 dubtitlerr:lite-ci -m dubtitlerr --version
+
+  # The shells are the most fragile surface in the tree and most of them are not Python.
+  # shellcheck catches the quoting and variable mistakes that only fail on a live sweep.
+  shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: shellcheck
+        run: shellcheck -S warning *.sh scripts/*.sh shell/*.sh tools/*.sh
+      - name: POSIX syntax check
+        run: |
+          for f in *.sh scripts/*.sh shell/*.sh tools/*.sh; do
+            sh -n "$f"
+          done
+
+  # Relative links are how the documentation rots quietly: a renamed page leaves a 404 on
+  # GitHub and a dead path in the README. The script is stdlib-only and reads git's index,
+  # so it checks the same tree the release will ship.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Check relative Markdown links
+        run: python3 scripts/check_docs.py

@@ -1,10 +1,11 @@
 # DubTitlerr
 
-[![Fork of XenaRathon/DubTitlerr](https://img.shields.io/badge/fork%20of-XenaRathon%2FDubTitlerr-informational)](https://github.com/XenaRathon/DubTitlerr)
-[![Latest tag](https://img.shields.io/github/v/tag/SaxxyToo/DubTitlerr?sort=semver&label=latest%20tag)](https://github.com/SaxxyToo/DubTitlerr/tags)
-[![Lite image](https://img.shields.io/badge/lite%20image-936%20MB-2496ED?logo=docker&logoColor=white)](#images)
+[![CI](https://github.com/SaxxyToo/DubTitlerr/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SaxxyToo/DubTitlerr/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/SaxxyToo/DubTitlerr?sort=semver&label=release)](https://github.com/SaxxyToo/DubTitlerr/releases)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![License: GPL-3.0](https://img.shields.io/github/license/SaxxyToo/DubTitlerr)](LICENSE)
-![Status: beta](https://img.shields.io/badge/status-beta-orange)
+[![Status: beta](https://img.shields.io/badge/status-beta-orange)](#status)
+[![Fork of XenaRathon/DubTitlerr](https://img.shields.io/badge/fork%20of-XenaRathon%2FDubTitlerr-informational)](https://github.com/XenaRathon/DubTitlerr)
 
 DubTitlerr transcribes English dub audio into subtitles and merges on-screen signs and songs into the same track.
 
@@ -123,8 +124,6 @@ docker run -d --name dubtitlerr -p 8842:8842 --add-host=host.docker.internal:hos
   dubtitlerr:lite
 ```
 
-`Dockerfile.fork` is a thin overlay for exercising a change on a host that already has a release image: it adds this fork's pipeline scripts without rebuilding the model or the UI.
-
 Both images need `mkvtoolnix` — the merge stage shells out to `mkvmerge` to read the video's subtitle streams and attachments. A lite build without it fails at the first merge pass with `FATAL: mkvmerge not found — image is misbuilt`.
 
 **Run the published release, or build your own.** Releases are published to GHCR by the release
@@ -183,6 +182,8 @@ Then open `http://<host>:8842/review/setup` to create the admin account. You do 
 ## Status
 
 Beta. The endpoint backend, the lite image and sidecar delivery are newer than the rest of the pipeline and have been run on a full library pass, not just unit tests. The version stamps are real — a change that raises one re-processes affected episodes — so pin a tag rather than tracking `main`.
+
+CI runs the Python suite on 3.11 and 3.13 with branch coverage, the Svelte checks and Playwright browser suite, shellcheck, CodeQL, dependency review, a `Dockerfile.lite` build and a documentation link check. Security reports go through [private advisories](https://github.com/SaxxyToo/DubTitlerr/security/advisories/new); contributions follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

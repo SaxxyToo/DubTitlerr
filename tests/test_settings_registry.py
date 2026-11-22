@@ -242,3 +242,18 @@ def test_library_sweep_is_an_editable_bool_read_by_the_builder_and_the_merge_pas
     assert entry["label"] == "Sweep the whole library"
     assert "only runs queued requests" in entry["help"]
     assert reg.from_env("LIBRARY_SWEEP", "off") == (False, True)
+
+
+def test_a_duplicate_or_mis_scoped_definition_is_refused_without_mutating_the_registry():
+    """`python -O` strips asserts; these checks have to survive it.
+
+    A duplicate key silently overwriting the live entry would change a default on the
+    Settings page with no trace, so the guard is a real exception and the registry is left
+    exactly as it was.
+    """
+    before = dict(reg.REGISTRY)
+    with pytest.raises(ValueError, match="duplicate setting key: REVIEW_PORT"):
+        reg._add("REVIEW_PORT", "general", "x", "y", "int", 1, "server", "restart")
+    with pytest.raises(ValueError, match="invalid definition for setting TEST_BAD_SCOPE"):
+        reg._add("TEST_BAD_SCOPE", "general", "x", "y", "int", 1, "not-a-scope", "restart")
+    assert reg.REGISTRY == before
