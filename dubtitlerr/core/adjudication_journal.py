@@ -200,6 +200,7 @@ class Journal:
                         self._entries = {e["key"]: e for e in kept}
                         return len(kept)  # already compact: leave the file (and its mtime) alone
                 except OSError:
+                    # An unreadable journal is not 'already compact': fall through and rewrite it.
                     pass
                 atomic_write(self.path, lambda f: f.write(body), fsync=True)
                 self._entries = {e["key"]: e for e in kept}

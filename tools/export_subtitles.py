@@ -283,6 +283,7 @@ def export_episode(
         try:
             os.remove(ass_path)
         except OSError:
+            # Best effort: the extractor failed, so the path may not exist at all.
             pass
         return None
     try:

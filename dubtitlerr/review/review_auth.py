@@ -303,6 +303,7 @@ class SessionStore:
             if len(rows) != len(listed):
                 log(f"review server: dropped {len(listed) - len(rows)} malformed session(s) from {self.path}")
         except FileNotFoundError:
+            # First run: no session file yet, so there is nothing to load.
             pass
         except (OSError, ValueError) as e:
             log(f"review server: sessions file unreadable ({e}); starting with no sessions, the next save replaces it")
@@ -963,6 +964,7 @@ def api_key_info() -> dict:
             os.path.getmtime(apikey_path()), datetime.timezone.utc
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
     except OSError:
+        # No api-key file: `rotated_at` stays None, which the UI shows as 'never rotated'.
         pass
     return {
         "configured": bool(key) or legacy,

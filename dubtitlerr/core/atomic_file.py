@@ -97,6 +97,7 @@ def _fsync_dir(d):
     try:
         os.fsync(dfd)
     except OSError:
+        # A durability nicety: a filesystem that refuses a directory fsync still has the write; do not fail the caller.
         pass
     finally:
         os.close(dfd)
@@ -133,4 +134,5 @@ def _atomic_replace(path, write, mode, fsync, quiet, binary, newline):
             try:
                 os.unlink(tmp)
             except OSError:
+                # Best effort: the temp name is unique per writer, so a leftover cannot collide with a later write.
                 pass

@@ -90,6 +90,7 @@ def read_start(show: str, path: str | None = None) -> int:
                             log(f"ordering: non-integer start for {show!r}: {val.strip()!r}")
                             return 0
         except OSError:
+            # No readable ordering file for this show: the caller keeps its default order.
             pass
     try:
         start = int(os.environ.get("SEASON_START", "0"))

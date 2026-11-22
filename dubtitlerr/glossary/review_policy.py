@@ -462,6 +462,7 @@ def sweep(paths: list, titles=None, dry_run=False) -> dict:
                 stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
                 shutil.copy2(path, f"{path}.bak-p32-{stamp}")
             except OSError:
+                # The `.bak` is operator insurance: a failed copy must not block the policy run.
                 pass
             try:
                 _write(path, doc)
@@ -658,6 +659,7 @@ def expire_flags(gloss: dict, gloss_path: str | None = None, now=None, days: flo
                     ],
                 )
             except OSError:
+                # Archive evidence is advisory: a failed append leaves the ruling itself in the glossary.
                 pass
     return {"expired": expired, "bounded": bounded, "queued": len(kept)}
 

@@ -277,5 +277,6 @@ def write(path, doc):
             try:
                 os.unlink(tmp)
             except OSError:
+                # Best effort: the temp is unlinked on the failure path being handled, which is then re-raised.
                 pass
         return False

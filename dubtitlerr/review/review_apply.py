@@ -143,6 +143,7 @@ def apply_episode(stem: str, store: dict, apply: bool = False) -> dict:
         os.remove(stem + ASS_SUFFIX)
         res["ass_dropped"] = True
     except OSError:
+        # No stale .ass to drop: the srt just written is what mux embeds.
         pass
     # Stamp LAST, and only once the sidecar is on disk. mux.py treats a valid stamp as its
     # only skip guard (mux.py:330), so this is what re-opens the episode; dropping it first

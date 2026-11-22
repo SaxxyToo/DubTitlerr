@@ -433,6 +433,7 @@ def extract_wav(video, idx, wav):
         try:
             os.remove(wav)
         except OSError:
+            # Best effort: the wav may be gone already, and a failed cleanup must not mask the ffmpeg failure reported next.
             pass
         return False
     return os.path.exists(wav) and os.path.getsize(wav) > 1000
@@ -585,6 +586,7 @@ def park_stale_sidecars(stem):
             os.replace(p, p + STALE_SUFFIX)
             log("  parked stale-version sidecar", os.path.basename(p))
         except OSError:
+            # Parking is opportunistic: a sidecar that cannot be renamed is left where it is and the run continues.
             pass
 
 
@@ -600,6 +602,7 @@ def drop_parked_sidecars(stem):
         try:
             os.remove(stem + suff + STALE_SUFFIX)
         except OSError:
+            # Best effort: an unreachable parked copy is harmless, and cleanup must never fail the run.
             pass
 
 
@@ -775,6 +778,7 @@ def _write_qc(rec, stem):
     try:
         os.chown(qcp, UID, GID)
     except OSError:
+        # Ownership is cosmetic: a sidecar this process cannot chown is still usable by it, so a failure must not kill the run.
         pass
 
 
@@ -848,6 +852,7 @@ def _cascade_infeasible(stem, fail, exc):
     try:
         open(fail, "w").close()
     except OSError:
+        # Best effort: if the marker cannot be written the episode simply re-runs; the caller's exception must still propagate.
         pass
     rec = qc.Recorder()
     rec.count("cascade_infeasible")
@@ -1269,6 +1274,7 @@ def force_park_sidecars(stem):
         try:
             os.replace(path, path + STALE_SUFFIX)
         except OSError:
+            # Best effort: a stamp that cannot be parked is replaced in place by this run's own.
             pass
 
 
@@ -1284,6 +1290,7 @@ def _clear_failure_markers(stem):
         try:
             os.remove(out_for(stem + suffix))
         except OSError:
+            # Both markers are advisory; one that cannot be removed is retried next pass rather than failing a run that delivered.
             pass
 
 
@@ -1314,6 +1321,7 @@ def scene_cuts(video):
         if doc.get("version") == CUTS_VERSION and float(doc.get("threshold", -1)) == SCENE_THRESHOLD:
             return [float(x) for x in doc.get("cuts") or []]
     except (OSError, ValueError):
+        # Any missing, unreadable or older-schema cache is a plain miss: the cuts are recomputed below.
         pass
     try:
         r = subprocess.run(
@@ -1349,6 +1357,7 @@ def scene_cuts(video):
             lambda fh: fh.write(json.dumps({"version": CUTS_VERSION, "threshold": SCENE_THRESHOLD, "cuts": cuts})),
         )
     except OSError:
+        # The cache is an optimisation only: the cuts are already in hand, so a failed write does not change this run.
         pass
     return cuts
 
@@ -1464,6 +1473,7 @@ def _retry_wait(retry_after, attempt):
         if math.isfinite(wait) and wait >= 0:
             return min(wait, 30.0)
     except (TypeError, ValueError):
+        # An absent or non-numeric Retry-After falls through to the 2 s/4 s backoff: the header is untrusted input.
         pass
     return 2.0 * 2**attempt
 
@@ -1506,6 +1516,7 @@ def _endpoint_request(wav, fields, headers):
         try:
             os.remove(mp3)
         except OSError:
+            # Best effort: a temp clip that cannot be deleted is picked up by the stale-file sweep.
             pass
     segs = doc.get("segments") or []
     if not segs and doc.get("text"):
@@ -1586,6 +1597,7 @@ def endpoint_transcribe(wav):
             try:
                 os.remove(chunk)
             except OSError:
+                # Best effort: the chunk dir is swept on the next run, and a failed delete must not mask the ASR error.
                 pass
         base = len(segments)
         for s in segs:
@@ -1769,6 +1781,7 @@ def process(video):
     try:
         os.remove(fail)  # transcription finished -> clear in-flight mark
     except OSError:
+        # Best effort: a marker that cannot be cleared ages out via the stale-file sweep.
         pass
     # A0: restore sentence punctuation to the WORD LIST before anything splits it. This has
     # to happen here and not in repair.py: repair edits card text, but by then the cards are
@@ -2021,6 +2034,7 @@ def main():
             try:
                 os.remove(stem + ".dubtitles.fail")
             except OSError:
+                # Best effort: the marker is advisory -- the crash counter below is what gates the next attempt.
                 pass
             if isinstance(e, EndpointAsrError) and attempts >= ENDPOINT_MAX_ATTEMPTS:
                 # Consecutive endpoint failures: stop retrying and record a terminal state
@@ -2033,6 +2047,7 @@ def main():
                             fh,
                         )
                 except OSError:
+                    # Evidence only: the episode still retires through the marker/counter path if the sidecar cannot be written.
                     pass
                 log(f"  endpoint failed {attempts}x -> marked no-speech, no further retries: {os.path.basename(v)}")
             else:
@@ -2042,6 +2057,7 @@ def main():
                             {"path": v, "exc_type": type(e).__name__, "msg": str(e), "time": time.time(), "attempts": attempts}, f
                         )
                 except OSError:
+                    # A crash record that cannot be written must not turn a handled failure into an unhandled one.
                     pass
     # V2 C1: per-show run summary (glossaries/<show>.lastrun.json) -- one file per --root
     # invocation, since SHOW_NAME/GLOSSARY_FILE are per-run env (see load_glossary()).

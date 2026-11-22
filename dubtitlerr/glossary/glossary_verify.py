@@ -817,6 +817,7 @@ def _archived_entries_by_key(path: str) -> set:
                 if isinstance(doc, dict):
                     keys.add((str(doc.get("term", "")).lower(), str(doc.get("reason", ""))))
     except OSError:
+        # No archive yet (or unreadable): nothing was logged before, so every pair is new.
         pass
     return keys
 
@@ -1292,6 +1293,7 @@ def fetch_titles(wiki_api: str, show_key: str) -> list[str]:
         if c.get("api") == wiki_api and (time.time() - c.get("fetched_at", 0)) < WIKI_TTL:
             return c["titles"]
     except (OSError, ValueError):
+        # Cache miss: a stale, missing or corrupt entry only means the wiki is queried again.
         pass
     titles: list[str] = []
     cont = None
@@ -1507,6 +1509,7 @@ def fetch_scope_cached(cfg: dict, scope: dict, show_key: str) -> tuple[set[str],
         os.makedirs(CACHE_DIR, exist_ok=True)
         json.dump({"v": ARC_CACHE_VERSION, "api": wiki, "arcs": arcs}, open(path, "w"))
     except OSError:
+        # The arc cache is memory-only this run; a failed write costs one extra wiki call next time.
         pass
     return res.titles, "fetched"
 
@@ -1647,6 +1650,7 @@ def _tag_arcs(gloss_path: str, show_dir: str, override: str | None = None) -> di
         try:
             os.remove(gloss_path + ".tmp")
         except OSError:
+            # Best effort: the `.tmp` is overwritten on the next write, and the OSError above is already logged.
             pass
         return {**rep, "note": f"write-failed: {e}"}
     return {**rep, "written": True}
@@ -1758,6 +1762,7 @@ def _verify(gloss_path: str, override: str | None = None, force: bool = False) -
         try:
             os.remove(gloss_path + ".tmp")
         except OSError:
+            # Best effort: the `.tmp` is overwritten on the next write, and the OSError above is already logged.
             pass
         return {**rep, "wiki": api, "note": f"write-failed: {e}"}
     if journal is not None and not stopped:

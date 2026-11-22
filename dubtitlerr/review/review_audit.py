@@ -57,11 +57,13 @@ def _audit_files(limit: int) -> list:
     try:
         out += sorted(glob.glob(os.path.join(glossary_dir(), "*" + AUDIT_SUFFIX)))[:limit]
     except OSError:
+        # No glossary audit dir (or unreadable): the media-root scan below still contributes.
         pass
     for root in media_roots():
         try:
             out += sorted(glob.glob(os.path.join(root, "**", "*" + unresolved.AUDIT_SUFFIX), recursive=True))[:limit]
         except OSError:
+            # An unreadable media root contributes no files; the other roots still do.
             pass
     return out
 

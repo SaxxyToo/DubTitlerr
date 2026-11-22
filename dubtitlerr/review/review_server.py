@@ -182,6 +182,7 @@ def resolve_token(token_dir: str = "") -> str:
         if existing:
             return existing
     except OSError:
+        # No token yet: fall through and generate one.
         pass
     if _GENERATED:
         return _GENERATED  # persistence failed earlier; keep the one already printed
