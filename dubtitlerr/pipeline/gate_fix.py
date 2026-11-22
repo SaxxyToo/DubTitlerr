@@ -157,7 +157,16 @@ MAX_AUDIT_ATTEMPTS = 20
 #     characters and was handed back as "a single unbroken token ... no word boundary".
 #     Strays are now counted on letters/digits only and the dominant letter must cover all
 #     but RUN_STRAYS of them, so that card wraps evenly at 30/29 and E16 delivers.
-GATE_FIX_EPOCH = 5
+#   6 (2026-11-21): the one-token remainder. A card whose whole text is ONE token has no
+#     boundary to wrap or split at, and when its duration is the only fault that used to
+#     dead-end. Two shapes are now handled without touching a character: an utterance the
+#     word stream repeats (Toradora S01E18 #338 'Ryuuji?' over 13.4 s, where the words say
+#     'Ryuji?' because the glossary renamed the character after the ASR wrote them) ends at
+#     its first utterance, and a card with nothing to trim to (Bebop S01E20 #187 'Hello?'
+#     over 19.1 s, Toradora S01E24 #0 'Ryu!' over the 27.5 s OP) is clamped to the gate's
+#     own 7.5 s display budget. Every episode parked at an earlier epoch is re-examined
+#     once under this behaviour.
+GATE_FIX_EPOCH = 6
 
 # Outcomes that are PARKED: a deterministic give-up on this exact artifact. `cannot-evaluate`
 # is deliberately absent -- an unreadable artifact can be transient, so it keeps retrying.
@@ -326,6 +335,36 @@ def _wrap_run(text, max_line=GATE_MAX_LINE):
     return "\n".join(text[i : i + size] for i in range(0, len(text), size))
 
 
+def _lone_word_span(words, text):
+    """(start, end) of the single word a ONE-token card's window repeats, or None.
+
+    A card whose whole text is one token has nothing to wrap or split at, and the ASR can
+    leave it stretched across a run of the same shout. Live: Toradora S01E18 #338 displays
+    ``Ryuuji?`` over 13.37 s while the word stream says ``Ryuji?`` five times in a row --
+    the pipeline's own glossary renames the character AFTER the words were written, so the
+    exact text match in :func:`_own_speech` finds no utterance at all and the episode parked
+    forever.
+
+    So this matches the words to EACH OTHER, not to the card: every timed word in the window
+    must say the same token, at least twice, and start on the same letter as the card's text
+    (a window that repeats some other shout is left to the clamp, which fails closed). Only
+    the card's END moves, into the silence after that first utterance; every character and
+    every word stays exactly where it was.
+    """
+    if len(_flat(text).split()) != 1 or not words:
+        return None
+    said = [str(w.get("text", "")).strip().casefold() for w in words]
+    said = [s for s in said if s]
+    if len(said) < 2 or len(set(said)) != 1:
+        return None
+    if said[0][:1] != _flat(text)[:1].casefold():
+        return None
+    timed = [w for w in words if w.get("start") is not None and w.get("end") is not None]
+    if not timed:
+        return None
+    return timed[0]["start"], timed[0]["end"]
+
+
 def _own_speech(words, text):
     """(first start, last end) of the earliest run of ASR words that spells this card's text.
 
@@ -411,6 +450,11 @@ def _trim_to_speech(text, start, end, words, next_start):
     """
     span = _own_speech(words, text)
     if span is None:
+        # The card's text can disagree with the words on spelling alone: the glossary renames
+        # a character after the ASR wrote the word stream. A ONE-token card whose window
+        # repeats that one word still has an utterance to end at (see _lone_word_span).
+        span = _lone_word_span(words, text)
+    if span is None:
         return None
     spoken_start, spoken_end = span
     if spoken_start - start > reflow.GAP_MAX:
@@ -425,14 +469,53 @@ def _trim_to_speech(text, start, end, words, next_start):
         # repeated, its speech is the run, not the first repetition.
         repeat_end = _repetition_end(words, text, start)
         if repeat_end is None:
-            return None  # clamped behind the next card or below MIN_DUR: not a trim
-        target = min(end, repeat_end + reflow.LINGER)
-        if next_start is not None:
-            target = min(target, next_start - reflow.MIN_GAP)
-        target = min(target, start + GATE_MAX_DUR - reflow.EPS)
-        if target - start < reflow.MIN_DUR:
-            return None
+            if " " in _flat(text):
+                return None  # clamped behind the next card or below MIN_DUR: not a trim
+            # A one-token card cannot be split, so give the word the readable minimum
+            # instead of leaving the ASR's stretch on screen (P28).
+            target = start + reflow.MIN_DUR
+            if next_start is not None:
+                target = min(target, next_start - reflow.MIN_GAP)
+            if target - start < reflow.MIN_DUR - reflow.EPS:
+                return None
+        else:
+            target = min(end, repeat_end + reflow.LINGER)
+            if next_start is not None:
+                target = min(target, next_start - reflow.MIN_GAP)
+            target = min(target, start + GATE_MAX_DUR - reflow.EPS)
+            if target - start < reflow.MIN_DUR:
+                return None
     if end - target < 0.1:
+        return None
+    return target
+
+
+def _clamp_one_token(text, start, end, next_start):
+    """Where a card whose whole text is ONE token should end, or None.
+
+    A card with no whitespace in its text has nothing to wrap and nothing to split at, so a
+    duration fault on one is unreachable by the layout path. Everything the viewer has to
+    read is already on screen from the card's first frame -- one token reads in an instant
+    -- so the documented exception is to shorten the display to the gate's OWN budget rather
+    than park the episode forever. Live: Cowboy Bebop S01E20 #187 displays ``Hello?`` for
+    19.07 s and the episode ships no word stream to trim against; Toradora S01E24 #0
+    displays ``Ryu!`` across the whole 27.5 s OP, whose first "utterance" is 7.55 s of a
+    one-syllable word.
+
+    No character and no start time changes, the result never reaches the next card, and the
+    caller re-gates the file: a card that still cannot pass is still refused.
+
+    A repeated-character run is deliberately out of scope: it has its own path (a line
+    break inside the run, :func:`_wrap_run`) and its own documented refusal when that break
+    still leaves the card over the duration budget.
+    """
+    flat = _flat(text)
+    if " " in flat or _wrap_run(flat) is not None:
+        return None
+    target = start + GATE_MAX_DUR - reflow.EPS
+    if next_start is not None:
+        target = min(target, next_start - reflow.MIN_GAP)
+    if target - start < reflow.MIN_DUR or end - target < 0.1:
         return None
     return target
 
@@ -460,10 +543,16 @@ def _pieces(text, start, end, words, next_start=None, is_last=False, depth=0):
     # 1. An over-duration card that is not too long to read: end it where its own speech
     #    ends. That is the repetition/stretch case, and trimming silence keeps the text
     #    whole instead of chopping one sentence into one-word cards.
-    if words and not is_last and all("s card" in f for f in faults):
-        target = _trim_to_speech(text, start, end, words, next_start)
+    if all("s card" in f for f in faults):
+        if words and not is_last:
+            target = _trim_to_speech(text, start, end, words, next_start)
+            if target is not None:
+                return [{"start": start, "end": target, "text": wrapped, "trimmed": True}]
+        # 1b. Nothing to trim to and no boundary to split at: the card's whole text is ONE
+        #     token, so shortening its display hides nothing a viewer has not already read.
+        target = _clamp_one_token(text, start, end, next_start)
         if target is not None:
-            return [{"start": start, "end": target, "text": wrapped, "trimmed": True}]
+            return [{"start": start, "end": target, "text": wrapped, "clamped": True}]
 
     # 2. Otherwise split at the best available boundary, recursively.
     pair = card_split.find_legal_split(_flat(text), start, end, words)
@@ -586,32 +675,41 @@ def fix_cues(cues, words_doc=None, max_line=GATE_MAX_LINE):
             action = "split"
         elif pieces[0].get("run_wrap"):
             action = "wrap-run"
+        elif pieces[0].get("clamped"):
+            action = "clamp-duration"
         else:
             action = "rewrap"
-        actions.append(
-            {
-                "index": index,
-                "action": action,
-                "before": {
-                    "start": round(start, 3),
-                    "end": round(end, 3),
-                    "dur": round(dur, 3),
-                    "chars": len(flat),
-                    "longest": _line_len(text),
-                },
-                "after": [
-                    {
-                        "start": round(p["start"], 3),
-                        "end": round(p["end"], 3),
-                        "dur": round(p["end"] - p["start"], 3),
-                        "chars": len(_flat(p["text"])),
-                        "lines": len(p["text"].split("\n")),
-                        "longest": _line_len(p["text"]),
-                    }
-                    for p in pieces
-                ],
-            }
-        )
+        entry = {
+            "index": index,
+            "action": action,
+            "before": {
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "dur": round(dur, 3),
+                "chars": len(flat),
+                "longest": _line_len(text),
+            },
+            "after": [
+                {
+                    "start": round(p["start"], 3),
+                    "end": round(p["end"], 3),
+                    "dur": round(p["end"] - p["start"], 3),
+                    "chars": len(_flat(p["text"])),
+                    "lines": len(p["text"].split("\n")),
+                    "longest": _line_len(p["text"]),
+                }
+                for p in pieces
+            ],
+        }
+        if action == "clamp-duration":
+            # A duration clamp is a policy exception, not a layout repair: the audit must say
+            # so, and that no character moved.
+            entry["reason"] = (
+                "the card's whole text is one token, with no word boundary to wrap or split "
+                f"at; its display was clamped to the gate's {GATE_MAX_DUR:.1f}s budget and "
+                "no character changed"
+            )
+        actions.append(entry)
         new_cues.extend((p["start"], p["end"], p["text"]) for p in pieces)
         origin.extend([index] * len(pieces))
     return new_cues, actions, origin
@@ -1068,6 +1166,11 @@ def _fixed_summary(actions):
                 f"card #{a['index']} repeated-character run wrapped onto "
                 f"{a['after'][0]['lines']} lines "
                 f"(longest {a['after'][0]['longest']} chars)"
+            )
+        elif a["action"] == "clamp-duration":
+            parts.append(
+                f"card #{a['index']} is one token over {before:.2f}s: display clamped to "
+                f"{a['after'][0]['dur']:.2f}s (the gate's {GATE_MAX_DUR:.1f}s budget, text unchanged)"
             )
         else:
             parts.append(f"card #{a['index']} re-wrapped")

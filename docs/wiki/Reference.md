@@ -298,6 +298,20 @@ breaks and the card's text is byte-identical, and its timing does not move. The 
 446-character run is over even wrapped), and a token that *alternates* rather than repeats
 (`Kekekekeke…`, whose minority is half the token) is not a run — both of those refusals stand.
 
+A card whose whole text is **one token** has no boundary at all, so when its duration is the only
+fault there is nothing for a wrap or a split to do. Two shapes still resolve without touching a
+character. A word the stream repeats — the card is a repetition artifact — ends where its **first**
+utterance ends, and that now holds even when the card's text and the word stream disagree on the
+spelling: the glossary renames a character after the words were written, as in Toradora S01E18,
+where `Ryuuji?` is displayed over 13.4 s while the words say `Ryuji?` five times in a row. A card
+with nothing to trim to — Cowboy Bebop S01E20 shipped `Hello?` over 19.1 s with no word stream at
+all, and Toradora S01E24 shipped `Ryu!` across the whole 27.5 s OP — has its display **clamped to
+the gate's own 7.5 s budget**. That is a documented duration exception, not a layout repair:
+everything the viewer must read is on screen from the card's first frame, no character and no start
+time moves, the clamp never reaches the next card, and the gate still judges the file. The audit
+records `action: "clamp-duration"` with that reason. A repeated-character run is deliberately not
+clamped: it keeps its own break-then-refuse path.
+
 Faults that need a transcript edit rather than a layout one — coverage, punctuation, a cold open, a
 single unbroken token that is not a run — are reported as unsupported rather than attempted. A
 **known mishear** is the exception: the product may have been assembled before the glossary's own fix
