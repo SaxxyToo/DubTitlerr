@@ -22,19 +22,34 @@ test('a deep link while signed out shows the login panel, then keeps the hash an
   await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toHaveCount(0);
 });
 
-test('an unknown hash falls back to the inbox and is normalized', async ({ page }) => {
+test('an unknown hash falls back to the audit and is normalized', async ({ page }) => {
   await page.goto('/review#/nope');
   await signIn(page);
-  await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
-  await expect(nav(page).getByRole('button', { name: /Review inbox/ })).toHaveAttribute(
+  await expect(page.getByRole('heading', { name: 'Recent decisions', level: 1 })).toBeVisible();
+  await expect(nav(page).getByRole('button', { name: /Recent decisions/ })).toHaveAttribute(
     'aria-current',
     'page',
   );
+  expect(new URL(page.url()).hash).toBe('#/audit');
+});
+
+test('the bare workspace opens on Recent decisions, and its header opens the exception list', async ({
+  page,
+}) => {
+  await openSignedIn(page, '');
+  await expect(page.getByRole('heading', { name: 'Recent decisions', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toHaveCount(0);
+  await expect(nav(page).getByRole('button', { name: /Recent decisions/ })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.getByRole('button', { name: /Review exceptions/ }).click();
+  await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
   expect(new URL(page.url()).hash).toBe('#/inbox');
 });
 
 test('nav clicks set the hash, mark one item current, and the back button returns', async ({ page }) => {
-  await page.goto('/review');
+  await page.goto('/review#/inbox');
   await signIn(page);
   await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
   if (await page.getByRole('button', { name: 'Toggle navigation' }).isVisible())
@@ -68,7 +83,7 @@ test('the settings view mounts its page and the glossary view mounts the editor'
 test('the closed mobile drawer is inert; the 768px breakpoint decides when it is a drawer', async ({
   page,
 }) => {
-  await page.goto('/review');
+  await page.goto('/review#/inbox');
   await signIn(page);
   await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
   const sidebar = page.locator('aside.sidebar');
@@ -96,6 +111,8 @@ test('every hash route renders its own page', async ({ page }) => {
     ['#/runs', 'Runs', page.getByRole('heading', { name: 'Run requests', level: 1 })],
     ['#/settings', 'Settings', page.locator('.settings-grid')],
     ['#/inbox', 'Review inbox', page.getByRole('heading', { name: 'Review inbox', level: 1 })],
+    // Last: the workspace lands here, so this is the one page reached by leaving it first.
+    ['#/audit', 'Recent decisions', page.getByRole('heading', { name: 'Recent decisions', level: 1 })],
   ];
   for (const [hash, label, marker] of pages) {
     await navTo(page, new RegExp(label));

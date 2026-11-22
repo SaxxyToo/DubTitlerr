@@ -34,6 +34,19 @@ export async function openSignedIn(page: Page, hash = '') {
   await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible();
 }
 
+/**
+ * Open the review inbox explicitly.
+ *
+ * Since P33 the workspace opens on Recent decisions (`#/audit`); the inbox is the exception
+ * list, not the landing page. A spec that drives the episode queue has to ask for it, and
+ * asking here keeps one definition of "the inbox is open" instead of a bare heading check
+ * scattered through the suite.
+ */
+export async function openInbox(page: Page) {
+  await openSignedIn(page, '#/inbox');
+  await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
+}
+
 /** Open the phone's collapsed line toolbar before driving its search or filters. */
 export async function showLineTools(page: Page, projectName: string) {
   if (projectName !== 'mobile') return;

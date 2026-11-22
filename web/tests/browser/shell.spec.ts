@@ -10,6 +10,10 @@ const PAGES: Array<[string, string, string]> = [
   ['#/runs', 'Runs', 'Run requests'],
   ['#/settings', 'Settings', 'Settings'],
   ['#/inbox', 'Review inbox', 'Review inbox'],
+  // Last on purpose: the bare workspace already renders the audit, and clicking the nav item for
+  // the view you are already on is a no-op (no new route, no focus move), so it is the one page
+  // this loop can only reach by leaving the landing first.
+  ['#/audit', 'Recent decisions', 'Recent decisions'],
 ];
 
 test.beforeEach(async ({ request }) => reset(request));
@@ -101,7 +105,8 @@ test('declining the discard prompt leaves no extra history entry, so Back still 
 
   page.once('dialog', (d) => void d.accept());
   await page.goBack();
-  await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
+  // The entry page was the bare workspace, which since P33 is Recent decisions.
+  await expect(page.getByRole('heading', { name: 'Recent decisions', level: 1 })).toBeVisible();
 });
 
 test('a non-canonical hash is normalized after the view switches', async ({ page }) => {
