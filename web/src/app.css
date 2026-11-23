@@ -365,6 +365,11 @@ main {
   margin-bottom: 18px;
   min-height: 1.5em;
 }
+/* Section rhythm on the settings page. It is global on purpose: Processing, Security and Accounts are
+   child components, so a rule scoped inside Settings.svelte never reaches their markup. */
+.settings-section {
+  margin-top: 28px;
+}
 .primary,
 .secondary {
   border-radius: var(--radius);
@@ -566,7 +571,7 @@ main h1:focus:not(:focus-visible) {
 .data-table tbody tr:hover {
   background: color-mix(in srgb, var(--surface) 50%, var(--panel));
 }
-.data-table td.empty-row {
+.empty-row {
   color: var(--muted);
 }
 .badge {
@@ -908,9 +913,6 @@ audio {
   gap: 7px;
   margin-bottom: 10px;
 }
-.proposed .diff-label {
-  color: var(--ok);
-}
 .tiny-dot {
   width: 6px;
   height: 6px;
@@ -997,50 +999,6 @@ audio {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-}
-.verdict {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  font-size: 13px;
-  background: var(--surface);
-  color: var(--text);
-  min-height: 36px;
-}
-.verdict.accept {
-  color: var(--ok);
-  border-color: color-mix(in srgb, var(--ok) 40%, var(--panel));
-  background: var(--ok-tint);
-}
-.verdict.reject {
-  color: var(--text);
-}
-.verdict.force {
-  color: var(--warn);
-  background: var(--warn-tint);
-  border-color: color-mix(in srgb, var(--warn) 40%, var(--panel));
-}
-.verdict:hover:not(:disabled) {
-  border-color: var(--muted);
-}
-.verdict:disabled {
-  background: var(--surface);
-  border-color: var(--border);
-  color: var(--muted);
-}
-.verdict.chosen {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.verdict.accept.chosen {
-  outline-color: var(--ok);
-}
-.verdict kbd {
-  margin-left: 4px;
-  color: var(--text);
 }
 .correction-label {
   display: block;
@@ -1679,6 +1637,11 @@ textarea {
   line-height: 1.25;
   color: #9b9a99;
 }
+/* The whole deck shares .diff-label (red, the "original" side); the repair side is the green one.
+   The old `.proposed .diff-label` override never matched: the deck markup has no `.proposed` ancestor. */
+.deck-repair .diff-label {
+  color: var(--ok);
+}
 .deck-orig del,
 .deck-repair del {
   text-decoration-color: #b9543f;
@@ -1724,6 +1687,7 @@ textarea {
   color: #f2f2f0;
   font-size: 13px;
   font-weight: 500;
+  min-height: 36px;
 }
 .transport .verdict:hover:not(:disabled) {
   background: #44464b;
@@ -1737,6 +1701,17 @@ textarea {
 .transport .verdict.accept:hover:not(:disabled) {
   background: #f0a53c;
 }
+/* While a save is in flight the verdicts are inert; the dark chip must say so, not just stop responding. */
+.transport .verdict:disabled {
+  background: #2f3033;
+  border-color: #3d3f44;
+  color: var(--muted);
+}
+.transport .verdict.accept:disabled {
+  background: #4a443a;
+  border-color: #4a443a;
+  color: var(--muted);
+}
 .transport .verdict.chosen {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
@@ -1744,9 +1719,13 @@ textarea {
 .transport .verdict kbd {
   color: rgba(255, 255, 255, 0.6);
   font-size: 11px;
+  margin-left: 4px;
 }
 .transport .verdict.accept kbd {
   color: rgba(28, 26, 23, 0.7);
+}
+.transport .verdict.accept:disabled kbd {
+  color: var(--muted);
 }
 .transport-remaining {
   margin-left: auto;

@@ -528,9 +528,6 @@
     color: var(--focus);
     text-decoration: underline;
   }
-  .settings-section {
-    margin-top: 28px;
-  }
   .visually-hidden {
     position: absolute;
     width: 1px;

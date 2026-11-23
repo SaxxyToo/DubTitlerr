@@ -142,7 +142,8 @@
         <li class="audit-row">
           <div class="audit-main">
             <div class="audit-title">
-              <span class="badge {decisionTone(item.decision)}">{decisionLabel(item.decision)}</span>
+              <span class="badge" data-tone={decisionTone(item.decision)}>{decisionLabel(item.decision)}</span
+              >
               <strong>{decisionTitle(item)}</strong>
               {#if item.show}<small class="audit-show">{item.show}</small>{/if}
             </div>
@@ -186,7 +187,7 @@
     gap: 0.45em;
   }
   .class-name {
-    font-family: var(--mono, ui-monospace, monospace);
+    font-family: ui-monospace, SFMono-Regular, monospace;
     font-size: 0.9em;
   }
   .audit-list {
@@ -203,7 +204,7 @@
     align-items: center;
     gap: 1em;
     padding: 0.65em 0.8em;
-    border: 1px solid var(--line, rgba(255, 255, 255, 0.14));
+    border: 1px solid var(--border);
     border-radius: 8px;
   }
   .audit-title {
