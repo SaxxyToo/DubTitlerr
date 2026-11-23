@@ -88,6 +88,16 @@ def words_of(stem):
     return [w for _, _, t in cues for w in t.replace("\n", " ").split()]
 
 
+def tokens_of(cues):
+    """The word sequence with a line break read as layout, not as a word boundary.
+
+    ``words_of`` treats a break as a space, which is right for a card that was SPLIT into
+    two cards. A card re-wrapped inside its own budget keeps one token, so the break is
+    stripped before comparing: that is the word-sacred invariant of a layout repair.
+    """
+    return [w for _, _, t in cues for w in t.replace("\n", "").split()]
+
+
 def read(path):
     return open(path, encoding="utf-8-sig").read()
 
@@ -556,12 +566,19 @@ def test_wrap_run_declines_everything_but_one_run_with_a_tiny_minority():
 
 
 def test_wrap_run_minority_boundary_is_two_stray_characters():
-    """Two distinct letters are fine when the stray one appears at most twice."""
+    """Two distinct letters are fine when the stray one appears at most twice.
+
+    The stray count decides a token whose repeated letter never actually repeats in a row;
+    a run of ``RUN_MIN_LEN`` adjacent characters is a shout on its own terms (P37), so a
+    token carrying one wraps whatever letters trail it.
+    """
     two_strays = "A" + "H" * 55 + "A"  # 57 chars, 'a' x2
-    three_strays = "A" + "H" * 53 + "AAA"  # 57 chars, 'a' x3
-    assert len(two_strays) == len(three_strays) == 57
+    assert len(two_strays) == 57
     assert gate_fix._wrap_run(two_strays) is not None
-    assert gate_fix._wrap_run(three_strays) is None
+    # three strays, and no adjacent run long enough to be a shout: still refused
+    interrupted = "A" + "H" * 19 + "A" + "H" * 19 + "A" + "H" * 19  # 60 chars, max run 19
+    assert gate_fix._wrap_run(interrupted) is None
+    assert gate_fix._wrap_run("A" + "H" * 53 + "AAA") is not None, "a 53-char run is a scream"
     assert gate_fix._wrap_run(KEKE) is None, "period-2 run: the minority is large"
     assert gate_fix._wrap_run("Kek" * 30) is None, "three distinct characters"
 
@@ -575,8 +592,53 @@ def test_wrap_run_ignores_punctuation_when_counting_strays():
     """
     assert gate_fix._wrap_run("A" + "H" * 55 + "!...!") is not None
     assert gate_fix._wrap_run("A" * 53 + "!...!") is not None
-    assert gate_fix._wrap_run("A" + "H" * 53 + "AAA" + "!!!") is None, "four stray letters"
+    assert gate_fix._wrap_run("A" + "H" * 19 + "AAA" + "!?.," * 7) is None, "no run, four strays"
     assert gate_fix._wrap_run("Kek" * 15 + "!!!") is None, "punctuation does not launder it"
+
+
+# --- prefix+run tokens: a word in front of a held scream (P37) -----------------------
+
+DOWN_SCREAM = "DOWN" + "N" * 48  # Demon Slayer S01E19 #34 as shipped: 52 chars, one token
+
+
+def test_a_prefix_plus_run_token_wraps_inside_its_run():
+    """'DOWN' + 48 N's is four distinct letters: the stray count calls it a word.
+
+    The run is 49 N's in a row -- the last letter of 'DOWN' is one of them -- so the break
+    lands at the run's middle, every character survives, and both lines fit the budget.
+    """
+    assert len(DOWN_SCREAM) == 52
+    wrapped = gate_fix._wrap_run(DOWN_SCREAM)
+    assert wrapped is not None
+    assert wrapped.replace("\n", "") == DOWN_SCREAM, "a break changes no character"
+    first, second = wrapped.split("\n")
+    assert first.startswith("DOWN"), "the word it carries stays whole on the first line"
+    assert all(len(ln) <= publish_gate.MAX_LINE for ln in (first, second))
+    assert abs(len(first) - len(second)) <= 2, (first, second)
+    assert set(second) == {"N"}
+
+
+def test_a_run_shorter_than_the_threshold_does_not_launder_a_word():
+    """The adjacency test is a scream test, not a licence to break any long token."""
+    assert gate_fix._run_span("DOG" + "N" * 19) is None
+    assert gate_fix._run_span("DOG" + "N" * 20) is not None
+    assert gate_fix._wrap_run("DOWN" + "N" * 43) is not None
+    assert gate_fix._wrap_run("DOW" + "N" * 19 + "!?.," * 7) is None, "50 chars, no run"
+    assert gate_fix._wrap_run("Supercalifragilisticexpialidocious" * 2) is None
+
+
+def test_an_unbounded_prefix_plus_run_is_still_refused(tmp_path):
+    """A wrap cannot rescue a card over the 88-char budget, run or no run."""
+    blob = "DOWN" + "N" * 100  # 104 chars: wraps onto three lines, still over MAX_CHARS
+    cues = padded(100.0, 101.32, blob)
+    stem = write_episode(tmp_path, cues)
+    before = read(stem + ".eng.dubtitles.ass")
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_UNFIXABLE, result
+    assert "total" in result["summary"] or "budget" in result["summary"], result["summary"]
+    assert read(stem + ".eng.dubtitles.ass") == before
 
 
 def test_why_unsplittable_stays_accurate_for_a_near_run(tmp_path):
@@ -1123,6 +1185,44 @@ def test_the_live_86_eighty_six_scream_is_wrapped_and_the_episode_ships(tmp_path
     assert "\n" in scream[0], "the break is a line break, not a split card"
     assert scream[0].replace("\n", "") == "No" + "o" * 56, scream[0]
     assert max(len(ln) for ln in scream[0].split("\n")) <= publish_gate.MAX_LINE
+
+
+def test_the_live_demon_slayer_s01e19_down_scream_wraps_inside_its_run(tmp_path):
+    """The P37 park: card #34 is 'DOWN' + 48 N's -- 52 chars, four distinct letters.
+
+    The fixture is the episode's own bytes: the produced ``.eng.dubtitles.ass`` up to and
+    including card #41 (4:19.70), so card #34 is literally the card the live audit named.
+
+    The stray-count run test saw a word, so the card came back as "single unbroken token of
+    52 chars ... no word boundary" and the episode parked after gate_fix. The run is 49 N's
+    in a row (the 'N' of DOWN is the first), so the break belongs inside it: the word stays
+    whole on the first line, no character changes, and the card's timing does not move.
+    """
+    stem = _live_episode(tmp_path, "demon_slayer_s01e19_hinokami.dubtitles.ass")
+    assert gate_fails(stem) == ["line of 52 chars (max 46)"], gate_fails(stem)
+    before_cues = publish_gate.load_cues(stem)[1]
+
+    result = gate_fix.attempt(stem)
+
+    assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
+    assert [a["action"] for a in result["fixes"]] == ["wrap-run"], result["fixes"]
+    fix = result["fixes"][0]
+    assert fix["index"] == 34, fix
+    assert (round(fix["before"]["start"], 2), round(fix["before"]["end"], 2)) == (230.86, 235.2), fix
+    assert fix["after"][0]["start"] == fix["before"]["start"]
+    assert fix["after"][0]["end"] == fix["before"]["end"], "wrapping is layout, never timing"
+    assert gate_fails(stem) == []
+
+    _, after = publish_gate.load_cues(stem)
+    assert len(after) == 41, "a wrap, not a split into two cards"
+    card = after[34][2]
+    first, second = card.split("\n")
+    assert first.startswith("DOWN"), first
+    assert card.replace("\n", "") == "DOWN" + "N" * 48, "byte-identical token"
+    assert all(len(ln) <= publish_gate.MAX_LINE for ln in (first, second))
+    assert tokens_of(after) == tokens_of(before_cues), "the token sequence is unchanged"
+    # every other card keeps its exact bytes and timing: only #34 was laid out differently
+    assert [i for i, (a, b) in enumerate(zip(before_cues, after)) if a != b] == [34]
 
 
 def test_the_live_cyberpunk_over_duration_card_is_ended_at_its_own_speech(tmp_path):

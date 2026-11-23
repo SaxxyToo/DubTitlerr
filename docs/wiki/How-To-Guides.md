@@ -205,21 +205,31 @@ mkvmerge -o out.mkv --subtitle-tracks '!<id>' in.mkv
 
 ## Recover an episode that crashed
 
-**Problem:** one episode is skipped every sweep.
+**Problem:** one episode is skipped every sweep, and requests that include it fail.
 
-A hard crash leaves a poison marker so the pipeline does not loop on it:
+A hard crash leaves a poison marker so the pipeline does not loop on it. List every marker in the
+library, then clear the one you mean to retry:
+
+```sh
+python3 -m dubtitlerr.review.review_requests crash-marked
+python3 -m dubtitlerr.review.review_requests clear-crash "Show - S01E05.mkv"
+```
+
+`crash-marked` prints the episode path for each marker, with the exception generate recorded when
+there is one. `clear-crash` removes the marker (the `.dubtitles.crash.json` record is kept as
+history); the next request or sweep then transcribes the episode normally. Both commands run inside
+the container, and the library root comes from `ANIME_ROOT`.
+
+The crash file names the exception, so you can still decide whether to retry at all — or read it
+directly:
 
 ```sh
 ls  "Show - S01E05".dubtitles.fail
 cat "Show - S01E05".dubtitles.crash.json
 ```
 
-The crash file names the exception. When you have dealt with it — or want to try anyway —
-delete the marker:
-
-```sh
-rm "Show - S01E05".dubtitles.fail
-```
+`rm "Show - S01E05".dubtitles.fail` does the same thing by hand; the CLI only adds the listing and
+the containment check.
 
 From 0.2.2, stopping the container with `docker stop` no longer leaves this marker, so one now
 means a real crash. A SIGKILL or a power cut during transcription can still leave one. See
