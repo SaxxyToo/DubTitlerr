@@ -20,6 +20,10 @@ E86_WORDS = os.path.join(ART, "e86_s01e01_presentation.words.json")
 TORA_ASS = os.path.join(ART, "toradora_s01e24_presentation.ass")
 TORA_WORDS = os.path.join(ART, "toradora_s01e24_presentation.words.json")
 JJK_ASS = os.path.join(ART, "jjk_s01e19_sourced.ass")
+# JJK S01E12's live bytes at the moment P29/P31 refused it: the screen-scream card is one
+# 57-char line the later gate_fix stage wraps, and the input is 268 raw ASR cards.
+JJK_E12_ASS = os.path.join(ART, "jjk_s01e12_live_slice.ass")
+JJK_E12_WORDS = os.path.join(ART, "jjk_s01e12_live_slice.words.json")
 
 
 def _cards(path):
@@ -354,9 +358,45 @@ def test_a_gate_refusal_restores_the_original_bytes(tmp_path, monkeypatch):
     shutil.copy(TORA_WORDS, stem + ".dubtitles.words.json")
     original = open(stem + ".dub.en.ass", encoding="utf-8").read()
 
-    monkeypatch.setattr(publish_gate, "evaluate", lambda *a, **k: ["line of 200 chars (max 46)"])
+    # A refusal the rebuild INTRODUCES (the input was clean): the bytes must go back.
+    calls = []
+
+    def fake_evaluate(cues, duration=None, **_kw):
+        calls.append(len(cues))
+        return ["line of 200 chars (max 46)"] if len(calls) > 1 else []
+
+    monkeypatch.setattr(publish_gate, "evaluate", fake_evaluate)
     report = presentation.apply_episode(stem)
     assert report["outcome"] == "regressed"
     assert open(stem + ".dub.en.ass", encoding="utf-8").read() == original
     assert json.load(open(stem + presentation.STAMP_SUFFIX))["outcome"] == "regressed"
     assert presentation.is_stale(stem) is False  # a deterministic refusal does not churn
+
+
+def test_a_refusal_the_input_already_carried_keeps_the_rebuild(tmp_path):
+    """JJK S01E12's real bytes: the input carries a 57-char scream card (a single line the
+    later gate_fix stage wraps) and nothing else. Reverting on that refusal threw away a
+    268 -> 215 card rebuild AND 107 restored cards, so the episode shipped the raw track --
+    the one "regression" in the first per-show report that was not a source problem.
+
+    The rebuild must be KEPT: it is strictly better, and the refusal it did not introduce
+    belongs to the stage downstream."""
+    stem = str(tmp_path / "Show" / "ep12")
+    os.makedirs(os.path.dirname(stem), exist_ok=True)
+    shutil.copy(JJK_E12_ASS, stem + ".dub.en.ass")
+    shutil.copy(JJK_E12_WORDS, stem + ".dubtitles.words.json")
+    original = open(stem + ".dub.en.ass", encoding="utf-8").read()
+    cues_before = publish_gate.load_cues(stem)[1]
+    fails_before = publish_gate.evaluate(cues_before)
+    assert fails_before == ["line of 57 chars (max 46)"], fails_before
+
+    report = presentation.apply_episode(stem)
+    assert report["outcome"] == "rebuilt", report
+    assert report["cards_after"] < report["cards_before"]
+    assert report["pre_existing_fails"] == fails_before
+    # the kept bytes are the rebuilt ones, and they still refuse for the same, inherited reason
+    kept = open(stem + ".dub.en.ass", encoding="utf-8").read()
+    assert kept != original
+    assert publish_gate.evaluate(publish_gate.load_cues(stem)[1]) == fails_before
+    assert json.load(open(stem + presentation.STAMP_SUFFIX))["outcome"] == "rebuilt"
+    assert presentation.is_stale(stem) is False

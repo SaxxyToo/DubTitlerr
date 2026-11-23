@@ -291,3 +291,41 @@ def test_signs_and_lyrics_are_not_counted_as_dialogue(tmp_path):
         "Dialogue: 0,0:00:06.00,0:00:14.00,Signs,,0,0,0,,TITLE CARD THAT RUNS LONG\n"
     )
     assert g.main([stem, "--duration", "6"]) == 0
+
+
+# --- "worse than it was", not "not perfect" -------------------------------------------
+# A re-pass stage keeps its work when the file it was handed already failed: the refusal is
+# the input's, and the stage downstream repairs it. JJK S01E12 lost a 268 -> 215 card
+# rebuild plus 107 restored cards to a 57-char card the input already carried.
+
+
+def test_an_identical_refusal_is_not_a_regression():
+    """The E12 shape: the same line-length refusal on both sides is the input's defect."""
+    fails = ["line of 57 chars (max 46)"]
+    assert g.regressions(fails, fails) == []
+
+
+def test_a_refusal_the_input_did_not_have_is_a_regression():
+    assert g.regressions([], ["line of 200 chars (max 46)"])
+    assert g.regressions(["line of 57 chars (max 46)"], ["line of 57 chars (max 46)", "no cues"])
+
+
+def test_a_worse_value_in_the_same_category_is_a_regression():
+    assert g.regressions(["line of 47 chars (max 46)"], ["line of 88 chars (max 46)"])
+    assert g.regressions(["3 card(s) over 7.5s (max 9.1s)"], ["5 card(s) over 7.5s (max 9.1s)"])
+    # ...and a better value in the same category is not
+    assert g.regressions(["5 card(s) over 7.5s (max 9.1s)"], ["1 card(s) over 7.5s (max 7.9s)"]) == []
+
+
+def test_a_lower_reading_of_a_higher_is_better_metric_is_a_regression():
+    # punctuation is a floor: 52% -> 44% is worse even though both refuse
+    assert g.regressions(["52% of cards end with punctuation"], ["44% of cards end with punctuation"])
+    # coverage likewise
+    assert g.regressions(["coverage 88% (last cue 10.0s of 11.4s)"], ["coverage 61% (last cue 7.0s of 11.4s)"])
+    assert g.regressions(["coverage 61% (last cue 7.0s of 11.4s)"], ["coverage 88% (last cue 10.0s of 11.4s)"]) == []
+
+
+def test_an_unrecognised_refusal_is_never_tolerated():
+    """A message with no rule must not slip through the comparison: it counts as new."""
+    assert g.regressions([], ["something the table has never seen"]) == ["something the table has never seen"]
+    assert g.regressions(["something else entirely"], ["something the table has never seen"])

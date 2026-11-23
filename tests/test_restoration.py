@@ -25,6 +25,8 @@ E86_RESTORED = os.path.join(ART, "e86_s01e01_restored.ass")
 TORA_ASS = os.path.join(ART, "toradora_s01e24_presentation.ass")
 TORA_WORDS = os.path.join(ART, "toradora_s01e24_presentation.words.json")
 JJK_ASS = os.path.join(ART, "jjk_s01e19_sourced.ass")
+JJK_E12_ASS = os.path.join(ART, "jjk_s01e12_live_slice.ass")
+JJK_E12_WORDS = os.path.join(ART, "jjk_s01e12_live_slice.words.json")
 
 
 # --- the invariant ------------------------------------------------------------------
@@ -246,12 +248,40 @@ def test_a_gate_refusal_restores_the_original_bytes(tmp_path, monkeypatch):
     shutil.copy(E86_WORDS, stem + ".dubtitles.words.json")
     original = open(stem + ".eng.dubtitles.ass", encoding="utf-8").read()
 
+    monkeypatch.setenv("PRESENTATION_REPASS", "0")
     monkeypatch.setattr(restoration, "_ask", _fake_model)
-    monkeypatch.setattr(publish_gate, "evaluate", lambda *a, **k: ["line of 200 chars (max 46)"])
+    # ONLY the restored bytes refuse (the input was clean): a pass that makes the file
+    # unpublishable must go back.
+    calls = []
+
+    def fake_evaluate(cues, duration=None, **_kw):
+        calls.append(len(cues))
+        return ["line of 200 chars (max 46)"] if len(calls) > 1 else []
+
+    monkeypatch.setattr(publish_gate, "evaluate", fake_evaluate)
     report = restoration.apply_episode(stem)
     assert report["outcome"] == "regressed"
     assert open(stem + ".eng.dubtitles.ass", encoding="utf-8").read() == original
     assert restoration.is_stale(stem) is False
+
+
+def test_a_refusal_the_input_already_carried_keeps_the_restoration(tmp_path, monkeypatch):
+    """E12's shape one stage later: the text work is kept because the 57-char card was
+    already there when this pass started. The live stamp recorded 107 restored cards
+    thrown away by a refusal this stage never introduced."""
+    stem = _stem(tmp_path)
+    shutil.copy(JJK_E12_ASS, stem + ".eng.dubtitles.ass")
+    shutil.copy(JJK_E12_WORDS, stem + ".dubtitles.words.json")
+    monkeypatch.setenv("PRESENTATION_REPASS", "0")
+    monkeypatch.setattr(restoration, "_ask", lambda prompt, n: "")
+
+    fails_before = publish_gate.evaluate(publish_gate.load_cues(stem)[1])
+    assert fails_before == ["line of 57 chars (max 46)"], fails_before
+    report = restoration.apply_episode(stem, force=True)
+    assert report["outcome"] != "regressed", report
+    assert report["pre_existing_fails"] == fails_before
+    assert report["changed_cards"] > 0
+    assert publish_gate.evaluate(publish_gate.load_cues(stem)[1]) == fails_before
 
 
 # --- live bytes ---------------------------------------------------------------------

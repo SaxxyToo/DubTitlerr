@@ -226,6 +226,78 @@ def evaluate(cues, duration=None, mishears=(), max_chars=MAX_CHARS, max_line=MAX
     return fails
 
 
+# --- "worse than it was", not "not perfect" ---------------------------------------
+# The re-pass stages (presentation, restoration) used to restore the previous bytes
+# whenever the rebuilt file failed this gate AT ALL. One defect the input already carried
+# then discarded every other improvement in the episode: JJK S01E12's 57-char scream card
+# (a single line the later gate_fix stage wraps) threw away a 268 -> 215 card rebuild and
+# 107 restored cards, and the episode shipped the untouched raw track. A stage's job is
+# to not make the gate WORSE, so a revert needs a NEW failure category or a worse value in
+# one the input already failed. `evaluate()`'s messages are the vocabulary; this table is
+# how they are compared.
+#   direction +1: a larger number is better (more coverage, more punctuation)
+#   direction -1: a smaller number is better (shorter lines, fewer over-long cards)
+#   direction  0: presence alone is the failure; already present is not a regression
+_FAIL_RULES = (
+    (re.compile(r"coverage ([0-9.]+)%"), "coverage", +1),
+    (re.compile(r"([0-9.]+) cards per minute"), "cards per minute", +1),
+    (re.compile(r"line of (\d+) chars"), "line length", -1),
+    (re.compile(r"(\d+) card\(s\) over \d+ chars"), "card chars", -1),
+    (re.compile(r"(\d+) card\(s\) over [0-9.]+s"), "card duration", -1),
+    (re.compile(r"(\d+)% of cards end with punctuation"), "punctuation", +1),
+    (re.compile(r"first cue at ([0-9.]+)s"), "first cue", -1),
+    (re.compile(r"(\d+)% lowercase orphan cards"), "lowercase orphans", -1),
+    (re.compile(r"known mishear"), "known mishear", -1),
+    (re.compile(r"^no cues$|^no dialogue cards"), "no dialogue", 0),
+)
+
+
+def _finding(msg):
+    """``(category, value, direction)`` for one :func:`evaluate` message."""
+    for rx, category, direction in _FAIL_RULES:
+        m = rx.search(msg)
+        if not m:
+            continue
+        if category == "known mishear":
+            return category, float(msg.count(",") + 1), direction  # 'a, b' = two hits
+        return category, float(m.group(1)) if m.groups() else 0.0, direction
+    return f"unclassified: {msg}", 0.0, 0
+
+
+def fail_findings(fails):
+    """``{category: (value, direction)}`` for a list of :func:`evaluate` refusals.
+
+    A message with no rule is kept verbatim (category ``unclassified: ...``) and treated as
+    direction 0, so an unrecognised refusal can never be silently tolerated: it counts as
+    already present only when the exact same message was there before.
+    """
+    out = {}
+    for msg in fails:
+        category, value, direction = _finding(msg)
+        out[category] = (value, direction)
+    return out
+
+
+def regressions(before_fails, after_fails):
+    """The refusals in ``after_fails`` that are NEW or WORSE than ``before_fails``.
+
+    Empty means the rebuild did not make the gate worse -- possibly still failing, but no
+    failure it did not already inherit. That is the only condition under which a re-pass
+    may overwrite the bytes it was given.
+    """
+    was = fail_findings(before_fails)
+    worse = []
+    for msg in after_fails:
+        category, value, direction = _finding(msg)
+        if category not in was:
+            worse.append(msg)
+            continue
+        was_value, _ = was[category]
+        if (direction > 0 and value < was_value) or (direction < 0 and value > was_value):
+            worse.append(msg)
+    return worse
+
+
 def glossary_for(stem, gloss_dir=None):
     """The show glossary for an episode: first ancestor dir whose name has a <Show>.json."""
     gloss_dir = gloss_dir or GLOSSARY_DIR
