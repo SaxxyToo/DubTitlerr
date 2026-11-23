@@ -550,6 +550,53 @@ test('a connection is created, picked for the repair stage, saved and tested wit
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue('fixture-local');
 });
 
+test('Fetch models fills the model field from the server and nothing saves until Save', async ({ page }) => {
+  await openSignedIn(page, '#/settings/connections');
+  const card = await addConnection(page, {
+    name: 'fixture-local',
+    url: HOSTED_URL,
+    model: 'qwen3-4b-instruct',
+  });
+  const fetchButton = card.getByRole('button', { name: 'Fetch models for fixture-local' });
+  await expect(fetchButton).toBeDisabled();
+  await page.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+  await expect(fetchButton).toBeEnabled();
+  await fetchButton.click();
+  const picker = card.getByLabel('Models the server offers');
+  await expect(picker.locator('option')).toHaveText([
+    'Choose a model…',
+    'qwen3-4b-instruct',
+    'qwen3-8b',
+    'whisper-large-v3-turbo',
+  ]);
+  await picker.selectOption('qwen3-8b');
+  await expect(card.getByLabel('Model', { exact: true })).toHaveValue('qwen3-8b');
+  const before = await (await page.request.get('/api/settings')).json();
+  expect(before.connections[0].model).toBe('qwen3-4b-instruct');
+  await page.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+  const after = await (await page.request.get('/api/settings')).json();
+  expect(after.connections[0].model).toBe('qwen3-8b');
+});
+
+test('the Transcription endpoint model is fetched from the server, with its word-timestamp caveat', async ({
+  page,
+}) => {
+  await openSignedIn(page, '#/settings/transcription');
+  const block = page.locator('.setting-block', { has: page.locator('[data-key="ASR_MODEL"]') });
+  await expect(block.getByText(/timestamp_granularities/)).toBeVisible();
+  await block.getByRole('button', { name: 'Fetch endpoint models' }).click();
+  await block.getByLabel('Models the server offers').selectOption('whisper-large-v3-turbo');
+  await expect(page.getByLabel('Endpoint model', { exact: true })).toHaveValue('whisper-large-v3-turbo');
+  const before = await (await page.request.get('/api/settings')).json();
+  expect(before.values.ASR_MODEL.value).toBe('openai/whisper-1');
+  await page.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+  const after = await (await page.request.get('/api/settings')).json();
+  expect(after.values.ASR_MODEL.value).toBe('whisper-large-v3-turbo');
+});
+
 test('a key is write-only, and changing the URL says that the stored key will be cleared', async ({
   page,
 }) => {

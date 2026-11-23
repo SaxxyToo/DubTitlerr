@@ -610,6 +610,7 @@ register_routes(
         ("PUT", "/api/settings"): "admin",
         ("POST", "/api/settings/reset"): "admin",
         ("POST", "/api/settings/test"): "admin",
+        ("POST", "/api/settings/models"): "admin",
         ("POST", "/api/system/restart"): "admin",
         ("GET", "/api/apikey"): "admin",
         ("POST", "/api/apikey/reset"): "admin",

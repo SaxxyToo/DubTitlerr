@@ -5,6 +5,7 @@ import {
   blankConnection,
   connectionsBody,
   connectionsChanged,
+  describeModelsResult,
   describeTestResult,
   parseExtraBody,
   stageChoices,
@@ -131,6 +132,18 @@ test('a test result reads as one plain sentence', () => {
     'The test failed (HTTP 502): boom',
   );
   assert.equal(describeTestResult(null), 'Connection failed.');
+});
+
+test('a model-list result reads as one plain sentence and never shows a raw status', () => {
+  assert.equal(describeModelsResult({ ok: true, models: ['a'] }), 'Found 1 model.');
+  assert.equal(describeModelsResult({ ok: true, models: ['a', 'b'] }), 'Found 2 models.');
+  assert.equal(
+    describeModelsResult({ ok: true, models: [] }),
+    'The server lists no models. Type the model name instead.',
+  );
+  assert.equal(describeModelsResult({ ok: false, error: 'HTTP 404' }), 'HTTP 404.');
+  assert.equal(describeModelsResult({ ok: false, error: 'already done.' }), 'already done.');
+  assert.equal(describeModelsResult(null), 'Could not fetch the model list.');
 });
 
 test('a stored extra body travels back as the {set} marker, so the server keeps it', () => {

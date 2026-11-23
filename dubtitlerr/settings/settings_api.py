@@ -6,9 +6,12 @@ are registered there from ROLE_ENTRIES. The one thing checked here is the secret
 
 import errno
 import http.client
+import json
 import os
 import re
 import socket
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -27,6 +30,7 @@ ROLE_ENTRIES = {
     ("PUT", "/api/settings"): "admin",
     ("POST", "/api/settings/reset"): "admin",
     ("POST", "/api/settings/test"): "admin",
+    ("POST", "/api/settings/models"): "admin",
     ("POST", "/api/system/restart"): "admin",
     ("GET", "/api/system/processing"): "user",
     ("POST", "/api/system/start"): "admin",
@@ -719,6 +723,101 @@ def test_connection(name, environ=None, opener=None, context=None):
     return 200, {**result, "error": store.scrub(result["error"], state)}
 
 
+MODELS_MAX_BYTES = 1_000_000
+
+
+def _models_request(url, headers, timeout, opener):
+    """GET a model-list URL and map it to {"ok", "models", "latency_ms", "error"}. The error text never carries the key
+    or a URL: a status, a fixed phrase, or an exception's class name."""
+    request = urllib.request.Request(url, headers=headers or {}, method="GET")
+    start = time.monotonic()
+    try:
+        with opener(request, timeout=timeout) as response:
+            status = getattr(response, "status", 200)
+            raw = response.read(MODELS_MAX_BYTES + 1)
+        latency_ms = int((time.monotonic() - start) * 1000)
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "models": [], "latency_ms": 0, "error": f"HTTP {e.code}"}
+    except TimeoutError:
+        return {"ok": False, "models": [], "latency_ms": 0, "error": "timed out"}
+    except urllib.error.URLError as e:
+        reason = e.reason
+        if isinstance(reason, TimeoutError):
+            return {"ok": False, "models": [], "latency_ms": 0, "error": "timed out"}
+        if isinstance(reason, ConnectionRefusedError) or (isinstance(reason, OSError) and reason.errno == errno.ECONNREFUSED):
+            return {"ok": False, "models": [], "latency_ms": 0, "error": "connection refused"}
+        return {"ok": False, "models": [], "latency_ms": 0, "error": "connection failed"}
+    except OSError as e:
+        if isinstance(e, ConnectionRefusedError) or e.errno == errno.ECONNREFUSED:
+            return {"ok": False, "models": [], "latency_ms": 0, "error": "connection refused"}
+        return {"ok": False, "models": [], "latency_ms": 0, "error": type(e).__name__}
+    except Exception as e:  # a fake opener may raise anything; never let text through raw
+        return {"ok": False, "models": [], "latency_ms": 0, "error": type(e).__name__}
+    if not 200 <= status < 300:
+        return {"ok": False, "models": [], "latency_ms": latency_ms, "error": f"HTTP {status}"}
+    if len(raw) > MODELS_MAX_BYTES:
+        return {"ok": False, "models": [], "latency_ms": latency_ms, "error": "the model list is too large"}
+    try:
+        payload = json.loads(raw.decode("utf-8", "replace"))
+    except (TypeError, ValueError):
+        return {"ok": False, "models": [], "latency_ms": latency_ms, "error": "the server did not answer with JSON"}
+    return {"ok": True, "models": [], "latency_ms": latency_ms, "error": "", "_payload": payload}
+
+
+def _probe_models(url, headers, timeout, opener, kind):
+    result = _models_request(url, headers, timeout, opener)
+    payload = result.pop("_payload", None)
+    if result["ok"]:
+        result["models"] = conns.model_ids(kind, payload)
+    return result
+
+
+def _effective(key, state, environ):
+    """The value a setting runs with: what the UI stored, else the container's environment, else the default."""
+    if key in state.values:
+        return state.values[key]
+    value, _ = reg.from_env(key, _container_raw(key, environ))
+    return reg.REGISTRY[key]["default"] if value is None else value
+
+
+def _keyless_transport_ok(url):
+    """The pipeline only sends a key over https, or to loopback."""
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme == "https" or parts.hostname in ("127.0.0.1", "localhost", "::1")
+
+
+def fetch_models(target, environ=None, opener=None, context=None):
+    """List the models a saved Connection, or the Transcription endpoint, offers. Always 200 with
+    {ok, models, latency_ms, error} once the target is known; the stored key is read here and travels in the Authorization
+    header only, never in the answer. A server that needs no key (llama-swap on loopback) is probed without one."""
+    environ = _env(environ)
+    state = store.load(environ)
+    if isinstance(target, dict) and target.get("endpoint") == "transcription":
+        asr_url = _effective("ASR_URL", state, environ)
+        key_name = _effective("ASR_KEY_ENV", state, environ)
+        key = (environ.get(key_name) or "") if isinstance(key_name, str) and key_name else ""
+        headers = {"Authorization": f"Bearer {key}"} if key and _keyless_transport_ok(asr_url) else {}
+        kind, timeout = "openai", 10.0
+        url = conns.models_probe_url(kind, asr_url)
+    else:
+        name = target.get("connection") if isinstance(target, dict) else None
+        conn = next((c for c in state.connections if c["name"] == name), None) if isinstance(name, str) else None
+        if conn is None:
+            return 400, {"error": "unknown connection"}
+        kind, timeout = conn["kind"], conn["timeout_connect"]
+        url = conns.models_probe_url(kind, conn["url"])
+        key = state.conn_keys.get(conn["name"], "")
+        headers = {"Authorization": f"Bearer {key}"} if kind == "openai" and key else {}
+    target_url, checked_ips, problem = conns.check_test_target(url)
+    if problem:
+        return 200, {"ok": False, "models": [], "latency_ms": 0, "error": problem}
+    if opener is None:
+        opener = _pinned_opener(checked_ips, context=context)
+    result = _probe_models(target_url, headers, timeout, opener, kind)
+    result["error"] = store.scrub(result["error"], state)
+    return 200, result
+
+
 def test_notification(name, environ=None):
     """Send one test event to a saved notification provider. Always 200 with {ok, error}; the secret is read from disk by
     notify.py itself and never travels through this function's return. This is the same code path as
@@ -779,6 +878,8 @@ def handle(method, path, body=None, environ=None, who="admin", opener=None, cont
         if isinstance(body, dict) and "notification" in body:
             return test_notification(body["notification"], environ)
         return review_settings.handle(method, route, body, environ=environ, opener=opener)
+    if method == "POST" and route == "/api/settings/models":
+        return fetch_models(body if isinstance(body, dict) else {}, environ, opener, context=context)
     if method == "POST" and route == "/api/system/restart":
         return request_restart(environ, who)
     if method == "GET" and route == "/api/system/processing":

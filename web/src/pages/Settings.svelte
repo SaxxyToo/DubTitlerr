@@ -24,6 +24,7 @@
     stagesBody,
   } from '../lib/settingsModel.js';
   import ConnectionsPanel from './settings/ConnectionsPanel.svelte';
+  import ModelFetch from './settings/ModelFetch.svelte';
   import NotificationsPanel from './settings/NotificationsPanel.svelte';
   import ProcessingPanel from './settings/ProcessingPanel.svelte';
   import RestartDialog from './settings/RestartDialog.svelte';
@@ -86,6 +87,7 @@
   const canEdit = $derived(isAdmin(role));
   const retired = $derived<string[]>(loaded?.retired_env ?? []);
   const meta = $derived(SETTINGS_CATEGORIES.find((c) => c.id === category));
+  const ASR_MODEL_DOC = 'https://github.com/SaxxyToo/DubTitlerr/blob/main/docs/wiki/Choosing-an-ASR-Model.md';
   const summaries = $derived<Record<string, string>>(
     Object.fromEntries((schema?.categories ?? []).map((c: any) => [c.id, c.summary])),
   );
@@ -391,14 +393,36 @@
     {/if}
     <div class="setting-rows">
       {#each rows as row (row.key)}
-        <SettingRow
-          {row}
-          draft={drafts[row.key]}
-          error={errors[row.key] ?? ''}
-          onchange={(value) => setDraft(row.key, value)}
-          onreset={() => setDraft(row.key, RESET)}
-          onclear={() => setDraft(row.key, CLEAR)}
-        />
+        <div class="setting-block">
+          <SettingRow
+            {row}
+            draft={drafts[row.key]}
+            error={errors[row.key] ?? ''}
+            onchange={(value) => setDraft(row.key, value)}
+            onreset={() => setDraft(row.key, RESET)}
+            onclear={() => setDraft(row.key, CLEAR)}
+          />
+          {#if row.key === 'ASR_MODEL'}
+            <div class="setting-extra">
+              <p class="setting-note">
+                The endpoint model must return word timestamps (the <code>timestamp_granularities[]</code>
+                parameter).
+                <code>openai/whisper-1</code>, the only hosted model that does, retires on 2027-02-26, and no
+                hosted replacement returns them.
+                <a href={ASR_MODEL_DOC} target="_blank" rel="noreferrer">Choosing an ASR model</a>
+              </p>
+              <ModelFetch
+                {api}
+                {canEdit}
+                target={{ endpoint: 'transcription' }}
+                label="Fetch endpoint models"
+                disabled={!row.editable}
+                hint="Probes the saved endpoint URL; a typed model name still works when the server does not answer."
+                onpick={(model) => setDraft('ASR_MODEL', model)}
+              />
+            </div>
+          {/if}
+        </div>
       {/each}
     </div>
     <!-- The login plan's account tools live on the General page, for admins only. -->
@@ -486,6 +510,23 @@
     display: grid;
     gap: 10px;
     max-width: 52rem;
+  }
+  .setting-block {
+    display: grid;
+    gap: 6px;
+  }
+  .setting-extra {
+    display: grid;
+    gap: 6px;
+    padding: 0 14px;
+  }
+  .setting-note {
+    margin: 0;
+    color: var(--muted);
+  }
+  .setting-note a {
+    color: var(--focus);
+    text-decoration: underline;
   }
   .settings-section {
     margin-top: 28px;
