@@ -48,6 +48,7 @@ def _setup_app(tmp_path, include_exporter=True):
             ("settings", "settings_notifications.py"),
             ("core", "decision_client.py"),
             ("core", "atomic_file.py"),  # the settings store's atomic write, stdlib-only by design
+            ("core", "artifact_store.py"),  # review_requests reads the queue from the store (P39-B4)
             ("core", "notify.py"),  # the notification kinds/events, stdlib-only by design
         ):
             shutil.copy(REPO / "dubtitlerr" / pkg / module, app / "dubtitlerr" / pkg / module)

@@ -135,6 +135,23 @@ def test_read_jsonl_skips_a_corrupt_line(tmp_path):
     assert store.read_jsonl(stem, "unresolved") == [{"i": 0}, {"i": 2}]
 
 
+def test_write_jsonl_replaces_the_payload_in_order(tmp_path):
+    stem = _stem(tmp_path)
+    store.append_jsonl(stem, "unresolved", {"i": 0})
+    store.write_jsonl(stem, "unresolved", [{"i": 1}, {"i": 2}])
+    assert store.read_jsonl(stem, "unresolved") == [{"i": 1}, {"i": 2}]
+    store.write_jsonl(stem, "unresolved", [])
+    assert store.read_jsonl(stem, "unresolved") == []
+
+
+def test_touch_moves_updated_at_and_reports_a_missing_row(tmp_path):
+    stem = _stem(tmp_path)
+    store.put_text(stem, "unresolved", "{}\n")
+    assert store.touch(stem, "unresolved", 1_700_000_000) is True
+    assert store.mtime(stem, "unresolved") == 1_700_000_000
+    assert store.touch(stem + "-absent", "unresolved") is False
+
+
 def test_stems_filters_by_root_and_kind(tmp_path):
     a = _stem(tmp_path, "show-a/Season 01/ep01")
     b = _stem(tmp_path, "show-b/Season 01/ep02")

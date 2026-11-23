@@ -90,7 +90,7 @@ def main():
         os.environ["HEARTBEAT_PATH"] = str(base / "heartbeat.json")
         os.environ["GLOSSARY_DIR"] = str(glossary_dir)
         os.environ["DECISIONS_DIR"] = str(ddir)
-        from dubtitlerr.core import common, decisions, unanchored, unresolved
+        from dubtitlerr.core import artifact_store, common, decisions, unanchored, unresolved
         from dubtitlerr.review import review_auth, review_settings
         from dubtitlerr.review import review_server as rs
 
@@ -219,11 +219,11 @@ def main():
                 if self.path == "/__test/reset" and self.headers.get("X-Api-Key") == "browser-fixture-token":
                     for file in ddir.glob("*.json"):
                         file.unlink()
-                    for file in media.rglob("*.dubtitles.unresolved.jsonl"):
-                        records = [json.loads(line) for line in file.read_text().splitlines()]
-                        for record in records:
+                    for stem in artifact_store.stems(kind=unresolved.KIND):
+                        rows = unresolved.items(stem)
+                        for record in rows:
                             record["resolved"] = False
-                        file.write_text("".join(json.dumps(r) + "\n" for r in records))
+                        unresolved._rewrite(stem, rows)
                     rs._QUEUE_CACHE.clear()
                     rs._THROTTLE = rs.LoginThrottle()  # every test signs in from 127.0.0.1; no lockout may leak across tests
                     for file in (base / "requests").glob("*") if (base / "requests").is_dir() else []:

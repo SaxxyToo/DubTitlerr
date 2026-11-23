@@ -3,10 +3,9 @@ ladder for the subtitle path (glossary_acquire already has one; repair/punctuati
 
 import json
 import os
-import stat
 import time
 
-from dubtitlerr.core import decisions, unresolved
+from dubtitlerr.core import artifact_store, decisions, unresolved
 
 
 def test_records_per_stage_and_survives_reread(tmp_path):
@@ -37,21 +36,27 @@ def test_rejected_guard_keeps_the_model_proposal(tmp_path):
     assert e["proposed_text"] == "catch Crocodile"
 
 
-def test_never_raises_and_never_blocks_an_episode(tmp_path):
+def test_never_raises_and_never_blocks_an_episode(tmp_path, monkeypatch):
     """Same contract as qc.write: this is observability. It must not fail an episode that
     otherwise generated correctly."""
-    assert unresolved.record("/nonexistent/dir/ep", "repair", "no_reference") is False
-    assert unresolved.items("/nonexistent/dir/ep") == []
+    # An arbitrary stem is only a store key now, so the call succeeds rather than failing on a
+    # missing directory -- but it must never raise either way, and an unavailable store is False.
+    assert unresolved.record("/nonexistent/dir/ep", "repair", "no_reference") in (True, False)
+    assert unresolved.items("/nonexistent/other/ep") == []
+
+    def boom(*_a, **_k):
+        raise OSError("store unavailable")
+
+    monkeypatch.setattr(artifact_store, "_connect", boom)
+    assert unresolved.record(str(tmp_path / "ep"), "repair", "no_reference") is False
 
 
-def test_sidecar_is_group_writable(tmp_path):
-    """A non-root writer must be able to append later -- see common.SIDECAR_MODE."""
-    from dubtitlerr.core import common
-
+def test_the_queue_is_a_store_row_and_not_a_sidecar(tmp_path):
+    """P39: the queue lives only in the central store; nothing is written beside the media."""
     stem = str(tmp_path / "ep")
     unresolved.record(stem, "repair", "no_reference")
-    mode = stat.S_IMODE(os.stat(stem + unresolved.SUFFIX).st_mode)
-    assert mode == common.SIDECAR_MODE
+    assert artifact_store.exists(stem, "unresolved")
+    assert not os.path.exists(stem + ".dubtitles.unresolved.jsonl")
 
 
 def test_append_is_o1_and_readable_at_every_step(tmp_path):
@@ -65,11 +70,11 @@ def test_append_is_o1_and_readable_at_every_step(tmp_path):
 
 
 def test_torn_final_line_costs_only_that_entry(tmp_path):
-    """The one failure an append can produce. Everything before it must survive."""
+    """The one failure a crash can leave in a line-oriented payload. Everything before it must survive."""
     stem = str(tmp_path / "ep")
     unresolved.record(stem, "repair", "no_reference", original_text="intact")
-    with open(stem + unresolved.SUFFIX, "a") as f:
-        f.write('{"stage": "repair", "reas')  # torn mid-write
+    payload = artifact_store.get_text(stem, "unresolved") + '{"stage": "repair", "reas'
+    artifact_store.put_text(stem, "unresolved", payload)
     got = unresolved.items(stem)
     assert len(got) == 1 and got[0]["original_text"] == "intact"
 
@@ -503,20 +508,19 @@ def test_the_first_append_after_a_torn_tail_is_readable_and_the_damage_is_kept(t
     broken tail on one physical line, so `items` rejected the combination and the successful write vanished."""
     stem = str(tmp_path / "ep")
     torn = '{"stage":"repair_applied","reas'
-    with open(unresolved.path_for(stem), "w") as f:
-        f.write(torn)
+    artifact_store.put_text(stem, "unresolved", torn)
     assert unresolved.record(stem, "repair_applied", "accepted", original_text="the old line", proposed_text="the wrong line")
     got = unresolved.items(stem)
     assert [e["proposed_text"] for e in got] == ["the wrong line"]
-    raw = open(unresolved.path_for(stem)).read()
+    raw = artifact_store.get_text(stem, "unresolved")
     assert raw.startswith(torn + "\n"), "the damaged bytes stay, on their own line, for audit"
 
 
-def test_appends_to_a_clean_file_add_no_blank_lines(tmp_path):
+def test_appends_to_a_clean_payload_add_no_blank_lines(tmp_path):
     stem = str(tmp_path / "ep")
     unresolved.record(stem, "repair", "no_reference", original_text="a")
     unresolved.record(stem, "repair", "no_reference", original_text="b")
-    raw = open(unresolved.path_for(stem)).read()
+    raw = artifact_store.get_text(stem, "unresolved")
     assert raw.count("\n") == 2 and "\n\n" not in raw
 
 
@@ -524,8 +528,7 @@ def test_a_torn_tail_does_not_hold_back_an_opted_in_episode_from_being_held(tmp_
     from dubtitlerr.pipeline import mux
 
     stem = str(tmp_path / "ep")
-    with open(unresolved.path_for(stem), "w") as f:
-        f.write('{"stage":"repair_applied","reas')
+    artifact_store.put_text(stem, "unresolved", '{"stage":"repair_applied","reas')
     with open(stem + ".dubtitles.conf.json", "w") as f:
         f.write('[{"text": "the old line"}]')
     unresolved.record(stem, "repair_applied", "accepted", original_text="the old line", proposed_text="the wrong line")

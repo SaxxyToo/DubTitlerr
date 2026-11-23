@@ -34,6 +34,9 @@ def _setup_app(tmp_path):
     # review_requests now shares the atomic-write primitive, which is stdlib-only so this
     # minimal app dir stays pysubs2-free.
     shutil.copy(REPO / "dubtitlerr" / "core" / "atomic_file.py", app / "dubtitlerr" / "core" / "atomic_file.py")
+    # review_requests reads the review queue from the artifact store (P39-B4); the store is
+    # stdlib-only, so this skeleton still stays pysubs2-free.
+    shutil.copy(REPO / "dubtitlerr" / "core" / "artifact_store.py", app / "dubtitlerr" / "core" / "artifact_store.py")
     # gen_loop.sh reports at pass boundaries through the notify CLI; notify is stdlib-only by
     # design, and copying it here is what keeps that promise honest (a module-scope import of
     # pysubs2/common would break every one of these harnesses).
