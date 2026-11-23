@@ -13,6 +13,8 @@ import pytest
 from dubtitlerr.review import review_requests
 from dubtitlerr.review.review_requests import (
     Refused,
+    clear_crash,
+    crash_marked,
     create,
     derive_generate_only_re,
     finish,
@@ -1442,3 +1444,164 @@ def test_unresolved_count_cli_prints_the_integer(tmp_path):
         check=True,
     ).stdout
     assert out == "1\n"
+
+
+# --- crash markers: discover them, clear one on request, and never touch media ---------------
+#
+# generate.py skips a poison-marked episode on every pass, so a request that scopes it in
+# fails as a whole. Restarts and deploys mint markers routinely (2026-11-22/23: four episodes
+# on omarchy), and before this surface the only recovery was archiving the marker by hand.
+
+
+def _library(tmp_path):
+    root = tmp_path / "anime"
+    (root / "Show A" / "S01").mkdir(parents=True)
+    (root / "Show B").mkdir(parents=True)
+    (root / ".recycle").mkdir(parents=True)  # NAS metadata directory, never walked
+    return root
+
+
+def _mark(stem):
+    marker = Path(str(stem) + ".dubtitles.fail")
+    marker.write_text("")
+    return marker
+
+
+def test_crash_marked_lists_every_poison_marker_under_the_library(tmp_path):
+    root = _library(tmp_path)
+    a = root / "Show A" / "S01" / "Show A - S01E03"
+    b = root / "Show B" / "Show B - S01E08"
+    _mark(a)
+    _mark(b)
+    (root / "Show A" / "S01" / "Show A - S01E01.mkv").write_text("video")
+    _mark(root / ".recycle" / "Show A - S01E02")
+
+    listed = crash_marked(str(root))
+
+    assert [e["stem"] for e in listed] == [str(a), str(b)]
+    assert [e["show"] for e in listed] == ["Show A", "Show B"]
+    assert [e["marker"] for e in listed] == [str(a) + ".dubtitles.fail", str(b) + ".dubtitles.fail"]
+
+
+def test_crash_marked_carries_the_crash_record_when_generate_left_one(tmp_path):
+    root = _library(tmp_path)
+    stem = root / "Show A" / "S01" / "Show A - S01E03"
+    _mark(stem)
+    Path(str(stem) + ".dubtitles.crash.json").write_text(
+        json.dumps({"exc_type": "EndpointAsrError", "msg": "503 Loading model", "time": 1795403664})
+    )
+
+    [entry] = crash_marked(str(root))
+
+    assert entry["crash"] == {"exc_type": "EndpointAsrError", "msg": "503 Loading model", "time": 1795403664}
+    assert entry["marked_at"].endswith("+00:00")
+
+
+def test_crash_marked_is_empty_for_a_clean_library_and_a_missing_root(tmp_path):
+    assert crash_marked(str(_library(tmp_path))) == []
+    assert crash_marked(str(tmp_path / "not-a-library")) == []
+
+
+@pytest.mark.parametrize("form", ["stem", "video", "marker"])
+def test_clear_crash_accepts_the_stem_the_video_or_the_marker(tmp_path, form):
+    """Whatever `crash-marked` printed can be pasted back, and a video path means its episode."""
+    root = _library(tmp_path)
+    stem = root / "Show A" / "S01" / "Show A - S01E03"
+    video = Path(str(stem) + ".mkv")
+    video.write_text("video")
+    marker = _mark(stem)
+    target = {"stem": str(stem), "video": str(video), "marker": str(marker)}[form]
+
+    assert clear_crash(target, str(root)) == str(marker)
+
+    assert not marker.exists()
+    assert video.exists()
+
+
+def test_clear_crash_keeps_the_crash_record(tmp_path):
+    """The record is the history of why the episode was marked; clearing the blocker does not
+    make that untrue."""
+    root = _library(tmp_path)
+    stem = root / "Show A" / "S01" / "Show A - S01E03"
+    _mark(stem)
+    record = Path(str(stem) + ".dubtitles.crash.json")
+    record.write_text(json.dumps({"exc_type": "RuntimeError"}))
+
+    clear_crash(str(stem), str(root))
+
+    assert record.exists()
+
+
+def test_clear_crash_refuses_a_path_outside_the_library_root(tmp_path):
+    root = _library(tmp_path)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    marker = _mark(outside / "stray")
+
+    with pytest.raises(ValueError):
+        clear_crash(str(marker), str(root))
+
+    assert marker.exists()
+
+
+def test_clear_crash_refuses_an_episode_with_no_marker(tmp_path):
+    root = _library(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        clear_crash(str(root / "Show A" / "Show A - S01E01"), str(root))
+
+
+def test_clear_crash_never_unlinks_a_video(tmp_path):
+    """A typo in the path must fail, not delete media."""
+    root = _library(tmp_path)
+    video = root / "Show A" / "Show A - S01E01.mkv"
+    video.write_text("video")
+
+    with pytest.raises(FileNotFoundError):
+        clear_crash(str(video), str(root))
+
+    assert video.exists()
+
+
+def test_crash_marked_cli_prints_one_stem_per_line_with_the_crash_detail(tmp_path, monkeypatch, capsys):
+    root = _library(tmp_path)
+    stem = root / "Show A" / "S01" / "Show A - S01E03"
+    _mark(stem)
+    Path(str(stem) + ".dubtitles.crash.json").write_text(json.dumps({"exc_type": "RuntimeError", "msg": "CUDA OOM"}))
+    monkeypatch.setattr(sys, "argv", ["review_requests.py", "crash-marked", str(root)])
+
+    review_requests.main()
+
+    assert capsys.readouterr().out.splitlines() == [f"{stem}\tRuntimeError\tCUDA OOM"]
+
+
+def test_clear_crash_cli_clears_every_path_it_is_given(tmp_path, monkeypatch, capsys):
+    root = _library(tmp_path)
+    stems = [root / "Show A" / "S01" / "Show A - S01E03", root / "Show B" / "Show B - S01E08"]
+    for stem in stems:
+        _mark(stem)
+    monkeypatch.setenv("ANIME_ROOT", str(root))
+    monkeypatch.setattr(sys, "argv", ["review_requests.py", "clear-crash", *(str(s) for s in stems)])
+
+    review_requests.main()
+
+    out = capsys.readouterr().out
+    assert out.count("cleared ") == 2
+    assert not list(root.rglob("*.dubtitles.fail"))
+
+
+def test_clear_crash_cli_fails_loudly_but_still_clears_the_others(tmp_path, monkeypatch, capsys):
+    root = _library(tmp_path)
+    good = root / "Show A" / "S01" / "Show A - S01E03"
+    _mark(good)
+    monkeypatch.setenv("ANIME_ROOT", str(root))
+    monkeypatch.setattr(
+        sys, "argv", ["review_requests.py", "clear-crash", str(root / "Show A" / "nope"), str(good)]
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        review_requests.main()
+
+    assert exc.value.code == 1
+    assert not Path(str(good) + ".dubtitles.fail").exists()
+    assert "error clearing" in capsys.readouterr().err
