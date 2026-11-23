@@ -18,7 +18,7 @@ It never deletes. An orphan with no match is REPORTED, because its stamp is the 
 record that the episode was ever processed, and a stamp is far cheaper to keep than a
 re-transcription is to redo.
 
-It never moves ``.dubtitles.fail`` (a poison marker naming THAT stem), ``*.stale``
+It never moves a `fail` poison row (a marker naming THAT stem), ``*.stale``
 (parked output from a superseded run) or ``*.muxtmp.mkv`` (an in-flight mux). Carrying
 any of those onto a live stem would corrupt state rather than recover it.
 
@@ -95,7 +95,7 @@ REKEY_SUFFIXES = (
 STORE_REKEY_EXCLUDE = ("fail", "crash", "no-speech", "mux.log", "mux-recovery")
 
 # Never re-keyed, and the reason each one must stay put:
-#   .dubtitles.fail   poison marker naming the stem generate crashed on
+#   .dubtitles.fail   old beside-media poison marker (store `fail` rows are excluded above)
 #   .stale            parked output from a superseded pipeline version
 #   .muxtmp.mkv       an in-flight mux; moving it races the process writing it
 NEVER_REKEY = (".dubtitles.fail", ".stale", ".muxtmp.mkv")

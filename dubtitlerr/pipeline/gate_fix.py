@@ -47,7 +47,7 @@ What this module will and will not do:
   * **An already-passing file is a no-op.** No audit entry, no stage record, no byte
     written -- so a healthy episode costs the merge pass nothing.
   * **A give-up is PARKED, not retried every pass.** When the attempt ends `unfixable`,
-    `unsupported` or `still-failing`, `<stem>.dubtitles.parked.json` records the refusal and
+    `unsupported` or `still-failing`, a ``parked`` store row records the refusal and
     the ATTEMPT STAMP that produced it (transcribe_version + text_version +
     ``GATE_FIX_EPOCH``). Ordinary merge passes skip a parked episode; it is retried only
     when the stamp no longer matches the running code (a deployed fix heals it exactly
@@ -79,7 +79,7 @@ Fault classes it can repair, all under the gate's own budget
     the budget: the text is never duplicated, and repetitions beyond the run stay
     unsubbed, the same trade-off the one-utterance trim already makes.
 
-Audit trail: every attempt is appended to ``<stem>.dubtitles.gate-fix.json`` with the
+Audit trail: every attempt is appended to the ``gate-fix`` store row with the
 cards it touched, their before/after duration and length, and the attempt outcome, plus a
 one-line ``summary``. The stage record ``gate_fix`` in the episode's ``stages`` artifact carries
 the outcome the merge pass' census reads (``ok`` or ``refused``).
@@ -119,8 +119,8 @@ from dubtitlerr.core.atomic_file import MODE_KEEP, atomic_write
 from dubtitlerr.glossary import glossary as glossary_text
 from dubtitlerr.pipeline import card_split, publish_gate, reflow
 
-AUDIT_SUFFIX = ".dubtitles.gate-fix.json"
-PARK_SUFFIX = ".dubtitles.parked.json"
+AUDIT_KIND = "gate-fix"
+PARK_KIND = "parked"
 BACKUP_SUFFIX = ".pre-gate-fix.bak"
 MAX_AUDIT_ATTEMPTS = 20
 
@@ -1000,29 +1000,17 @@ def load_artifact(stem):
 # --- audit ---------------------------------------------------------------------------
 
 
-def _audit_path(stem):
-    # `common` imports pysubs2 (see core/atomic_file.py's docstring): only the OUTPUT_ROOT
-    # redirect and the stage record need it, so both are resolved where they are used and
-    # the fixer still runs -- and dry-runs -- in an environment the gate itself can run in.
-    try:
-        from dubtitlerr.core import common
-
-        return common.out_for(stem + AUDIT_SUFFIX)
-    except ImportError:
-        return stem + AUDIT_SUFFIX
-
-
 def read_audit(stem):
-    try:
-        with open(_audit_path(stem)) as f:
-            doc = json.load(f)
-        return doc if isinstance(doc, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    from dubtitlerr.core import artifact_store
+
+    doc = artifact_store.get_json(stem, AUDIT_KIND)
+    return doc if isinstance(doc, dict) else {}
 
 
 def _write_audit(stem, doc):
-    atomic_write(_audit_path(stem), lambda f: json.dump(doc, f, indent=1))
+    from dubtitlerr.core import artifact_store
+
+    artifact_store.put_text(stem, AUDIT_KIND, json.dumps(doc, indent=1))
 
 
 def _signature(fails, artifact):
@@ -1046,17 +1034,8 @@ def _signature(fails, artifact):
 #     beats the parked verdict once, and the re-park is newer than the request, so a second
 #     retry needs a second request.
 #
-# The record lives beside the artifact (`<stem>.dubtitles.parked.json`), so it travels with
-# the episode on the same disk branch the rest of the pipeline writes to.
-
-
-def _park_path(stem):
-    try:
-        from dubtitlerr.core import common
-
-        return common.out_for(stem + PARK_SUFFIX)
-    except ImportError:
-        return stem + PARK_SUFFIX
+# The record is a `parked` row in the artifact store, keyed by the episode stem like the
+# `done` stamp and every other internal artifact.
 
 
 def _glossary_fingerprint(stem):
@@ -1107,12 +1086,10 @@ def attempt_stamp(stem=None):
 
 
 def read_park(stem):
-    try:
-        with open(_park_path(stem)) as f:
-            doc = json.load(f)
-        return doc if isinstance(doc, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    from dubtitlerr.core import artifact_store
+
+    doc = artifact_store.get_json(stem, PARK_KIND)
+    return doc if isinstance(doc, dict) else {}
 
 
 class ParkRecordError(ValueError):
@@ -1142,6 +1119,8 @@ def validate_park(doc):
 
 
 def _write_park(stem, result, at):
+    from dubtitlerr.core import artifact_store
+
     doc = {
         "parked": True,
         "at": at,
@@ -1150,15 +1129,17 @@ def _write_park(stem, result, at):
         "fails": result.get("fails_after") or result.get("fails", []),
         "attempt_stamp": attempt_stamp(stem),
     }
-    atomic_write(_park_path(stem), lambda f: json.dump(doc, f, indent=1))
+    artifact_store.put_text(stem, PARK_KIND, json.dumps(doc, indent=1))
 
 
 def clear_park(stem):
     """Drop a parked verdict (healed, or about to be re-attempted). Never raises."""
+    from dubtitlerr.core import artifact_store
+
     try:
-        os.remove(_park_path(stem))
-    except OSError:
-        # Already absent: 'never raises' is this function's whole contract.
+        artifact_store.delete(stem, PARK_KIND)
+    except Exception:  # noqa: BLE001 - 'never raises' is this function's whole contract.
+        # Already absent, or a store that cannot be reached: nothing left to clear.
         pass
 
 
@@ -1319,13 +1300,16 @@ def attempt(stem, duration=None, max_line=GATE_MAX_LINE, dry_run=False):
         return _finish(stem, result, dry_run, parked=True)
 
     words_doc = None
-    words_path = stem + ".dubtitles.words.json"
-    if os.path.exists(words_path):
-        try:
-            with open(words_path) as f:
-                words_doc = json.load(f)
-        except (OSError, ValueError):
-            words_doc = None
+    try:
+        from dubtitlerr.core import common
+
+        # The words doc is a store row now (P39); read_words is the one reader every stage
+        # shares, so a fixer and a repair see the same words (or the same absence).
+        words_doc = common.read_words(stem)
+    except ImportError:
+        # This module is also imported where `common`'s pysubs2 is unavailable (the gate
+        # alone). No words reader is better than failing the whole dry run.
+        words_doc = None
 
     new_cues, actions, origin = fix_cues(cues, words_doc, max_line=max_line)
     if new_cues is None:
@@ -1381,8 +1365,8 @@ def _backup(path):
 def _record(stem, result, parked, failures_before=None):
     """Append the attempt to the audit file, write the stage record, set the exit code.
 
-    "Parked" means a deterministic give-up. It is persisted as
-    ``<stem>.dubtitles.parked.json`` with the attempt stamp that produced it, so ordinary
+    "Parked" means a deterministic give-up. It is persisted as a ``parked`` store row
+    with the attempt stamp that produced it, so ordinary
     passes skip the episode instead of re-attempting it; see :func:`parked_state`. The
     escalation block still remembers the signature of the last refusal it surfaced, so a
     standing refusal is notified once and then recorded as already-known (exit 1).

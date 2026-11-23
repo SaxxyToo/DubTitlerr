@@ -189,6 +189,12 @@ stamp_has() {
 	python3 -m dubtitlerr.core.artifact_store has --stem "$1" --kind "done" </dev/null >/dev/null 2>&1
 }
 
+# True if this stem still carries generate's poison marker (store kind `fail`). Fails open
+# (no marker on error): a broken store read must not stop a merge pass that works.
+marker_has() {
+	python3 -m dubtitlerr.core.artifact_store has --stem "$1" --kind "$2" </dev/null >/dev/null 2>&1
+}
+
 before=$(done_count "$@")
 # Optional bridge (ADOPT_DUB_EN=1): a dubsub-delivered .dub.en.srt/.ass is renamed to this
 # pipeline's own artifact name so repair/signs can upgrade it and sidecar mode republishes
@@ -247,7 +253,7 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 		echo "merge_pass: soft stop while paused, not starting $stem"
 		break
 	fi
-	[ -f "$stem.dubtitles.fail" ] && continue # generate crashed on it -> skip
+	marker_has "$stem" fail && continue # generate crashed on it -> skip
 	# Already delivered: a stamp that is current for the video AND records the running
 	# OUTPUT_MODE. The default SIDECAR_SUFFIX puts the published file at the artifact's own
 	# name, so the finder keeps seeing it, and without this every pass re-ran repair -> signs

@@ -1,7 +1,6 @@
 """Unit tests for mux.py pure helpers (D1). mkvmerge/ffprobe calls are integration."""
 
 import errno
-import json
 import os
 import shutil
 import time
@@ -555,8 +554,7 @@ def test_failed_finalize_rename_fails_marker_blocks_next_sweep(tmp_path, monkeyp
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     _break_finalize(monkeypatch, rename_fails=True)
     assert mux.process(str(v), apply=True) == "error"
-    marker = tmp_path / ("ep" + mux.RECOVERY_SUFFIX)
-    doc = json.loads(marker.read_text())
+    doc = artifact_store.get_json(stem, "mux-recovery")
     assert doc["fallback"].startswith(str(tmp_path / "ep.")) and doc["fallback"].endswith(".muxtmp.mkv")
     assert doc["kept"].startswith(str(tmp_path / "ep.")) and doc["kept"].endswith(".muxtmp.mkv.recovered")
 
@@ -576,7 +574,7 @@ def test_failed_finalize_rename_succeeds_marker_blocks_next_sweep(tmp_path, monk
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     _break_finalize(monkeypatch, rename_fails=False)
     assert mux.process(str(v), apply=True) == "error"
-    assert (tmp_path / ("ep" + mux.RECOVERY_SUFFIX)).exists()
+    assert artifact_store.exists(stem, "mux-recovery")
 
     _heal_and_remux_differently(monkeypatch)
     assert mux.process(str(v), apply=True) == "recovery-pending"
@@ -591,13 +589,13 @@ def test_failed_finalize_rename_succeeds_marker_blocks_next_sweep(tmp_path, monk
 def test_normal_mux_and_stamp_failure_write_no_recovery_marker(tmp_path, monkeypatch):
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     assert mux.process(str(v), apply=True) == "muxed"
-    assert not (tmp_path / ("ep" + mux.RECOVERY_SUFFIX)).exists()
+    assert not artifact_store.exists(stem, "mux-recovery")
 
     d = tmp_path / "b"
     d.mkdir()
     v2, _ = _stamp_failure_setup(d, monkeypatch, "ep.mkv")
     assert mux.process(str(v2), apply=True) == "stamp-write-failed"
-    assert not (d / ("ep" + mux.RECOVERY_SUFFIX)).exists()
+    assert not artifact_store.exists(str(d / "ep"), "mux-recovery")
 
 
 def test_recovery_marker_wins_over_a_valid_stamp(tmp_path, monkeypatch):
@@ -605,7 +603,7 @@ def test_recovery_marker_wins_over_a_valid_stamp(tmp_path, monkeypatch):
     so a valid-looking stamp (size/mtime of the temp file) must not read as 'done'."""
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     assert mux.process(str(v), apply=True) == "muxed"
-    (tmp_path / ("ep" + mux.RECOVERY_SUFFIX)).write_text("{}")
+    artifact_store.put_text(stem, "mux-recovery", "{}")
     assert mux.process(str(v), apply=True) == "recovery-pending"
 
 
@@ -623,7 +621,7 @@ def test_plain_rename_failure_takes_no_recovery_path_and_retries(tmp_path, monke
 
     monkeypatch.setattr(mux.os, "replace", eacces)
     assert mux.process(str(v), apply=True) == "error"
-    assert not (tmp_path / ("ep" + mux.RECOVERY_SUFFIX)).exists()
+    assert not artifact_store.exists(stem, "mux-recovery")
     assert not list(tmp_path.glob("ep*.muxtmp.mkv.recovered"))
     assert not list(tmp_path.glob("ep*.muxtmp.mkv"))
     assert not artifact_store.exists(stem, "done")
@@ -648,14 +646,11 @@ def test_mp4_recovery_warning_says_original_is_intact(tmp_path, monkeypatch, cap
 def test_unwritable_recovery_marker_log_is_accurate(tmp_path, monkeypatch, capsys):
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
     _break_finalize(monkeypatch, rename_fails=False)
-    real_open = open
 
-    def flaky_open(path, *a, **kw):
-        if str(path).endswith(mux.RECOVERY_SUFFIX):
-            raise OSError("read-only filesystem")
-        return real_open(path, *a, **kw)
+    def flaky_put(*a, **kw):
+        raise OSError("read-only filesystem")
 
-    monkeypatch.setattr(mux, "open", flaky_open, raising=False)
+    monkeypatch.setattr(mux.artifact_store, "put_text", flaky_put)
     assert mux.process(str(v), apply=True) == "error"
     assert "will re-mux from a possibly damaged original and overwrite it" in capsys.readouterr().out
 
@@ -664,7 +659,7 @@ def test_recovery_pending_writes_no_stage_in_dry_run(tmp_path, monkeypatch):
     from dubtitlerr.core import common
 
     v, stem = _real_stamp_setup(tmp_path, monkeypatch)
-    (tmp_path / ("ep" + mux.RECOVERY_SUFFIX)).write_text("{}")
+    artifact_store.put_text(stem, "mux-recovery", "{}")
     assert mux.process(str(v), apply=False) == "recovery-pending"
     assert "mux" not in common.read_stages(stem)
 
@@ -1560,8 +1555,7 @@ def test_process_keeps_old_unique_temp_when_recovery_marker_exists(tmp_path, mon
     rec_temp.write_bytes(b"recovered-bytes")
     os.utime(rec_temp, (seven_hours_ago, seven_hours_ago))
 
-    marker = tmp_path / ("ep" + mux.RECOVERY_SUFFIX)
-    marker.write_text("{}")
+    artifact_store.put_text(stem, "mux-recovery", "{}")
 
     mux.process(str(v), apply=True)
 

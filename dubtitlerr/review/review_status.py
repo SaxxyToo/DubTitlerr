@@ -117,8 +117,8 @@ def _determine_outcome(stages: dict, default: str = "unknown") -> str:
 def _inspect_episode(stem: str, open_entries, stores: dict) -> dict:
     show, season, episode = _stem_metadata(stem)
 
-    # 1. Fail poison marker check (.dubtitles.fail)
-    has_fail = os.path.exists(stem + ".dubtitles.fail")
+    # 1. Fail poison marker check (store kind `fail`)
+    has_fail = artifact_store.exists(stem, "fail")
 
     # 2. Done stamp check (.dubtitles.done)
     stamp = common.read_stamp(stem + common.STAMP_SUFFIX)

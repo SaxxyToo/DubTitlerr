@@ -50,6 +50,7 @@ import math
 import os
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -642,8 +643,24 @@ def _finalize(tmp, dst):
 
 
 # Written when a failed cross-device copy may have damaged the episode (see process());
-# while it exists mux refuses to touch that episode. A human resolves it.
-RECOVERY_SUFFIX = ".dubtitles.mux-recovery"
+# while the row exists mux refuses to touch that episode. A human resolves it and deletes
+# the row with the artifact_store CLI; there is no file to look for.
+RECOVERY_KIND = "mux-recovery"
+
+
+def _store_cli(*args: str) -> str:
+    """The exact command an operator runs, with the live store path already resolved."""
+    from dubtitlerr.core import artifact_store
+
+    return " ".join(["python3 -m dubtitlerr.core.artifact_store", "--store", shlex.quote(artifact_store.store_path()), *args])
+
+
+def recovery_hint(stem: str) -> str:
+    """How to read, then clear, this episode's recovery marker."""
+    return (
+        f"read it with `{_store_cli('get', '--stem', shlex.quote(stem), '--kind', RECOVERY_KIND)}`, "
+        f"then clear it with `{_store_cli('delete', '--stem', shlex.quote(stem), '--kind', RECOVERY_KIND)}`"
+    )
 
 
 def temp_path(stem: str) -> str:
@@ -679,8 +696,7 @@ def cleanup_old_temps(stem: str, now: float | None = None) -> None:
     Matches <stem>.<pid>.<hex>.muxtmp.mkv. No PID liveness check is performed as container
     isolation and NFS make remote/recycled PIDs unreliable.
     """
-    marker = stem + RECOVERY_SUFFIX
-    if os.path.exists(marker):
+    if artifact_store.exists(stem, RECOVERY_KIND):
         return
     dirname = os.path.dirname(stem) or "."
     base = os.path.basename(stem)
@@ -704,12 +720,11 @@ def cleanup_old_temps(stem: str, now: float | None = None) -> None:
 
 def process(orig, apply):
     stem, ext = os.path.splitext(orig)
-    marker = stem + RECOVERY_SUFFIX
-    if os.path.exists(marker):
+    if artifact_store.exists(stem, RECOVERY_KIND):
         # Checked before everything, even a valid stamp: the marker means the episode file
         # may be damaged and `.muxtmp.mkv(.recovered)` may be the only complete copy.
         # Touch nothing; keep the stage crashed so every pass reports INCOMPLETE.
-        log(f"  WARNING: {os.path.basename(orig)}: recovery pending, see {marker} — not touching it")
+        log(f"  WARNING: {os.path.basename(orig)}: recovery pending — not touching it; {recovery_hint(stem)}")
         if apply:
             try:
                 write_stage(stem, "mux", "crashed", "recovery-pending")
@@ -862,12 +877,16 @@ def process(orig, apply):
             # places the copy may end up. While it exists process() refuses this episode.
             kept = out + ".recovered"
             try:
-                with open(marker, "w") as f:
-                    json.dump({"kept": kept, "fallback": out, "at": time.time(), "why": "finalize failed"}, f)
-            except OSError as me:
+                artifact_store.put_text(
+                    stem,
+                    RECOVERY_KIND,
+                    json.dumps({"kept": kept, "fallback": out, "at": time.time(), "why": "finalize failed"}),
+                )
+            except Exception as me:  # noqa: BLE001 - the marker is the safety net; report if it fails
                 log(
-                    f"  ERROR: could not write recovery marker {marker} ({me}) — "
-                    "the next sweep will re-mux from a possibly damaged original and overwrite it"
+                    f"  ERROR: could not write the recovery marker for {os.path.basename(stem)} ({me}) — "
+                    "the next sweep will re-mux from a possibly damaged original and overwrite it; "
+                    f"check the store directly: {_store_cli('kinds', '--stem', shlex.quote(stem))}"
                 )
             # Move it aside: the next sweep rebuilds `out`, and cleanup_old_temps() deletes
             # orphan *.muxtmp.mkv. ".recovered" is not an .mkv, so neither mux's walk, Plex
@@ -885,7 +904,7 @@ def process(orig, apply):
             log(
                 f"  WARNING: finalize failed; {kept} holds the only complete copy of the "
                 f"muxed episode and {damaged}. To resolve: confirm {kept} "
-                f"plays, move it over {final}, then delete {marker}"
+                f"plays and move it over {final}; then {recovery_hint(stem)}"
             )
         elif os.path.exists(out):
             os.remove(out)

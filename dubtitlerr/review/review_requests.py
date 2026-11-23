@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import sys
 import time
 import unicodedata
@@ -19,14 +20,18 @@ REQUESTS_DIR = os.environ.get("REQUESTS_DIR", "/config/requests")
 ANIME_ROOT = os.environ.get("ANIME_ROOT", "/media/Anime Library")
 
 # generate.py's poison marker: written before transcription starts, left behind when the
-# process dies hard, and read on every later pass as "never transcribe this episode".
-CRASH_MARKER_SUFFIX = ".dubtitles.fail"
-CRASH_RECORD_SUFFIX = ".dubtitles.crash.json"
+# process dies hard, and read on every later pass as "never transcribe this episode". It is
+# a store row (kind ``fail``) since P39; there is no file beside the episode.
+CRASH_MARKER_KIND = "fail"
+CRASH_RECORD_KIND = "crash"
+# The filename the marker used to have, accepted as input so an operator pasting the old
+# path from a log or an older doc still clears the right row.
+OLD_MARKER_SUFFIX = ".dubtitles.fail"
 
 # Why generate's scope report files a poison-marked episode, restated rather than imported:
 # this module has to stay importable in a minimal app directory, and generate.py pulls in the
 # model stack. tests/test_request_accounting.py pins the two strings together.
-CRASH_REASON = "prior crash (.dubtitles.fail)"
+CRASH_REASON = "prior crash (fail marker)"
 
 # The review queue lives in the central artifact store since P39 (see
 # dubtitlerr/core/unresolved.py). artifact_store is stdlib-only and unresolved.py is not
@@ -884,86 +889,82 @@ def recover_running(requests_dir: str | None = None, now: Any = None) -> list[st
 
 
 def _crash_record(stem: str) -> dict:
-    """generate's `.dubtitles.crash.json` for this episode, or {} when there is none readable.
+    """generate's crash record for this episode, or {} when there is none readable.
 
-    Best effort on purpose: the file is diagnostic (exception type, message, time) and a
+    Best effort on purpose: the record is diagnostic (exception type, message, time) and a
     missing or torn one must not hide the marker that actually blocks the episode.
     """
-    try:
-        with open(stem + CRASH_RECORD_SUFFIX, encoding="utf-8") as f:
-            doc = json.load(f)
-    except (OSError, ValueError):
-        return {}
+    doc = artifact_store.get_json(stem, CRASH_RECORD_KIND)
     return doc if isinstance(doc, dict) else {}
 
 
 def crash_marked(anime_root: str | None = None) -> list[dict]:
-    """Every episode whose `.dubtitles.fail` poison marker is still on disk, sorted by stem.
+    """Every episode whose poison marker (store kind ``fail``) is still live, sorted by stem.
 
     generate.py refuses a marked episode on every pass (``skip-prior-crash``), and a request
     that scopes it in fails as a whole, so a restart or deploy that killed an episode in
     flight leaves a blocker nobody can see from the app. This is that listing: one entry per
     marker, with the crash record's detail when generate left one.
 
-    Only directories are walked; symlinked directories are not followed and dot/@
-    directories (NAS metadata) are skipped, matching list_shows().
+    ``clear`` is the exact command that removes the marker -- there is no file to delete,
+    so the listing hands the operator the store call instead of a path.
     """
     root = anime_root or os.environ.get("ANIME_ROOT", ANIME_ROOT)
     out = []
-    try:
-        walk = os.walk(root)
-        for dirpath, dirnames, filenames in walk:
-            dirnames[:] = sorted(d for d in dirnames if d[:1] not in (".", "@"))
-            for name in filenames:
-                if not name.endswith(CRASH_MARKER_SUFFIX):
-                    continue
-                marker = os.path.join(dirpath, name)
-                stem = marker[: -len(CRASH_MARKER_SUFFIX)]
-                try:
-                    marked_at = datetime.datetime.fromtimestamp(
-                        os.path.getmtime(marker), tz=datetime.timezone.utc
-                    ).isoformat(timespec="seconds")
-                except OSError:
-                    marked_at = None
-                rec = _crash_record(stem)
-                crash = {k: rec[k] for k in ("exc_type", "msg", "time") if k in rec} or None
-                out.append(
-                    {
-                        "stem": stem,
-                        "marker": marker,
-                        "show": os.path.relpath(stem, root).split(os.sep)[0],
-                        "marked_at": marked_at,
-                        "crash": crash,
-                    }
-                )
-    except OSError:
-        # An unreadable tree lists nothing rather than failing the command: the caller is an
-        # operator looking for blockers, and a traceback would be a second blocker.
-        return []
+    real_root = os.path.realpath(root)
+    for stem in artifact_store.stems(root=root, kind=CRASH_MARKER_KIND):
+        # The store key is a path the pipeline wrote, not a client's, but a marker outside
+        # the library root is still not this listing's business.
+        rel = os.path.relpath(stem, real_root)
+        if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+            continue
+        # Dot/@ directories are NAS metadata, never library content (the media walk skips them).
+        if any(part[:1] in (".", "@") for part in rel.split(os.sep)[:-1]):
+            continue
+        marked_at = None
+        at = artifact_store.mtime(stem, CRASH_MARKER_KIND)
+        if at is not None:
+            marked_at = datetime.datetime.fromtimestamp(at, tz=datetime.timezone.utc).isoformat(timespec="seconds")
+        rec = _crash_record(stem)
+        crash = {k: rec[k] for k in ("exc_type", "msg", "time") if k in rec} or None
+        out.append(
+            {
+                "stem": stem,
+                "clear": _clear_command(stem, real_root),
+                "show": os.path.relpath(stem, real_root).split(os.sep)[0],
+                "marked_at": marked_at,
+                "crash": crash,
+            }
+        )
     out.sort(key=lambda d: d["stem"])
     return out
+
+
+def _clear_command(stem: str, root: str) -> str:
+    """The exact CLI call that clears one poison marker."""
+    return f"python3 -m dubtitlerr.review.review_requests clear-crash --root {shlex.quote(root)} {shlex.quote(stem)}"
 
 
 def clear_crash(path: str, anime_root: str | None = None) -> str:
     """Remove ONE episode's poison marker so the next request re-processes it.
 
-    ``path`` is the episode's stem, its video file, or the marker itself -- whatever the
-    listing printed can be pasted back. Confined to ANIME_ROOT by realpath, and it will only
-    ever unlink a regular ``.dubtitles.fail`` file, so a typo cannot delete media.
+    ``path`` is the episode's stem, its video file, or the old marker filename -- whatever an
+    operator has to hand can be pasted back. Confined to ANIME_ROOT by realpath, and it only
+    ever deletes a ``fail`` store row, so a typo cannot remove media or another artifact.
 
-    The crash record (`.dubtitles.crash.json`) is deliberately kept: it is the history of why
-    the episode was marked, and clearing the blocker does not make that untrue.
+    The crash record (kind ``crash``) is deliberately kept: it is the history of why the
+    episode was marked, and clearing the blocker does not make that untrue.
     """
     root = os.path.realpath(anime_root or os.environ.get("ANIME_ROOT", ANIME_ROOT))
     p = os.path.abspath(os.path.expanduser(path))
-    if not p.endswith(CRASH_MARKER_SUFFIX):
-        p = os.path.splitext(p)[0] + CRASH_MARKER_SUFFIX
-    real = os.path.realpath(p)
+    if p.endswith(OLD_MARKER_SUFFIX):
+        p = p[: -len(OLD_MARKER_SUFFIX)]
+    stem = os.path.splitext(p)[0]
+    real = os.path.realpath(stem)
     if not real.startswith(root + os.sep):
         raise ValueError(f"refusing a path outside the library root: {path}")
-    if not os.path.isfile(real):
+    if not artifact_store.delete(real, CRASH_MARKER_KIND):
         raise FileNotFoundError(f"no crash marker for {path}")
-    os.unlink(real)
     return real
 
 
@@ -982,9 +983,9 @@ def _crash_remedy(report: dict, not_done: dict) -> str | None:
         shown = ", ".join(stems[:3])
         if len(stems) > 3:
             shown += f" and {len(stems) - 3} more"
-        where = f"blocked by a .dubtitles.fail poison marker: {shown}"
+        where = f"blocked by a fail poison marker in the artifact store: {shown}"
     else:
-        where = f"{n} episode(s) blocked by a .dubtitles.fail poison marker"
+        where = f"{n} episode(s) blocked by a fail poison marker in the artifact store"
     return (
         f"{where}; list them with `python3 -m dubtitlerr.review.review_requests crash-marked` "
         "and clear one with `python3 -m dubtitlerr.review.review_requests clear-crash <episode>` "

@@ -115,6 +115,16 @@ wait_for_window() {
 # path, or "" when the show has none; _prep_stopped is 1 when a soft stop arrived before a step began. The function never
 # exits itself: the sweep exits, a request requeues. Its own variables are _ps_-prefixed so they cannot clobber the
 # caller's show, rc or GLOSS (a request is drained inside the sweep's read loop).
+# Progress counter for one show: delivered dialogue sidecars plus the poison markers still
+# live in the artifact store (a crashed episode counts as progress, exactly as its
+# `.dubtitles.fail` file used to). A store that cannot be read contributes only the file
+# count: a broken counter must never make a working pass look stalled.
+progress_count() {
+	_pc_files=$(find "$1" -name "*.eng.dubtitles.srt" 2>/dev/null | wc -l)
+	_pc_fail=$(python3 -m dubtitlerr.core.artifact_store stems --kind fail --root "$1" </dev/null 2>/dev/null | wc -l)
+	echo $((_pc_files + _pc_fail))
+}
+
 prep_show() {
 	_ps_show="$1"
 	_prep_stopped=0
@@ -310,11 +320,11 @@ EOF
 			fi
 			attempt=$((attempt + 1))
 			rm -f "$req_report" # a report left by an earlier pass must not stand in for this one
-			before=$(find "$ANIME/$req_show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
+			before=$(progress_count "$ANIME/$req_show")
 			SHOW_NAME="$req_show" GLOSSARY_FILE="$GLOSS" REQUIRE_ENG="$req_eng" COMPUTE_TYPE="${COMPUTE_TYPE:-int8}" \
 				GENERATE_ONLY_RE="$req_gen_re" FORCE_REDO="$req_force" REQUEST_SINCE="$req_since" RUN_REPORT="$req_report" \
 				python3 -m dubtitlerr.pipeline.generate --root "$ANIME/$req_show" </dev/null && rc=0 || rc=$?
-			after=$(find "$ANIME/$req_show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
+			after=$(progress_count "$ANIME/$req_show")
 			[ "$rc" = "0" ] && break
 			if [ "$after" -le "$before" ]; then
 				echo "GENERATE stalled on request $req_path (rc=$rc) — moving on"
@@ -444,13 +454,13 @@ while :; do
 				break
 			fi
 			attempt=$((attempt + 1))
-			before=$(find "$ANIME/$show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
+			before=$(progress_count "$ANIME/$show")
 			# `&& rc=0 || rc=$?` (not a bare command + `rc=$?` on the next line) so a nonzero
 			# exit from generate.py doesn't trip `set -e` and kill the container before the
 			# crash-resume logic below ever sees it — while still capturing the real exit code.
 			SHOW_NAME="$show" GLOSSARY_FILE="$GLOSS" REQUIRE_ENG="${REQUIRE_ENG:-1}" COMPUTE_TYPE="${COMPUTE_TYPE:-int8}" \
 				python3 -m dubtitlerr.pipeline.generate --root "$ANIME/$show" </dev/null && rc=0 || rc=$?
-			after=$(find "$ANIME/$show" \( -name "*.eng.dubtitles.srt" -o -name "*.dubtitles.fail" \) 2>/dev/null | wc -l)
+			after=$(progress_count "$ANIME/$show")
 			[ "$rc" = "0" ] && break
 			if [ "$after" -le "$before" ]; then
 				echo "GENERATE stalled on $show (rc=$rc) — moving on"

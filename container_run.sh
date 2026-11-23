@@ -10,7 +10,7 @@
 #
 # SOFT STOP. The host stops the container with `docker stop`, i.e. SIGTERM to PID 1 and,
 # after the grace period, SIGKILL -- and a SIGKILL during transcription leaves a permanent
-# <stem>.dubtitles.fail poison marker. So this script is a supervisor, not an exec: on
+# <stem>.dubtitles.fail poison marker (a `fail` row in the artifact store). So this script is a supervisor, not an exec: on
 # SIGTERM/SIGINT it only touches $STOP_FLAG. gen_loop.sh, merge_pass.sh and generate.py
 # check the flag BETWEEN units of work, finish the unit in flight, and exit; the signal is
 # never forwarded to them (only to the stateless review server).
@@ -146,7 +146,7 @@ merge_pid=$!
 # review server in the background. [S-8]: its failure must not take down the container, so
 # it is a restart loop inside a subshell rather than a bare launch -- a port already in use
 # or an unwritable token directory is an annoyance to be logged and retried, never an outage
-# that stops the GPU sweep mid-episode and leaves a .dubtitles.fail poison marker behind.
+# that stops the GPU sweep mid-episode and leaves a fail poison marker in the store behind.
 # The generate loop below is what keeps the container alive. The review server is stateless,
 # so unlike the other loops it IS killed on SIGTERM (the subshell's TERM trap does it) and is
 # not restarted once the stop flag exists.

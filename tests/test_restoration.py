@@ -15,6 +15,9 @@ import os
 import re
 import shutil
 
+import store_seed
+
+from dubtitlerr.core import artifact_store
 from dubtitlerr.pipeline import presentation, publish_gate, restoration
 
 ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts")
@@ -212,14 +215,14 @@ def _fake_model(prompt, n_words):
 def test_repass_stamps_a_delivered_episode_once(tmp_path, monkeypatch):
     stem = _stem(tmp_path)
     shutil.copy(E86_ASS, stem + ".eng.dubtitles.ass")
-    shutil.copy(E86_WORDS, stem + ".dubtitles.words.json")
-    open(stem + ".dubtitles.done", "w").write("{}")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(E86_WORDS)))
+    artifact_store.put_json(stem, "done", {})
 
     monkeypatch.setattr(restoration, "_ask", _fake_model)
     first = restoration.apply_episode(stem)
     assert first["outcome"] == "restored", first
     assert restoration.is_stale(stem) is False
-    stamp = json.load(open(stem + restoration.STAMP_SUFFIX))
+    stamp = artifact_store.get_json(stem, "restoration")
     assert stamp["epoch"] == restoration.RESTORATION_EPOCH
 
     delivered = open(stem + ".eng.dubtitles.ass", encoding="utf-8").read()
@@ -231,21 +234,21 @@ def test_repass_stamps_a_delivered_episode_once(tmp_path, monkeypatch):
 def test_an_unreachable_model_keeps_the_bytes_safe_and_leaves_the_pass_unstamped(tmp_path, monkeypatch):
     stem = _stem(tmp_path)
     shutil.copy(E86_ASS, stem + ".eng.dubtitles.ass")
-    shutil.copy(E86_WORDS, stem + ".dubtitles.words.json")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(E86_WORDS)))
 
     monkeypatch.setattr(restoration, "_ask", lambda p, n: "")
     report = restoration.apply_episode(stem, force=True)
     # Deterministic spacing/style repairs are safe and kept; the model work is not
     # stamped as done, so the next pass retries it.
     assert report["outcome"] == "partial", report
-    assert not os.path.exists(stem + restoration.STAMP_SUFFIX)
+    assert not artifact_store.exists(stem, "restoration")
     assert report["words_preserved"] is True
 
 
 def test_a_gate_refusal_restores_the_original_bytes(tmp_path, monkeypatch):
     stem = _stem(tmp_path)
     shutil.copy(E86_ASS, stem + ".eng.dubtitles.ass")
-    shutil.copy(E86_WORDS, stem + ".dubtitles.words.json")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(E86_WORDS)))
     original = open(stem + ".eng.dubtitles.ass", encoding="utf-8").read()
 
     monkeypatch.setenv("PRESENTATION_REPASS", "0")
@@ -271,7 +274,7 @@ def test_a_refusal_the_input_already_carried_keeps_the_restoration(tmp_path, mon
     thrown away by a refusal this stage never introduced."""
     stem = _stem(tmp_path)
     shutil.copy(JJK_E12_ASS, stem + ".eng.dubtitles.ass")
-    shutil.copy(JJK_E12_WORDS, stem + ".dubtitles.words.json")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(JJK_E12_WORDS)))
     monkeypatch.setenv("PRESENTATION_REPASS", "0")
     monkeypatch.setattr(restoration, "_ask", lambda prompt, n: "")
 

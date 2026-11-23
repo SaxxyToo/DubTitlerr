@@ -30,7 +30,7 @@ def atomic_write(path, render, mode=SIDECAR_MODE, newline=None, fsync=False, qui
     """Write ``path`` through a temp file in the same directory plus os.replace -- the
     discipline qc.write and glossary_acquire._write_json already follow.
 
-    process() clears the in-flight .dubtitles.fail marker as soon as transcription
+    process() clears the in-flight fail poison row as soon as transcription
     finishes, BEFORE the srt and conf are written, so a plain open(path, "w") that dies
     mid-loop leaves a TRUNCATED file with no marker behind it: the default SKIP_IF_SRT=1
     already-srt guard reads that as a finished episode on the next sweep and mux embeds a
