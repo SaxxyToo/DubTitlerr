@@ -194,7 +194,12 @@ control path.
 
 ## Per-episode files
 
-All are written beside the video, sharing its basename. The merged `.ass` keeps the same `...eng.dubtitles.*` name, so it still shows up as the Dubtitles track with signs included. If the sidecar came from subgen with `SKIP_IF_EXTERNAL_SUBTITLES_EXIST`, replacing the `.srt` with the merged `.ass` does not trigger a re-transcribe loop.
+Only three things belong beside the video: the media itself, the delivered subtitle
+(`.eng.dubtitles.srt` / `.eng.dubtitles.ass`, and whatever `SIDECAR_SUFFIX` names), and
+nothing else. Everything else in the table below is an **internal artifact**: it is moving to
+the central store described under [Internal artifact store](#internal-artifact-store-p39), and
+a kind stays in this table only until its writer and every reader are migrated in the same
+change. The merged `.ass` keeps the same `...eng.dubtitles.*` name, so it still shows up as the Dubtitles track with signs included. If the sidecar came from subgen with `SKIP_IF_EXTERNAL_SUBTITLES_EXIST`, replacing the `.srt` with the merged `.ass` does not trigger a re-transcribe loop.
 
 | Suffix                           | Written by                                                   | Read by                                      | Contents                                                                                                            |
 | -------------------------------- | ------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -213,6 +218,38 @@ All are written beside the video, sharing its basename. The merged `.ass` keeps 
 | `.dubtitles.repair-summary.json` | `repair.py`                                                  | `mux.py`                                     | Targets, repaired, skipped, latency, model, rules, and `anchor_mode`                                                |
 | `.dubtitles.unresolved.jsonl`    | `unresolved.py`                                              | `unresolved.py`, `review_server.py`          | Rejections awaiting human triage (the review queue)                                                                 |
 | `.dubtitles.mux.log`             | `mux.py`                                                     | -                                            | Tracks dropped, defaults set                                                                                        |
+
+### Internal artifact store (P39)
+
+Every `.dubtitles.*` file in the table above (not the `.eng.dubtitles.*` deliverables) is an
+internal artifact. They live in one SQLite database in the config volume:
+
+    $CONFIG_DIR/artifacts.db          (mode 0600, WAL; $ARTIFACT_STORE overrides the path)
+
+Schema: `artifacts(stem, kind, payload, meta, updated_at)`, primary key `(stem, kind)`. `stem`
+is the episode path without its extension — the same key the pipeline already uses for
+`common.out_for` — and `kind` is the suffix class (`conf`, `words`, `stages`, `done`,
+`unresolved`, …). The database is part of the config volume, so it is included in whatever
+backs that volume up. There is no service to run and no port to open.
+
+Why: the media tree used to carry 11–13 artifacts per episode (~8,477 files, 316 MB, measured
+2026-11-22). It is NFS-backed, so each entry also costs scan, sweep and backup metadata
+traffic. The store keeps the same information with one file in an already-persisted volume.
+
+One CLI, `python3 -m dubtitlerr.core.artifact_store`, owns storage and migration. Every
+mutating subcommand is a **dry run unless `--apply` is passed**:
+
+| Subcommand | Purpose |
+| ---------- | ------- |
+| `sweep ROOT` | Remove the orphan classes from the media tree: `*.stale`, `*.bak` (including `*.pre-gate-fix.bak`), `*.dubtitles.mux.log`, `*.dubtitles.mux-recovery`, `*.dubtitles.fail.archived-*`. Never touches a deliverable |
+| `import ROOT` | Copy every internal artifact under `ROOT` into the store, then remove the file. Idempotent: a second run imports nothing. A crash mid-run can only duplicate, never lose |
+| `export [ROOT]` | Write store rows back out as `<stem><suffix>` files, byte for byte. The reversibility belt; rows are kept |
+| `census ROOT` | Count artifacts in a tree and in the store |
+| `stems --kind K [--root R]` | Print the stems holding one kind — the shell loops' replacement for `find -name` |
+| `has / get / put` | Existence check, payload to stdout, payload from stdin for scripts |
+
+`import --apply` is the point of no return for files; run `export --apply` to undo it. Run
+`sweep` before `import`, so junk is deleted rather than migrated.
 
 A `.stale` suffix is appended to prior-version output during a version upgrade, e.g.
 `.eng.dubtitles.srt.stale`. The `.dubtitles.done` stamp is the only already-done signal: an embedded Dubtitles track alone does not count, so episodes muxed before stamps existed regenerate on the first sweep. Run `scripts/migrate_write_v1_stamps.py` first (dry run by default, `--apply` to write); it writes sidecar stamps only, never touches media, and never overwrites an existing stamp.
