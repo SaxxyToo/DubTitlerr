@@ -1209,7 +1209,18 @@ def scope_report(files, since, statuses):
     request's done/failed decision is made from this (review_requests.verdict), never from
     generate's exit code alone: measured 2026-11-18, a forced request finished "done" in nine
     minutes having produced nothing."""
-    rep = {"scope": len(files), "forced": _force_redo(), "since": since, "rebuilt": 0, "delivered": 0, "awaiting_merge": 0}
+    rep = {
+        "scope": len(files),
+        "forced": _force_redo(),
+        "since": since,
+        "rebuilt": 0,
+        "delivered": 0,
+        "awaiting_merge": 0,
+        # The episodes a .dubtitles.fail marker blocked, in full: review_requests.verdict
+        # turns this into the failed request's remedy ("clear-crash <episode>"), and the
+        # listing here is the only place that names them for that message.
+        "crash_marked": [],
+    }
     not_done = {}
     for v in files:
         stem = os.path.splitext(v)[0]
@@ -1229,6 +1240,7 @@ def scope_report(files, since, statuses):
             reason = "still delivered from an earlier run"
         elif os.path.exists(stem + ".dubtitles.fail"):
             reason = "prior crash (.dubtitles.fail)"
+            rep["crash_marked"].append(v)
         elif os.path.exists(stem + NO_SPEECH_SUFFIX):
             reason = "endpoint gave up (.dubtitles.no-speech)"
         else:

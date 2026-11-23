@@ -203,11 +203,11 @@ All are written beside the video, sharing its basename. The merged `.ass` keeps 
 | `.dubtitles.conf.json`           | `generate.py`, `repair.py`                                   | `repair.py`, `glossary_acquire.py`, `mux.py` | Per-cue `avg_logprob` and `no_speech_prob`                                                                          |
 | `.dubtitles.words.json`          | `generate.py`                                                | `generate.py`                                | Per-word confidences and audio duration, plus the decoder identity (`backend`, `model`) it was produced under; lets a text-tier re-run skip the GPU |
 | `.dubtitles.done`                | `common.py`, `mux.py`                                        | `generate.py`, `mux.py`                      | Completion stamp: muxed size, mtime, tier versions, decoder identity (`asr_backend`, `asr_model`)                    |
-| `.dubtitles.fail`                | `generate.py`                                                | `generate.py`                                | Poison marker after a hard crash. Delete it to retry. Stopping the container no longer leaves one (0.2.2 and later) |
+| `.dubtitles.fail`                | `generate.py`                                                | `generate.py`, `review_requests.py`          | Poison marker while an episode is in flight / after a hard crash. Generate refuses the episode and a request containing it fails; see [Crash-marked episodes](#crash-marked-episodes) |
 | `.dubtitles.stages.json`         | `repair.py`, `dub_signs_merge.py`, `mux.py`, `merge_pass.sh` | `merge_pass.sh`, `mux.py`                    | One outcome per stage (repair, signs, mux). See [Stage outcomes](#stage-outcomes)                                   |
 | `.dubtitles.mux-recovery`        | `mux.py`                                                     | `mux.py`, the `deploy/` close unit           | Written when a failed cross-device copy may have damaged the episode. While it exists, mux refuses that episode     |
 | `.muxtmp.mkv.recovered`          | `mux.py`                                                     | you                                          | The complete muxed file that failed copy kept. The marker names its path                                            |
-| `.dubtitles.crash.json`          | `generate.py`                                                | -                                            | Exception type, message and time from that crash                                                                    |
+| `.dubtitles.crash.json`          | `generate.py`                                                | `review_requests.py`                         | Exception type, message and time from that crash; read by the `crash-marked` listing          |
 | `.dubtitles.qc.json`             | `generate.py`                                                | `mux.py`                                     | Quality counters, cps quantiles, layout violations, and duration flags (schema version 5: overlong and drip_chain)  |
 | `.dubtitles.repair.csv`          | `repair.py`                                                  | -                                            | Audit trail: original, repaired, reference, latency                                                                 |
 | `.dubtitles.repair-summary.json` | `repair.py`                                                  | `mux.py`                                     | Targets, repaired, skipped, latency, model, rules, and `anchor_mode`                                                |
@@ -223,6 +223,31 @@ Per **show** rather than per episode: `.lastrun.json` and the glossary's
 Beside each glossary: `<glossary>.json.lock` (an advisory lock; the file is harmless to delete),
 `<glossary>.json.review-pending` (answers a human gave while a stage held the lock, applied at the next `--review`)
 and `<glossary>.json.review-pending.bad` (a pending file that did not parse; kept, never trusted).
+
+### Crash-marked episodes
+
+`generate.py` writes `<stem>.dubtitles.fail` before it starts transcribing an episode and removes it
+once that episode's words are written. A process killed hard — a redeploy, a restart, a power cut —
+leaves the marker behind, and every later pass refuses that episode (`skip-prior-crash`). Stopping
+the container softly no longer leaves one (0.2.2 and later), so a marker left by a kill means the
+episode needs one recovery step.
+
+A request whose scope contains a marked episode is filed **failed**, never "done with a gap": the
+episode has no transcript, and calling the request done would hide that. Its message names the
+blocked episodes and the remedy, and `crash-marked` is the listing the message points at:
+
+```sh
+python3 -m dubtitlerr.review.review_requests crash-marked [LIBRARY_ROOT]
+python3 -m dubtitlerr.review.review_requests clear-crash [--root LIBRARY_ROOT] EPISODE [EPISODE ...]
+```
+
+`crash-marked` walks the library once, prints one `<stem>` per marker (tab, then the exception from
+`<stem>.dubtitles.crash.json` when generate recorded one) and writes nothing. `clear-crash` removes
+the marker for each episode it is given — the stem, the video path, or the marker path all name the
+same marker — and keeps the crash record as history. `LIBRARY_ROOT` defaults to `ANIME_ROOT`;
+removal is confined to that root and only ever unlinks a `.dubtitles.fail` file, so a mistyped path
+cannot delete media. After clearing, the next request (or the next sweep) processes the episode
+normally.
 
 ### Review queue entries
 
