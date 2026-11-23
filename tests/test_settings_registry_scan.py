@@ -36,6 +36,7 @@ NON_SETTINGS = {
     "DT_CONTAINER_BOOT_ID": "exported by container_run.sh at start, read by common.boot_id()",
     "DT_VERSION": "exported by container_run.sh at start (the boot banner); gen_loop.sh only prints it",
     "PROCESSING_STATE_FILE": "processing-state path override: a file location, not a stored setting (created by the boot path)",
+    "ARTIFACT_STORE": "P39 artifact store path override; a file location, not a stored setting",
     "PROCESSING_POLL_INTERVAL": "processing-state hold cadence: operational loop constant, deliberately not a stored setting",
     "PROCESSING_BOOT_DEFAULT": "container_run.sh internal: the word used only when the state file is deleted mid-run",
     "ACQ_FLAGS": "gen_loop.sh local",
