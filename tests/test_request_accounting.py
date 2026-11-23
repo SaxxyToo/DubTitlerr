@@ -305,3 +305,57 @@ def test_finish_report_cli_decides_and_files_the_request(tmp_path, monkeypatch, 
     rr.main()
     failed = json.load(open(tmp_path / "failed" / "r.json"))
     assert failed["status"] == "failed" and failed["report"]["rebuilt"] == 0
+
+
+# --- crash-marked episodes: named in the failure, recoverable from the app -------------------
+
+
+def test_a_crash_marked_episode_fails_the_request_with_the_remedy_named(tmp_path, monkeypatch):
+    """The 2026-11-23 failure, narrowed to its message: one marked episode in a request failed
+    the whole thing with "1 of 3 episodes not done", a state no one could fix from the app. The
+    verdict is still failed (fail-closed: the episode has no subtitles), but it now names the
+    episode and both commands that clear it."""
+    _show(tmp_path, 3, delivered=False)
+    marker = tmp_path / "Show - S01E02.dubtitles.fail"
+    marker.write_text("")
+
+    calls, rep = _run(tmp_path, monkeypatch, force=False)
+
+    assert calls == ["Show - S01E01.mkv", "Show - S01E03.mkv"], "a marked episode is never transcribed"
+    # The reason string is generate's; rr.CRASH_REASON is the restatement verdict reads, so
+    # this assertion also pins the two together.
+    assert rep["not_done"] == {rr.CRASH_REASON: 1}
+    assert rep["crash_marked"] == [str(tmp_path / "Show - S01E02.mkv")]
+
+    ok, why = rr.verdict(rep, 0)
+    assert not ok
+    assert "1 of 3 episodes not done" in why
+    assert "Show - S01E02" in why
+    assert "crash-marked" in why and "clear-crash" in why
+
+
+def test_clearing_the_marker_lets_the_next_request_process_the_episode(tmp_path, monkeypatch):
+    """The recovery half: list it (rr.crash_marked), clear it (rr.clear_crash), re-fire."""
+    _show(tmp_path, 2, delivered=False)
+    (tmp_path / "Show - S01E02.dubtitles.fail").write_text("")
+    calls, rep = _run(tmp_path, monkeypatch, force=False)
+    assert calls == ["Show - S01E01.mkv"]
+    assert rr.verdict(rep, 0)[0] is False
+
+    assert [e["stem"] for e in rr.crash_marked(str(tmp_path))] == [str(tmp_path / "Show - S01E02")]
+    rr.clear_crash(str(tmp_path / "Show - S01E02.mkv"), str(tmp_path))
+
+    calls, rep = _run(tmp_path, monkeypatch, force=False)
+    assert calls == ["Show - S01E02.mkv"]
+    assert rr.verdict(rep, 0) == (True, None)
+
+
+def test_a_marker_on_an_episode_that_was_never_requested_stays_out_of_the_report(tmp_path, monkeypatch):
+    """The remedy must name the episodes that blocked THIS request, not every marker in the tree."""
+    _show(tmp_path, 2, delivered=False)
+    (tmp_path / "Unrelated - S09E09.dubtitles.fail").write_text("")
+
+    _calls, rep = _run(tmp_path, monkeypatch, force=False)
+
+    assert rep["not_done"] == {}
+    assert rep["crash_marked"] == []
