@@ -9,6 +9,7 @@ import urllib.error
 import pytest
 import repair_ref_stub
 
+from dubtitlerr.core import artifact_store
 from dubtitlerr.pipeline import repair
 
 OK = {"choices": [{"message": {"content": "fixed line"}}]}
@@ -175,7 +176,7 @@ def test_the_summary_reports_transport_retries_only_when_the_budget_is_set(tmp_p
         monkeypatch.setattr(repair, "REPAIR_BACKEND", "openai")
         script(monkeypatch, ConnectionResetError("reset"), OK)
         repair.process(conf)
-        return json.load(open(stem + ".dubtitles.repair-summary.json"))
+        return artifact_store.get_json(stem, "repair-summary")
 
     monkeypatch.setenv("REPAIR_TRANSPORT_RETRIES", "0")
     off = run("off")

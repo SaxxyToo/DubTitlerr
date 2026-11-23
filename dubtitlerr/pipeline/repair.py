@@ -12,9 +12,9 @@ wording where it's plausible, use the subtitle only to resolve the garbled parts
 never copy the subtitle verbatim (dub != sub — localization differs).
 
 Then the ``.srt`` is rewritten from the (possibly repaired) confidence rows and a
-``<stem>.dubtitles.repair.csv`` audit (orig -> repaired) is written. Timing untouched.
-A ``<stem>.dubtitles.repair-summary.json`` (targets/repaired/skipped/latency stats/model(s))
-is written alongside it (V2 A10).
+``repair.csv`` audit (orig -> repaired) is stored in the artifact store. Timing untouched.
+A ``repair-summary`` artifact (targets/repaired/skipped/latency stats/model(s))
+is stored alongside it (V2 A10).
 
 C1: targets are broadened to mid-confidence-AND-lower OR name-suspect lines; the show
 glossary is injected into a STRICT prompt (canonical spellings, never invent/swap a name);
@@ -98,6 +98,7 @@ Requires ffmpeg/ffprobe + pysubs2.  Built with help of Claude (Anthropic).
 
 import csv
 import http.client
+import io
 import json
 import math
 import os
@@ -1547,10 +1548,11 @@ def prior_repairs(stem):
     """How many repairs the LAST run of this episode shipped, from the summary it left.
 
     The summary survives the mux (mux.py removes the srt/ass sidecars, not this), so it is
-    the durable record of whether an episode already carries repaired text."""
+    the durable record of whether an episode already carries repaired text. It lives in the
+    artifact store (kind ``repair-summary``) since P39; an absent or unreadable row reads as
+    zero, exactly like the old missing/corrupt file."""
     try:
-        with open(stem + ".dubtitles.repair-summary.json") as f:
-            return int(json.load(f).get("repaired", 0))
+        return int((artifact_store.get_json(stem, "repair-summary") or {}).get("repaired", 0))
     except Exception:
         return 0
 
@@ -2093,7 +2095,6 @@ def _process_episode(target):
     # passes through repair ships as unwrapped single lines -- which is exactly what
     # the library did until this fix.
     srt_out = out_for(srt)
-    rep_out = out_for(stem + ".dubtitles.repair.csv")
 
     def _render_srt(f):
         i = 0
@@ -2112,9 +2113,13 @@ def _process_episode(target):
         w.writerows(audit)
 
     # Atomic: a crash mid-write must not truncate the shipped srt (SKIP_IF_SRT reads a
-    # truncated file as a finished episode) or the audit csv.
+    # truncated file as a finished episode). The audit csv is an internal artifact and goes
+    # to the central store (P39), rendered through the same csv.writer with newline="" so
+    # its bytes are the ones the old beside-media file had.
     atomic_write(srt_out, _render_srt)
-    atomic_write(rep_out, _render_csv, newline="")
+    rep_buf = io.StringIO(newline="")
+    _render_csv(rep_buf)
+    artifact_store.put_text(stem, "repair.csv", rep_buf.getvalue())
     # A10: per-show repair summary, written alongside the srt/csv
     lat_values = [r["latency_ms"] for r in repaired_lines]
     summary = {
@@ -2170,13 +2175,11 @@ def _process_episode(target):
         "rules": dict(rec.counters),
         "repaired_lines": repaired_lines,
     }
-    summary_out = out_for(stem + ".dubtitles.repair-summary.json")
-    atomic_write(summary_out, lambda f: json.dump(summary, f, indent=2))
-    for p in (srt_out, rep_out, summary_out):
-        try:
-            os.chown(p, MEDIA_UID, MEDIA_GID)
-        except OSError as e:
-            log(f"chown failed for {p}: {e}")
+    artifact_store.put_text(stem, "repair-summary", json.dumps(summary, indent=2))
+    try:
+        os.chown(srt_out, MEDIA_UID, MEDIA_GID)
+    except OSError as e:
+        log(f"chown failed for {srt_out}: {e}")
     # A3. The beta-user shape: dub-only copies, `unanchored_repair` never declared, and no
     # prior repairs -- so guard (c) above cannot fire, since it only protects work that
     # already exists. Every card is skipped and, until this line, the only trace was a

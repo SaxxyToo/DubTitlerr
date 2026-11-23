@@ -956,11 +956,12 @@ def test_delete_broken_hardlinks_is_not_a_silent_noop():
 # --- stage-execution record (2026-08-22) ----------------------------------------------
 
 
-def test_stages_ran_reads_the_sidecars_still_on_disk(tmp_path):
-    """mux stamps AFTER the other stages, while their sidecars are still present. That is
-    the one moment the pipeline can say what actually ran."""
+def test_stages_ran_reads_the_store_and_the_sidecars_still_on_disk(tmp_path):
+    """mux stamps AFTER the other stages, while their evidence is still present. That is
+    the one moment the pipeline can say what actually ran. The repair summary lives in the
+    artifact store (P39); the qc counters are still a beside-media sidecar."""
     stem = str(tmp_path / "ep")
-    open(stem + ".dubtitles.repair-summary.json", "w").write("{}")
+    artifact_store.put(stem, "repair-summary", "{}")
     store_seed.qc(stem + ".dubtitles.qc.json", {"counters": {"restore_runs_sent": 12}})
     got = mux._stages_ran(stem, stem + ".eng.dubtitles.ass")
     assert got["repair"] is True
@@ -977,6 +978,25 @@ def test_stages_ran_omits_what_it_cannot_determine(tmp_path):
     assert got["repair"] is False  # summary absent: repair demonstrably did not run
     assert got["signs_merge"] is False  # muxed from .srt
     assert "punctuation" not in got  # unknowable -> omitted
+
+
+def test_process_stamps_repair_true_from_the_store(tmp_path, monkeypatch):
+    """The done stamp's `repair` flag comes from the store's repair-summary row."""
+    from dubtitlerr.core import common
+
+    v, stem = _real_stamp_setup(tmp_path, monkeypatch)
+    artifact_store.put(stem, "repair-summary", "{}")
+    assert mux.process(str(v), apply=True) == "muxed"
+    assert common.read_stamp(stem + mux.STAMP_SUFFIX)["stages"]["repair"] is True
+
+
+def test_process_stamps_repair_false_when_the_store_has_no_summary(tmp_path, monkeypatch):
+    """A store with no repair-summary row stamps repair=False, never a guessed True."""
+    from dubtitlerr.core import common
+
+    v, stem = _real_stamp_setup(tmp_path, monkeypatch)
+    assert mux.process(str(v), apply=True) == "muxed"
+    assert common.read_stamp(stem + mux.STAMP_SUFFIX)["stages"]["repair"] is False
 
 
 # --- [S-6] the pre-mux review gate -------------------------------------------
