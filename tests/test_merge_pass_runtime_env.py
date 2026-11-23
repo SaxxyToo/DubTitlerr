@@ -16,6 +16,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WATCHED = (
     "REPAIR_UNANCHORED",
     "WHISPER_BEAM_SIZE",
+    "LEN_RATIO_MAX",
     "REQUIRE_ENG",
     "WATCH_QUEUE_PIN",
     "PLEX_TOKEN",
@@ -110,6 +111,14 @@ def test_stored_values_win_over_the_container_environment(harness):
     )
     assert seen is not None, res.stdout + res.stderr
     assert (seen["REPAIR_UNANCHORED"], seen["WHISPER_BEAM_SIZE"], seen["REQUIRE_ENG"]) == ("1", "5", "1")
+
+
+def test_a_repair_value_graduated_in_wave_two_reaches_the_pass(harness):
+    """LEN_RATIO_MAX was read-only in the first wave; a stored value now reaches repair and the report."""
+    seen, res = harness({"LEN_RATIO_MAX": "1.5"}, values={"LEN_RATIO_MAX": 2.0})
+    assert seen is not None, res.stdout + res.stderr
+    assert seen["LEN_RATIO_MAX"] == "2.0"
+    assert read_env_file(harness.config / "merge-effective.env")["LEN_RATIO_MAX"] == "2.0"
 
 
 def test_without_a_store_the_container_environment_stands(harness):

@@ -117,14 +117,48 @@ def test_restart_means_a_server_or_container_scope_and_back():
         assert (entry["applies"] == "restart") == reads_at_boot, key
 
 
-def test_only_first_wave_entries_are_editable_and_secrets_are_flagged():
-    assert {k for k, e in reg.REGISTRY.items() if e["editable"]} == {k for keys in FIRST_WAVE.values() for k in keys}
+# Wave 2: every registry entry the pipeline reads is editable. These are the ones the runtime cannot
+# honour (or does not read at all), so they stay read-only with the reason the Settings row shows.
+HELD_BACK = {
+    "ANIME_ORDER",
+    "DECISIONS_DIR",
+    "REQUESTS_DIR",
+    "SCHEDULE_FILE",
+    "HEARTBEAT_PATH",
+    "RESCAN_INTERVAL",
+    "GLOSSARY_LOCK_WAIT",
+    "WIKI_ALLOW_HTTP",
+    "WIKI_HOST_ALLOW",
+    "ACQUIRE_NO_CACHE",
+    "VERIFY_NO_JOURNAL",
+}
+
+
+def test_every_registry_entry_is_editable_except_the_held_back_and_managed_ones():
+    assert set(reg.READ_ONLY_REASONS) == HELD_BACK
+    editable = {k for k, e in reg.REGISTRY.items() if e["editable"]}
+    expected = {k for k, e in reg.REGISTRY.items() if e["managed_by"] is None and k not in HELD_BACK}
+    assert editable == expected
     assert {k for k, e in reg.REGISTRY.items() if e["secret"] and e["editable"]} == {
         "PLEX_TOKEN",
         "WATCHSTATE_API_KEY",
         "JELLYFIN_API_KEY",
         "WEBHOOK_TOKEN",
     }
+
+
+def test_a_held_back_key_is_read_only_with_a_precise_reason():
+    for key in HELD_BACK:
+        entry = reg.REGISTRY[key]
+        assert entry["editable"] is False, key
+        assert entry["managed_by"] is None, key
+        assert entry["read_only_reason"].strip(), key
+
+
+def test_each_category_gained_editable_keys_that_were_locked_before():
+    """The wave graduates a representative key in every category the report counted as locked."""
+    now = {e["category"] for e in reg.REGISTRY.values() if e["editable"] and not e["first_wave"] and e["managed_by"] is None}
+    assert now == {"general", "transcription", "glossary", "repair", "output", "schedule", "connect", "connections"}
 
 
 def test_validate_accepts_canonical_values_and_rejects_the_rest():
@@ -175,6 +209,7 @@ def test_anime_order_is_read_only_and_not_first_wave():
     entry = reg.REGISTRY["ANIME_ORDER"]
     assert entry["editable"] is False
     assert entry["first_wave"] is False
+    assert "root" in entry["read_only_reason"]
     assert entry["category"] == "schedule"
     assert entry["type"] == "string"
 

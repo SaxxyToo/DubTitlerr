@@ -326,6 +326,26 @@ def _runs(runs_file):
     return [json.loads(line) for line in runs_file.read_text().splitlines()]
 
 
+def test_a_stored_value_graduated_in_wave_two_reaches_the_next_show(tmp_path):
+    """FFMPEG_TIMEOUT was read-only in the first wave; a stored value now reaches the builder and the report."""
+    app = _setup_app(tmp_path)
+    config = tmp_path / "config"
+    _store(config, {"FFMPEG_TIMEOUT": 900})
+    runs = tmp_path / "runs.jsonl"
+    _recording_generate(app, runs, config / "settings.json", "pass", keys=("FFMPEG_TIMEOUT",))
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")],
+        cwd=str(app),
+        env=_loop_env(tmp_path, app, config),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert [r["FFMPEG_TIMEOUT"] for r in _runs(runs)] == ["900", "900"]
+    assert "FFMPEG_TIMEOUT=900" in (config / "effective.env").read_text()
+
+
 def test_a_stored_value_and_secret_reach_the_next_show_and_a_change_applies_to_the_one_after(tmp_path):
     app = _setup_app(tmp_path)
     config = tmp_path / "config"

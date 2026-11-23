@@ -379,9 +379,10 @@ type Entry = {
   secret: boolean;
   managed_by: string | null;
   advanced: boolean;
+  read_only_reason?: string | null;
 };
 
-test('every first-wave setting is editable and every other registry entry is read-only with its value and source', async ({
+test('every registry row is an editable control or read-only with its reason and source', async ({
   page,
 }) => {
   await page.addInitScript(() => localStorage.setItem('dubtitlerr.settings.showAdvanced', '1'));
@@ -416,7 +417,9 @@ test('every first-wave setting is editable and every other registry entry is rea
         expect(row.controls, entry.key).toBe(1);
       } else {
         expect(row.controls, entry.key).toBe(0);
-        expect(row.text, entry.key).toContain(reasons[entry.managed_by ?? ''] ?? 'edit in a later release');
+        expect(row.text, entry.key).toContain(
+          reasons[entry.managed_by ?? ''] ?? entry.read_only_reason ?? 'edit in a later release',
+        );
       }
       expect(row.text, entry.key).toMatch(/Default|From the container|Set here/);
       seen += 1;

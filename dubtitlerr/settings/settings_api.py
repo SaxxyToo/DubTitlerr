@@ -190,6 +190,17 @@ def _write_failure(e):
     return 503, {"error": f"the config volume is not writable ({e.__class__.__name__})"}
 
 
+def _read_only_message(entry):
+    """Why a PUT may not change this key: the surface that owns it, or the registry's own reason."""
+    if entry["managed_by"] == "connections":
+        return "set through a Connection"
+    if entry["managed_by"] == "bootstrap":
+        return "set in the container environment"
+    if entry["managed_by"] == "retired":
+        return "retired: no longer read"
+    return entry.get("read_only_reason") or "edit in a later release"
+
+
 def _validate_values(values):
     """({KEY: ("set"|"reset"|"secret_set"|"secret_clear", canonical)}, {KEY: message}); a secret sent as "" means no change."""
     plan, errors = {}, {}
@@ -198,7 +209,7 @@ def _validate_values(values):
         if entry is None:
             errors[str(key)] = "unknown setting"
         elif not entry["editable"] and not (entry.get("legacy_override") and value is None):
-            errors[key] = "set through a Connection" if entry["managed_by"] == "connections" else "edit in a later release"
+            errors[key] = _read_only_message(entry)
         elif entry["secret"]:
             if value == "":
                 continue
