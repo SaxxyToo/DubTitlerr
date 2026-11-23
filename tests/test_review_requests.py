@@ -905,6 +905,61 @@ def test_cli_unpack(capsys):
     assert "REQUIRE_ENG=1\n" in out
 
 
+def _pending_request(req_dir, *, force_key=True, force=True):
+    """A pending request file shaped like create() writes, so `next`/`unpack` see it."""
+    path = req_dir / "20261122T100000.000000Z-abcd1234.json"
+    doc = {
+        "id": "20261122T100000.000000Z-abcd1234",
+        "show": "Frieren",
+        "generate_only_re": "",
+        "require_eng": None,
+        "status": "pending",
+    }
+    if force_key:
+        doc["force"] = force
+    path.write_text(json.dumps(doc))
+    return path
+
+
+def test_cli_next_carries_force_so_unpack_exports_force_redo(tmp_path, capsys):
+    """force=true must survive the next -> unpack chain gen_loop.sh drives.
+
+    gen_loop.sh reads FORCE_REDO from unpack's output and puts it in generate's environment.
+    While `next` omitted the field, a request created with force=true reached generate with
+    FORCE_REDO empty: every episode read as delivered, todo=0, and the request no-op'd as
+    "nothing to transcribe (all done)".
+    """
+    req_dir = tmp_path / "requests"
+    req_dir.mkdir()
+    _pending_request(req_dir)
+
+    with patch.object(sys, "argv", ["review_requests.py", "next", str(req_dir)]):
+        review_requests.main()
+    req_json = capsys.readouterr().out.strip()
+    assert json.loads(req_json)["force"] is True
+
+    with patch.object(sys, "argv", ["review_requests.py", "unpack", req_json]):
+        review_requests.main()
+    assert "FORCE_REDO=1\n" in capsys.readouterr().out
+
+
+def test_cli_next_defaults_force_off(tmp_path, capsys):
+    """An unforced (or pre-force field) request must still unpack as FORCE_REDO empty."""
+    req_dir = tmp_path / "requests"
+    req_dir.mkdir()
+    _pending_request(req_dir, force_key=False)
+
+    with patch.object(sys, "argv", ["review_requests.py", "next", str(req_dir)]):
+        review_requests.main()
+    req_json = capsys.readouterr().out.strip()
+    assert json.loads(req_json)["force"] is False
+
+    with patch.object(sys, "argv", ["review_requests.py", "unpack", req_json]):
+        review_requests.main()
+    assert "FORCE_REDO=\n" in capsys.readouterr().out
+
+
+
 def test_h1_safe_grammar_refuses_catastrophic_and_arbitrary_regex():
     from dubtitlerr.review.review_requests import Refused, validate
 

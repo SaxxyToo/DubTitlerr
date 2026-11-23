@@ -1131,6 +1131,51 @@ else:
     assert not (requests_dir / "done" / "20261018T100000Z-f0f0f0f0.json").exists()
 
 
+def test_force_is_exported_to_generate_as_force_redo(tmp_path):
+    # Measured 2026-11-22 on v0.4.19: a request created with force=true ran and printed
+    # `todo=0` -> "nothing to transcribe". `next` dropped the field, so unpack printed
+    # FORCE_REDO= and generate never saw the request's force. This drives the real loop.
+    app = _setup_app(tmp_path)
+    seen = tmp_path / "force.txt"
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(f"""\
+import json, os, pathlib
+if os.environ.get("RUN_REPORT"):
+    pathlib.Path(r"{seen}").write_text(os.environ.get("FORCE_REDO", "<absent>"))
+    pathlib.Path(os.environ["RUN_REPORT"]).write_text(json.dumps({{"scope": 1, "forced": True, "rebuilt": 1,
+        "delivered": 0, "awaiting_merge": 0, "not_done": {{}}}}))
+else:
+    pathlib.Path(os.environ["STOP_FLAG"]).touch()
+""")
+    env, requests_dir = _request_env(tmp_path, app, "20261122T100000Z-f0f0f0f0", force=True)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert seen.read_text() == "1", "the request's force must reach generate as FORCE_REDO=1"
+    done = json.loads((requests_dir / "done" / "20261122T100000Z-f0f0f0f0.json").read_text())
+    assert done["status"] == "done" and done["report"]["rebuilt"] == 1
+
+
+def test_an_unforced_request_reaches_generate_with_force_redo_empty(tmp_path):
+    app = _setup_app(tmp_path)
+    seen = tmp_path / "force.txt"
+    (app / "dubtitlerr" / "pipeline" / "generate.py").write_text(f"""\
+import json, os, pathlib
+if os.environ.get("RUN_REPORT"):
+    pathlib.Path(r"{seen}").write_text(os.environ.get("FORCE_REDO", "<absent>"))
+    pathlib.Path(os.environ["RUN_REPORT"]).write_text(json.dumps({{"scope": 1, "forced": False, "rebuilt": 0,
+        "delivered": 1, "awaiting_merge": 0, "not_done": {{}}}}))
+else:
+    pathlib.Path(os.environ["STOP_FLAG"]).touch()
+""")
+    env, _requests_dir = _request_env(tmp_path, app, "20261122T100100Z-0f0f0f0f", force=False)
+    proc = subprocess.run(
+        ["sh", str(REPO / "gen_loop.sh")], env=env, cwd=env["APP_DIR"], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert seen.read_text() == ""
+
+
 def test_every_resume_pass_of_a_request_shares_one_start_time(tmp_path):
     app = _setup_app(tmp_path)
     seen = tmp_path / "since.txt"

@@ -1267,7 +1267,10 @@ renames, moves or changes them. The two surfaces share one role table and one au
 - **Commands.** `run.request` takes the same body as `POST /api/requests` (`show` required;
   `season`, `episode_re`, `require_eng`, `webhook`, `force` optional) and returns that route's status
   code through the envelope `{"name", "ok", "result"}`, including the 409 for an identical pending
-  request. `system.restart` writes the soft-stop flag. `system.start`, `system.pause` and
+  request. `force: true` means *start over*: every in-scope episode is rebuilt from its cached ASR
+  words (the stored `.dubtitles.words.json`; no re-transcription unless the words are missing),
+  overriding the freshness stamps, and the run's summary line reports `forced=1 rebuilt=N`. A forced
+  request that rebuilds nothing is filed as failed. `system.restart` writes the soft-stop flag. `system.start`, `system.pause` and
   `system.stop` persist the same processing state the Settings panel controls (start clears a
   stale stop flag; stop also writes it). `notification.test` needs `params.name`.
 - **History paging.** `limit` defaults to 25 and must be 1 to 200; `offset` is 0 or more. A value out
