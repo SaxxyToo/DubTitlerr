@@ -89,6 +89,13 @@ ignore = ["E701", "E702"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["SIM115"]
+# review_apply.py's single site stays out of the line-level baseline deliberately: line 95 carries a
+# dismissed CodeQL py/path-injection alert (#27, false positive -- the stem is validated upstream by
+# review_server._resolve), and editing that line makes CodeQL report the alert as *new* for the PR
+# ("new alerts in code changed by this pull request"), which fails the CodeQL check. A directive on
+# that line would cost more than it buys, so the file is exempt instead. The same trap applies to any
+# line carrying a dismissed alert: prefer leaving such a line byte-identical to main.
+"dubtitlerr/review/review_apply.py" = ["SIM115"]
 
 [tool.ruff.format]
 # `ruff format --check .` is a gate in CI and scripts/check.sh. This exclude list is a

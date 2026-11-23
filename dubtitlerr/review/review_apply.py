@@ -92,7 +92,7 @@ def apply_episode(stem: str, store: dict, apply: bool = False) -> dict:
     repair.py re-runs afterwards and applies the verdicts through the full pair key."""
     res = {"stem": stem, "changed": 0}
     try:
-        rows = json.load(open(stem + CONF_SUFFIX, encoding="utf-8"))  # noqa: SIM115
+        rows = json.load(open(stem + CONF_SUFFIX, encoding="utf-8"))
     except (OSError, ValueError):
         res["error"] = "no conf.json"
         return res
