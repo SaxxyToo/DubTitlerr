@@ -298,7 +298,11 @@ A couple of stray **letters** in the token (the scream's leading `A`, two closin
 disqualify it, and neither does punctuation: Berserk S01E16 ships `'A' + 'H'×57 + '!'` and its
 exclamation mark rides on the run rather than competing with it. That is pure layout: strip the
 breaks and the card's text is byte-identical, and its timing does not move. The audit records it as
-`action: "wrap-run"`. The break cannot rescue a card whose **total** is over 88 characters (a
+`action: "wrap-run"`. A token that carries a **word in front of a long run** wraps the same way:
+Demon Slayer S01E19 ships `'DOWN' + 'N'×48` (52 characters, four distinct letters, so the stray
+count reads it as a word), and any token holding a run of at least 20 identical characters in a
+row breaks inside that run — that card's 49-N run splits 27 / 25 characters — so the word stays
+whole on the first line. The break cannot rescue a card whose **total** is over 88 characters (a
 446-character run is over even wrapped), and a token that *alternates* rather than repeats
 (`Kekekekeke…`, whose minority is half the token) is not a run — both of those refusals stand.
 
