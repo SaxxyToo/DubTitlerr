@@ -13,8 +13,10 @@ GPU, no webrtcvad; the real-show run (T12) is a separate, deferred integration s
 import json
 
 import pytest
+import store_seed
 
 import tools.timing_compare as tc
+from dubtitlerr.core import artifact_store
 
 # ============================================================================
 # T2 -- CLI scaffold + walking
@@ -137,24 +139,26 @@ def test_load_conf_missing_file_is_no_conf(tmp_path):
 
 def test_load_conf_malformed_json_is_bad_conf(tmp_path):
     p = tmp_path / "bad.dubtitles.conf.json"
-    p.write_text("{not valid json")
+    artifact_store.put_text(str(p)[: -len(tc.CONF_SUFFIX)], "conf", "{not valid json")
     assert tc.load_conf(str(p)) == ("bad-conf", [])
 
 
 def test_load_conf_non_list_top_level_is_bad_conf(tmp_path):
     p = tmp_path / "bad2.dubtitles.conf.json"
-    p.write_text(json.dumps({"oops": "not a list"}))
+    store_seed.conf(str(p), {"oops": "not a list"})
     assert tc.load_conf(str(p)) == ("bad-conf", [])
 
 
-def test_load_conf_permission_error_is_bad_conf(tmp_path, monkeypatch):
+def test_load_conf_unreadable_store_is_bad_conf(tmp_path, monkeypatch):
+    """A store that cannot be read is this episode's bad conf, not the run's -- the sweep
+    carries on and reports the episode."""
     p = tmp_path / "perm.dubtitles.conf.json"
-    p.write_text("[]")
+    store_seed.conf(str(p), [])
 
     def raise_perm(*a, **kw):
         raise PermissionError("denied")
 
-    monkeypatch.setattr("builtins.open", raise_perm)
+    monkeypatch.setattr(tc.artifact_store, "get_json", raise_perm)
     assert tc.load_conf(str(p)) == ("bad-conf", [])
 
 
@@ -167,7 +171,7 @@ def test_load_conf_drops_bad_rows_keeps_good_ones(tmp_path):
         {"start": 6.0, "end": 7.0, "avg_logprob": -0.1, "no_speech_prob": 0.05, "text": "ok2", "flag": "low_conf"},
     ]
     p = tmp_path / "ep.dubtitles.conf.json"
-    p.write_text(json.dumps(rows))
+    store_seed.conf(str(p), rows)
     status, cleaned = tc.load_conf(str(p))
     assert status == "ok"
     assert [r["text"] for r in cleaned] == ["ok", "ok2"]
@@ -175,7 +179,7 @@ def test_load_conf_drops_bad_rows_keeps_good_ones(tmp_path):
 
 def test_load_conf_empty_list_is_ok_zero_rows(tmp_path):
     p = tmp_path / "empty.dubtitles.conf.json"
-    p.write_text("[]")
+    store_seed.conf(str(p), [])
     assert tc.load_conf(str(p)) == ("ok", [])
 
 
@@ -419,7 +423,7 @@ def test_process_episode_no_conf(tmp_path):
 def test_process_episode_bad_conf(tmp_path):
     video = tmp_path / "ep.mkv"
     video.write_bytes(b"")
-    (tmp_path / "ep.dubtitles.conf.json").write_text("not json")
+    artifact_store.put_text(str(tmp_path / "ep"), "conf", "not json")
     res = tc.process_episode(str(video), {"eng"}, tolerance=0.3)
     assert res == {"video": str(video), "status": "bad-conf"}
 
@@ -427,8 +431,9 @@ def test_process_episode_bad_conf(tmp_path):
 def test_process_episode_no_reference(tmp_path, monkeypatch):
     video = tmp_path / "ep.mkv"
     video.write_bytes(b"")
-    (tmp_path / "ep.dubtitles.conf.json").write_text(
-        json.dumps([{"start": 1.0, "end": 2.0, "avg_logprob": -0.1, "no_speech_prob": 0.05, "text": "hi"}])
+    store_seed.conf(
+        str(tmp_path / "ep.dubtitles.conf.json"),
+        [{"start": 1.0, "end": 2.0, "avg_logprob": -0.1, "no_speech_prob": 0.05, "text": "hi"}],
     )
     monkeypatch.setattr(tc, "select_reference_track", lambda video, lang: None)
     res = tc.process_episode(str(video), {"eng"}, tolerance=0.3)
@@ -438,7 +443,7 @@ def test_process_episode_no_reference(tmp_path, monkeypatch):
 def test_process_episode_empty_conf_is_analyzed_zero_cards(tmp_path, monkeypatch):
     video = tmp_path / "ep.mkv"
     video.write_bytes(b"")
-    (tmp_path / "ep.dubtitles.conf.json").write_text("[]")
+    store_seed.conf(str(tmp_path / "ep.dubtitles.conf.json"), [])
     ref_track = {"stream_index": 2, "codec": "ass", "cue_count": 100, "density_score": 0.9}
     monkeypatch.setattr(tc, "select_reference_track", lambda video, lang: (ref_track, []))
     res = tc.process_episode(str(video), {"eng"}, tolerance=0.3)
@@ -455,7 +460,7 @@ def test_process_episode_analyzed_classifies_and_aligns_cards(tmp_path, monkeypa
         {"start": 10.5, "end": 11.5, "avg_logprob": -0.1, "no_speech_prob": 0.05, "text": "on cue"},
         {"start": 50.0, "end": 51.0, "avg_logprob": -0.1, "no_speech_prob": 0.05, "text": "in gap"},
     ]
-    (tmp_path / "ep.dubtitles.conf.json").write_text(json.dumps(rows))
+    store_seed.conf(str(tmp_path / "ep.dubtitles.conf.json"), rows)
     # cue at 10.5 (matches card 1 exactly); nothing near 50.0 -> card 2 stays in-gap
     ref_track = {"stream_index": 3, "codec": "ass", "cue_count": 1, "density_score": 1.0}
     cue_intervals = [(10.5, 11.5, "cue text")]

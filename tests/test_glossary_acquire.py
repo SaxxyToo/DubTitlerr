@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import store_seed
 
 from dubtitlerr.glossary import glossary_acquire as ga
 
@@ -38,9 +39,9 @@ def test_wilson_lower_of_empty_cluster_is_zero():
 
 
 def _write_conf(tmp_path, name, texts):
-    p = tmp_path / f"{name}.dubtitles.conf.json"
-    p.write_text(json.dumps([{"start": i, "end": i + 1, "text": t} for i, t in enumerate(texts)]))
-    return p
+    path = str(tmp_path / f"{name}.dubtitles.conf.json")
+    store_seed.conf(path, [{"start": i, "end": i + 1, "text": t} for i, t in enumerate(texts)])
+    return path
 
 
 def test_harvest_counts_capitalised_tokens_and_tracks_midsentence(tmp_path):

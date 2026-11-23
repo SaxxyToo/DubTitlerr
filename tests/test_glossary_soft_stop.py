@@ -11,6 +11,7 @@ import json
 import sys
 
 import pytest
+import store_seed
 
 from dubtitlerr.core import acquire_cache
 from dubtitlerr.glossary import glossary_acquire as ga
@@ -187,8 +188,9 @@ def _acquire_world(tmp_path, monkeypatch):
     text = ["Hey Smokey.", "Smokey again.", "Smokey thrice.", "Hey Deccan.", "Deccan again.", "Deccan thrice."]
     text += ["Smoker is here.", "Smoker again.", "Smoker thrice.", "Smoker once more."] * 2
     text += ["Decken is here.", "Decken again.", "Decken thrice.", "Decken once more."] * 2
-    (tmp_path / "Ep01.dubtitles.conf.json").write_text(
-        json.dumps([{"text": t, "start": i, "end": i + 1} for i, t in enumerate(text * 6)])
+    store_seed.conf(
+        str(tmp_path / "Ep01.dubtitles.conf.json"),
+        [{"text": t, "start": i, "end": i + 1} for i, t in enumerate(text * 6)],
     )
     monkeypatch.setattr(ga.glossary_verify, "resolve_wiki", lambda *a, **k: "https://x/api.php")
     monkeypatch.setattr(ga.glossary_verify, "fetch_titles", lambda *a, **k: ["Smoker", "Decken"])

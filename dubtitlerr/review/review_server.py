@@ -321,30 +321,16 @@ def known_stems() -> list:
         if not os.path.isdir(root):
             continue
         real_root = os.path.realpath(root)
-        for dp, _dns, fs in os.walk(root):
-            for f in fs:
-                if not f.endswith(CONF_SUFFIX):
-                    continue
-                full = os.path.join(dp, f)
-                # os.walk does not follow symlinked DIRECTORIES but does list symlinked
-                # FILES. The media tree is deliberately group-writable, so a planted
-                # symlink would otherwise put a path outside the roots into the allow-list
-                # that every route trusts -- and handle_apply would follow it back out.
-                if not os.path.realpath(full).startswith(real_root + os.sep):
-                    continue
-                out.append(full[: -len(CONF_SUFFIX)])
-        # Episodes whose queue row is in the store but whose conf.json the walk did not see
-        # are still reviewable -- and once the conf kind moves into the store (P39-B2) this
-        # becomes the walk's only discovery. Same symlink rule: the store key is a path
-        # written by the pipeline, not a client's, but it still may not point outside a root.
-        try:
-            for stem in artifact_store.stems(root=root, kind=unresolved.KIND):
-                if os.path.realpath(stem).startswith(real_root + os.sep):
-                    out.append(stem)
-        except Exception:
-            # A store that cannot be read contributes no extra stems; the conf walk still does.
-            pass
-    stems = sorted(set(out))
+        # The conf is a store row now (P39), so the episodes come from the store rather than
+        # a walk. The containment check still applies: a stem is a FILE PATH and this list
+        # is the allow-list every route trusts. os.walk used to list symlinked FILES in a
+        # group-writable tree; a store key is no different, so a stem that realpath-resolves
+        # outside the root is dropped here too.
+        for stem in artifact_store.stems(root, kind="conf"):
+            if not os.path.realpath(stem).startswith(real_root + os.sep):
+                continue
+            out.append(stem)
+    stems = sorted(out)
     # Filled together, dropped together. Nothing else expires a queue entry, so a re-repaired
     # episode would otherwise keep its old queue until the container restarted.
     _QUEUE_CACHE.clear()
@@ -1019,11 +1005,10 @@ def preview_audio(body: dict) -> tuple:
         entry = entries[index]
         if body.get("id") != entry_id(entry):
             return 409, {"error": "stale review entry; reload this episode"}
-        conf_path = Path(stem + CONF_SUFFIX)
+        conf_path = Path(stem)
         if not any(conf_path.resolve().is_relative_to(Path(root).resolve()) for root in ROOTS):
             return 404, {"error": "episode evidence unavailable"}
-        with conf_path.open(encoding="utf-8") as f:
-            cards = json.load(f)
+        cards = common.read_conf(stem)
         if not isinstance(cards, list) or not isinstance(entry, dict):
             raise ValueError
         matches = [

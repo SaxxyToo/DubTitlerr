@@ -12,6 +12,7 @@ import os
 
 import pytest
 import repair_ref_stub
+import store_seed
 
 from dubtitlerr.core import artifact_store, common, decisions, unanchored, unresolved
 from dubtitlerr.glossary import glossary
@@ -370,8 +371,7 @@ def test_process_writes_latency_ms_column(tmp_path, monkeypatch):
     conf_path = stem + repair.CONF_SUFFIX
     srt_path = stem + repair.SRT_SUFFIX
     open(srt_path, "w").close()
-    with open(conf_path, "w") as f:
-        json.dump([{"start": 0.0, "end": 1.0, "text": "garbled line", "avg_logprob": -0.6, "no_speech_prob": 0.1}], f)
+    store_seed.conf(conf_path, [{"start": 0.0, "end": 1.0, "text": "garbled line", "avg_logprob": -0.6, "no_speech_prob": 0.1}])
 
     g = gl()
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep.mkv"))
@@ -418,8 +418,7 @@ def test_needs_secondary_check_false_on_stable_similar_line():
 
 def _write_conf(conf_path, srt_path, conf_rows):
     open(srt_path, "w").close()
-    with open(conf_path, "w") as f:
-        json.dump(conf_rows, f)
+    store_seed.conf(conf_path, conf_rows)
 
 
 def test_process_two_pass_reverifies_name_change(tmp_path, monkeypatch):
@@ -2549,7 +2548,7 @@ def test_missing_conf_json_is_recorded_ok_not_no_video(tmp_path, monkeypatch):
 def test_missing_srt_with_a_video_is_recorded_ok_no_srt(tmp_path, monkeypatch):
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     stem = str(tmp_path / "ep_nosrt")
-    open(stem + repair.CONF_SUFFIX, "w").close()
+    store_seed.conf(stem + repair.CONF_SUFFIX, [])
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_nosrt.mkv"))
 
     assert repair.process(stem + repair.CONF_SUFFIX) == "skip"

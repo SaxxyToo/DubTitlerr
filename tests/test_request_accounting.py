@@ -15,6 +15,7 @@ import time
 import types
 
 import pytest
+import store_seed
 
 
 def _stub_faster_whisper():
@@ -56,9 +57,8 @@ def _show(tmp_path, n=3, delivered=True):
                     os.environ["ASR_BACKEND"] = saved
             (tmp_path / f"Show - S01E{i:02d}.dub.en.ass").write_text("old")
             conf = tmp_path / f"Show - S01E{i:02d}.dubtitles.conf.json"
-            conf.write_text("[]")
-            old = time.time() - 86400
-            os.utime(conf, (old, old))
+            # backdated in the store: _rebuilt_since reads the row's updated_at
+            store_seed.seed_aged(str(conf), "conf", [], time.time() - 86400)
         eps.append(str(v))
     return eps
 
@@ -82,14 +82,14 @@ def _run(tmp_path, monkeypatch, *, force, process=None, since=None, force_env=No
         calls.append(os.path.basename(v))
         if process:
             return process(v)
-        open(v[:-4] + ".dubtitles.conf.json", "w").write("[]")
+        store_seed.conf(v[:-4] + ".dubtitles.conf.json", [])
         open(v[:-4] + ".eng.dubtitles.srt", "w").write("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
         return "ok"
 
     def fake_process_text(v):
         if text_seen is not None:
             text_seen.append(os.path.basename(v))
-        open(v[:-4] + ".dubtitles.conf.json", "w").write("[]")
+        store_seed.conf(v[:-4] + ".dubtitles.conf.json", [])
         open(v[:-4] + ".eng.dubtitles.srt", "w").write("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
         return "ok"
 
@@ -132,9 +132,10 @@ def test_a_forced_rebuild_replays_text_from_cached_words(tmp_path, monkeypatch):
     assert text_seen == ["Show - S01E01.mkv", "Show - S01E02.mkv"]
     assert (rep["scope"], rep["rebuilt"]) == (2, 2)
     assert rr.verdict(rep, 0) == (True, None)
-    # The replay READS words.json, so force must leave it in place...
+    # The replay READS the stored words row, so force must leave it in place...
     words = tmp_path / f"Show - S01E01{common.WORDS_SUFFIX}"
-    assert words.exists() and not words.with_name(words.name + ".stale").exists()
+    assert store_seed.has(str(words), "words")
+    assert not artifact_store.exists(str(tmp_path / "Show - S01E01"), artifact_store.parked_kind("words"))
     # ...but the delivery stamp is parked, which is what makes the merge pass re-mux.
     assert not artifact_store.exists(str(tmp_path / "Show - S01E01"), "done")
 
@@ -246,7 +247,7 @@ def test_episodes_that_could_not_be_built_are_counted_by_reason(tmp_path, monkey
     def process(v):
         s = next(st for k, st in status.items() if k in v)
         if s == "ok":
-            open(v[:-4] + ".dubtitles.conf.json", "w").write("[]")
+            store_seed.conf(v[:-4] + ".dubtitles.conf.json", [])
         return s
 
     _calls, rep = _run(tmp_path, monkeypatch, force=False, process=process)

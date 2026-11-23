@@ -188,7 +188,7 @@ def main():
             folder.mkdir(parents=True, exist_ok=True)
             stem = str(folder / f"{show} - {ep}")
             cards = [{"start": 2 + i * 3, "end": 4 + i * 3, "text": row[0]} for i, row in enumerate(rows)]
-            Path(stem + rs.CONF_SUFFIX).write_text(json.dumps(cards))
+            artifact_store.put_json(stem, "conf", cards)
             for orig, prop, stage, reason, ref, ref_fields in rows:
                 unresolved.record(stem, stage, reason, original_text=orig, proposed_text=prop, reference=ref, **ref_fields)
             # A sine wave, not copyrighted dialogue. One tagged English audio stream.

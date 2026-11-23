@@ -117,6 +117,7 @@ from dubtitlerr.core.common import (
     dialogue_intervals,
     find_video,
     out_for,
+    read_conf,
     read_words,
     stop_requested,
     ts_srt,
@@ -1556,16 +1557,19 @@ def prior_repairs(stem):
         return 0
 
 
-def process(conf_path):
-    """Repair one episode. Wraps the work so the per-episode retry-sleep budget (REPAIR_RETRY_SLEEP_BUDGET
-    seconds, default 600) starts full for this episode and is lifted again afterwards."""
+def process(target):
+    """Repair one episode, named by stem (a legacy conf.json path is accepted).
+
+    Wraps the work so the per-episode retry-sleep budget (REPAIR_RETRY_SLEEP_BUDGET
+    seconds, default 600) starts full for this episode and is lifted again afterwards.
+    """
     global _retry_budget_left, _episode_deadline_at, _episode_started_at, _episode_limit_s
     _retry_budget_left = float(env_int("REPAIR_RETRY_SLEEP_BUDGET", 600, lo=0))
     limit = env_int("REPAIR_EPISODE_DEADLINE", 3600, lo=0)  # 0 disables
     _episode_started_at, _episode_limit_s = time.monotonic(), limit
     _episode_deadline_at = _episode_started_at + limit if limit else None
     try:
-        return _process_episode(conf_path)
+        return _process_episode(target)
     finally:
         _retry_budget_left = None
         _episode_deadline_at = None
@@ -1611,21 +1615,27 @@ def queue_proposal(stem, queued, original, proposed, **fields):
     return "queued"
 
 
-def _process_episode(conf_path):
-    stem = conf_path[: -len(CONF_SUFFIX)]
+def _stem_for(target):
+    """The episode stem behind a CLI target: a legacy ``<stem>.dubtitles.conf.json`` path is
+    accepted so old invocations keep working, but the conf itself always comes from the store."""
+    return target[: -len(CONF_SUFFIX)] if target.endswith(CONF_SUFFIX) else target
+
+
+def _process_episode(target):
+    stem = _stem_for(target)
     srt = stem + SRT_SUFFIX
     video = find_video(stem)
-    # No conf.json is a normal state, not an error: tools/recover_dub_srt.py rebuilds the
+    # No conf is a normal state, not an error: tools/recover_dub_srt.py rebuilds the
     # sidecar straight out of the already-muxed track for episodes whose conf was long
     # since cleaned up, and merge_pass.sh calls repair.py unconditionally. That dialogue
     # was already repaired when it was first built, so there is nothing to redo.
     if not video:
         write_stage(stem, "repair", "no-video")
         return "skip"
-    if not os.path.exists(srt) or not os.path.exists(conf_path):
+    conf = read_conf(stem)
+    if not os.path.exists(srt) or conf is None:
         write_stage(stem, "repair", "ok", "no-srt" if not os.path.exists(srt) else "no-conf")
         return "skip"
-    conf = json.load(open(conf_path))  # noqa: SIM115
     # For card_split's word-alignment path only (see card_split.card_words). None on any episode
     # whose sidecar is missing/stale/version-mismatched -- word-alignment then degrades to
     # the proportional fallback for every card, same as it always has.
@@ -2190,20 +2200,17 @@ def _process_episode(conf_path):
 
 def main():
     args = sys.argv[1:]
-    confs = list(args) if args else []  # explicit .conf.json paths, else walk roots
-    if not confs:
+    stems = [_stem_for(a) for a in args]  # stems; legacy conf.json paths accepted, else walk roots
+    if not stems:
         for root in ROOTS:
             if not os.path.isdir(root):
                 continue
-            for dp, _, files in os.walk(root):
-                for f in files:
-                    if f.endswith(CONF_SUFFIX):
-                        confs.append(os.path.join(dp, f))
+            stems.extend(artifact_store.stems(root, kind="conf"))
     counts = {}
-    for cp in sorted(confs):
-        res = process(cp)
+    for stem in sorted(set(stems)):
+        res = process(stem)
         counts[res] = counts.get(res, 0) + 1
-        log(f"{res}: {os.path.basename(cp)}")
+        log(f"{res}: {os.path.basename(stem)}")
         if res == "stopped":
             break  # soft stop: start no further episode
     log("SUMMARY", counts)

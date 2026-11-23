@@ -3,9 +3,8 @@
 Sol's probe: `correct` with text "" (or whitespace) made decisions.record drop the verdict silently, yet the handler counted it as
 saved and resolved the queue entry as accepted, which released an opted-in review hold with no stored human verdict."""
 
-import json
-
 import pytest
+import store_seed
 
 from dubtitlerr.core import decisions, unresolved
 from dubtitlerr.pipeline import mux
@@ -17,8 +16,7 @@ ORIG, PROP = "the old line", "the wrong line"
 @pytest.fixture
 def ep(tmp_path, monkeypatch):
     stem = str(tmp_path / "ep")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"text": ORIG}], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"text": ORIG}])
     unresolved.record(stem, "repair_applied", "accepted", original_text=ORIG, proposed_text=PROP)
     monkeypatch.setattr(rs, "_resolve", lambda _: stem)
     monkeypatch.setattr(rs, "show_for", lambda _: "S")
@@ -70,8 +68,7 @@ def test_a_correction_that_restores_the_original_is_stored_as_a_rejection(ep):
 def test_the_shared_path_refuses_a_blank_correction_too(tmp_path, monkeypatch):
     for name in ("e01", "e02"):
         stem = str(tmp_path / name)
-        with open(stem + ".dubtitles.conf.json", "w") as f:
-            json.dump([{"text": ORIG}], f)
+        store_seed.conf(stem + ".dubtitles.conf.json", [{"text": ORIG}])
         unresolved.record(stem, "repair_applied", "accepted", original_text=ORIG, proposed_text=PROP)
     monkeypatch.setattr(rs, "ROOTS", [str(tmp_path)])
     monkeypatch.setattr(rs, "_STEMS_CACHE", (0.0, []))

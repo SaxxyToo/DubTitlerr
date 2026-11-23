@@ -22,10 +22,19 @@ import sys
 import types
 
 import pytest
+import store_seed
 
 from dubtitlerr.core import artifact_store, common
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import qc, reflow
+
+# Old beside-media names for the kinds the store owns now (P39-B2).
+_STORE_SIDECAR_NAMES = {
+    "ep.dubtitles.conf.json": "conf",
+    "ep.dubtitles.qc.json": "qc",
+    "ep.dubtitles.words.json": "words",
+    "ep.dubtitles.cuts.json": "cuts",
+}
 
 
 def _stub_faster_whisper():
@@ -235,7 +244,7 @@ def test_word_probs_written_to_conf_json(monkeypatch, tmp_path):
     monkeypatch.setattr(generate, "WMODEL", _FakeModel([seg]))
 
     assert generate.process(str(v)) == "ok"
-    conf = json.loads((tmp_path / "ep.dubtitles.conf.json").read_text())
+    conf = store_seed.load(str(tmp_path / "ep.dubtitles.conf.json"), "conf")
     assert len(conf) == 1
     assert conf[0]["word_probs"] == [0.95, 0.1]
     assert len(conf[0]["word_probs"]) == len(conf[0]["text"].split())
@@ -265,7 +274,7 @@ def test_a_cackle_token_is_reduced_before_the_srt_is_written(monkeypatch, tmp_pa
     srt = (tmp_path / ("ep" + generate.SUFFIX)).read_text()
     assert "Kekekekekeke…" in srt
     assert cackle not in srt
-    sidecar = json.loads((tmp_path / ("ep" + generate.QC_SUFFIX)).read_text())
+    sidecar = store_seed.load(str(tmp_path / ("ep" + generate.QC_SUFFIX)), "qc")
     assert sidecar["counters"]["token_runs_reduced"] == 1
 
 
@@ -294,7 +303,7 @@ def test_boilerplate_head_block_is_dropped_before_the_srt_is_written(monkeypatch
     srt = (tmp_path / ("ep" + generate.SUFFIX)).read_text()
     assert "Touhou" not in srt and "poor quality" not in srt
     assert "Wait here," in srt
-    sidecar = json.loads((tmp_path / ("ep" + generate.QC_SUFFIX)).read_text())
+    sidecar = store_seed.load(str(tmp_path / ("ep" + generate.QC_SUFFIX)), "qc")
     assert sidecar["counters"]["dropped_boilerplate"] == 2
     events = [e for e in sidecar["events"] if e["reason"] == "boilerplate"]
     assert [e["text"] for e in events] == [
@@ -321,7 +330,7 @@ def test_a_trailing_dialogue_line_beginning_with_thanks_is_not_boilerplate(monke
     assert generate.process(str(v)) == "ok"
     srt = (tmp_path / ("ep" + generate.SUFFIX)).read_text()
     assert "Thanks for watching him." in srt
-    sidecar = json.loads((tmp_path / ("ep" + generate.QC_SUFFIX)).read_text())
+    sidecar = store_seed.load(str(tmp_path / ("ep" + generate.QC_SUFFIX)), "qc")
     assert sidecar["counters"]["dropped_boilerplate"] == 0
 
 
@@ -348,7 +357,7 @@ def test_word_probs_stay_with_their_own_card_across_a_forward_steal(monkeypatch,
     monkeypatch.setattr(generate, "WMODEL", _FakeModel([seg]))
 
     assert generate.process(str(v)) == "ok"
-    conf = json.loads((tmp_path / "ep.dubtitles.conf.json").read_text())
+    conf = store_seed.load(str(tmp_path / "ep.dubtitles.conf.json"), "conf")
     assert len(conf) == 2
     assert conf[1]["start"] > conf[1]["source_start"]  # the steal really displaced it
     for row in conf:
@@ -433,7 +442,8 @@ def test_process_logs_chown_failure_instead_of_swallowing(monkeypatch, tmp_path,
 
     assert generate.process(str(v)) == "ok"
     out = capsys.readouterr().out
-    assert out.count("chown failed for") == 2  # srt + confp
+    # the conf/qc/words rows live in the store now; only the srt file is chowned
+    assert out.count("chown failed for") == 1  # srt
 
 
 def test_extract_wav_no_filter_when_empty(monkeypatch, tmp_path):
@@ -718,20 +728,30 @@ def test_endpoint_error_gives_up_after_three_attempts(monkeypatch, tmp_path):
 def _stale_stamped(tmp_path, monkeypatch, leftovers=(), fresh=()):
     """A file stamped by a superseded pipeline version, with `leftovers` (sidecars from
     that same old run, so OLDER than the stamp) and/or `fresh` sidecars (this
-    regeneration's own work, written after the stamp)."""
+    regeneration's own work, written after the stamp).
+
+    conf/qc/words/cuts are store rows now: their ``updated_at`` is the age evidence, so a
+    leftover seeds a row backdated to before the stamp. The srt/ass deliverables stay files.
+    """
     v = tmp_path / "ep.mkv"
     v.write_bytes(b"x" * 1000)
     common.write_stamp(str(tmp_path / ("ep" + generate.STAMP_SUFFIX)), str(v))
     stamp_mtime = artifact_store.mtime(str(tmp_path / "ep"), "done")
     assert stamp_mtime is not None
-    for name in leftovers:
+
+    def seed(name, at):
+        kind = _STORE_SIDECAR_NAMES.get(name)
+        if kind:
+            store_seed.seed_aged(str(tmp_path / name), kind, [] if kind == "conf" else {}, at)
+            return
         p = tmp_path / name
         p.write_text("output from the previous pipeline version")
-        os.utime(p, (stamp_mtime - 60, stamp_mtime - 60))  # written before the stamp
+        os.utime(p, (at, at))
+
+    for name in leftovers:
+        seed(name, stamp_mtime - 60)  # written before the stamp
     for name in fresh:
-        p = tmp_path / name
-        p.write_text("freshly transcribed, awaiting mux")
-        os.utime(p, (stamp_mtime + 60, stamp_mtime + 60))  # written after the stamp
+        seed(name, stamp_mtime + 60)  # written after the stamp
     monkeypatch.setattr(common, "TEXT_VERSION", common.TEXT_VERSION + 1)
     return v
 
@@ -748,7 +768,7 @@ def test_stale_version_file_discards_its_leftover_srt_and_conf(monkeypatch, tmp_
     monkeypatch.setattr(generate, "eng_audio_index", lambda video: None)
     assert generate.process(str(v)) == "no-eng-dub"  # NOT "already-srt"
     assert not (tmp_path / "ep.eng.dubtitles.srt").exists()
-    assert not (tmp_path / "ep.dubtitles.conf.json").exists()
+    assert not store_seed.has(str(tmp_path / "ep.dubtitles.conf.json"), "conf")
 
 
 def test_current_version_file_keeps_its_sidecars(monkeypatch, tmp_path):
@@ -779,7 +799,7 @@ def test_stale_version_file_keeps_a_sidecar_newer_than_its_stamp(monkeypatch, tm
     v = _stale_stamped(tmp_path, monkeypatch, fresh=["ep.eng.dubtitles.srt", "ep.dubtitles.conf.json"])
     assert generate.process(str(v)) == "already-srt"
     assert (tmp_path / "ep.eng.dubtitles.srt").exists()
-    assert (tmp_path / "ep.dubtitles.conf.json").exists()
+    assert store_seed.has(str(tmp_path / "ep.dubtitles.conf.json"), "conf")
 
 
 def test_stale_version_file_discards_only_the_leftovers_not_the_fresh_work(monkeypatch, tmp_path):
@@ -809,8 +829,8 @@ def test_stale_version_file_parks_its_leftover_qc_sidecar(monkeypatch, tmp_path)
     v = _stale_stamped(tmp_path, monkeypatch, leftovers=["ep.dubtitles.qc.json"])
     monkeypatch.setattr(generate, "eng_audio_index", lambda video: None)
     assert generate.process(str(v)) == "no-eng-dub"
-    assert not (tmp_path / "ep.dubtitles.qc.json").exists()
-    assert (tmp_path / "ep.dubtitles.qc.json.stale").exists()
+    assert not store_seed.has(str(tmp_path / "ep.dubtitles.qc.json"), "qc")
+    assert artifact_store.has_parked(str(tmp_path / "ep"), "qc")
 
 
 def _infeasible_model(monkeypatch, generate_mod):
@@ -832,7 +852,7 @@ def test_a_version_bump_that_ends_infeasible_leaves_the_prior_output_recoverable
     assert (tmp_path / "ep.dubtitles.fail").exists()
     assert not (tmp_path / "ep.eng.dubtitles.srt").exists()  # still not muxable...
     assert (tmp_path / "ep.eng.dubtitles.srt.stale").exists()  # ...but not destroyed
-    assert (tmp_path / "ep.dubtitles.conf.json.stale").exists()
+    assert artifact_store.has_parked(str(tmp_path / "ep"), "conf")
 
 
 def test_the_infeasible_sidecar_records_what_survived(monkeypatch, tmp_path, capsys):
@@ -841,9 +861,9 @@ def test_the_infeasible_sidecar_records_what_survived(monkeypatch, tmp_path, cap
     v = _stale_stamped(tmp_path, monkeypatch, leftovers=["ep.eng.dubtitles.srt", "ep.dubtitles.conf.json"])
     _infeasible_model(monkeypatch, generate)
     generate.process(str(v))
-    doc = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())
+    doc = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")
     ev = [e for e in doc["events"] if e.get("reason") == "cascade_infeasible"][0]
-    assert ev["retained_prior_output"] == ["ep.dubtitles.conf.json.stale", "ep.eng.dubtitles.srt.stale"]
+    assert ev["retained_prior_output"] == ["conf (store)", "ep.eng.dubtitles.srt.stale"]
     assert "recover" in capsys.readouterr().out
 
 
@@ -861,8 +881,9 @@ def test_a_successful_regeneration_drops_the_parked_sidecars(monkeypatch, tmp_pa
     monkeypatch.setattr(generate, "WMODEL", _short_card_model())
     assert generate.process(str(v)) == "ok"
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".stale")] == []
+    assert not artifact_store.has_parked(str(tmp_path / "ep"), "conf")
     assert (tmp_path / "ep.eng.dubtitles.srt").exists()
-    assert (tmp_path / "ep.dubtitles.conf.json").exists()
+    assert store_seed.has(str(tmp_path / "ep.dubtitles.conf.json"), "conf")
 
 
 def test_needs_work_false_for_a_poison_marked_stale_file(monkeypatch, tmp_path):
@@ -963,7 +984,7 @@ def test_log_line_violation_count_agrees_with_the_sidecar(monkeypatch, tmp_path,
     monkeypatch.setattr(generate, "WMODEL", _short_card_model())
 
     assert generate.process(str(v)) == "ok"
-    doc = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())
+    doc = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")
     assert doc["counters"]["violations"] == 1  # the sidecar sees the floor breach
     line = [ln for ln in capsys.readouterr().out.splitlines() if " cards=" in ln][0]
     assert f"violations={doc['counters']['violations']}" in line
@@ -1000,8 +1021,8 @@ def test_qc_sidecar_is_written_next_to_conf(monkeypatch, tmp_path):
 
     assert generate.process(str(v)) == "ok"
     qc_path = tmp_path / "ep.dubtitles.qc.json"
-    assert qc_path.exists()
-    doc = json.loads(qc_path.read_text())
+    assert store_seed.has(str(qc_path), "qc")
+    doc = store_seed.load(str(qc_path), "qc")
     assert doc["counters"]["cards_after"] == 1
     assert doc["stem"] == str(tmp_path / "ep")
 
@@ -1020,7 +1041,7 @@ def test_qc_records_the_before_half_of_the_pair(monkeypatch, tmp_path):
     monkeypatch.setattr(generate, "WMODEL", _FakeModel([_FakeSegment(0.0, 1.38, 0.05, words)]))
 
     assert generate.process(str(v)) == "ok"
-    c = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())["counters"]
+    c = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")["counters"]
     assert c["cards_before"] == 2  # the timing layer saw two groups
     assert c["cards_after"] == 1
     assert c["ordinary_under_min_dur_before"] == 1  # one runt arrived...
@@ -1046,7 +1067,7 @@ def test_qc_counts_flagged_and_low_conf(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(generate, "WMODEL", _FakeModel([_FakeSegment(10.0, 10.5, 0.05, words)]))
 
     assert generate.process(str(v)) == "ok"
-    c = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())["counters"]
+    c = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")["counters"]
     line = [ln for ln in capsys.readouterr().out.splitlines() if " cards=" in ln][0]
     assert c["low_conf"] > 0
     assert f"low-conf={c['low_conf']} " in line  # sidecar and log agree
@@ -1075,7 +1096,7 @@ def test_qc_counts_orphan_candidates_but_never_marks_them_fixed(monkeypatch, tmp
     monkeypatch.setattr(generate, "WMODEL", _FakeModel([seg0, seg1]))
 
     assert generate.process(str(v)) == "ok"
-    doc = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())
+    doc = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")
     c = doc["counters"]
     assert c["orphan_candidates"] == 1
     assert c["orphan_candidates_fixed"] == 0
@@ -1096,7 +1117,7 @@ def test_qc_counts_a_genuine_backward_merge(monkeypatch, tmp_path):
     monkeypatch.setattr(generate, "WMODEL", _FakeModel([seg]))
 
     assert generate.process(str(v)) == "ok"
-    doc = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())
+    doc = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")
     c = doc["counters"]
     assert c["merged_backward"] == 1
     assert c["cards_after"] == 1
@@ -1152,7 +1173,7 @@ def test_conf_json_carries_source_and_display_timing(monkeypatch, tmp_path):
     monkeypatch.setattr(generate, "WMODEL", _displaced_pair_model())
 
     assert generate.process(str(v)) == "ok"
-    conf = json.loads((tmp_path / "ep.dubtitles.conf.json").read_text())
+    conf = store_seed.load(str(tmp_path / "ep.dubtitles.conf.json"), "conf")
     assert len(conf) == 2
     assert (conf[0]["source_start"], conf[0]["source_end"]) == (0.0, 0.1)
     assert (conf[1]["source_start"], conf[1]["source_end"]) == (0.15, 3.0)
@@ -1213,7 +1234,7 @@ def test_qc_counts_what_the_timing_cascade_did(monkeypatch, tmp_path):
     monkeypatch.setattr(generate, "WMODEL", _displaced_pair_model())
 
     assert generate.process(str(v)) == "ok"
-    doc = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())
+    doc = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")
     c = doc["counters"]
     assert c["stolen"] == 1
     assert c["displaced"] == 1
@@ -1265,7 +1286,7 @@ def test_cascade_infeasible_still_writes_the_qc_sidecar(monkeypatch, tmp_path):
     the counter plus the shift accounting, with requested == applied + residual."""
     v = _infeasible_setup(monkeypatch, tmp_path)
     generate.process(str(v))
-    doc = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())
+    doc = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")
     assert doc["counters"]["cascade_infeasible"] == 1
     ev = [e for e in doc["events"] if e.get("reason") == "cascade_infeasible"]
     assert len(ev) == 1
@@ -1395,10 +1416,10 @@ def test_the_text_validated_is_the_text_written(monkeypatch, tmp_path):
     body = srt.split("\n", 2)[2].strip()  # index + timestamps stripped
     assert "quickquick" in body
     assert body == reflow.wrap_balance(body.replace("\n", " "))  # canonical wrap
-    conf = json.loads((tmp_path / "ep.dubtitles.conf.json").read_text())
+    conf = store_seed.load(str(tmp_path / "ep.dubtitles.conf.json"), "conf")
     assert conf[0]["text"] == body.replace("\n", " ")
     assert "pre_correction_text" not in conf[0]  # C7 bookkeeping stays out of the sidecar
-    doc = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())
+    doc = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")
     for e in doc["events"]:
         if e.get("reason") == "layout_exception":
             assert e["text"] == body.replace("\n", " ")
@@ -1470,20 +1491,22 @@ def test_a_crash_midway_through_the_srt_write_leaves_no_truncated_srt(monkeypatc
 
 
 def test_a_crash_midway_through_the_conf_write_leaves_no_truncated_conf(monkeypatch, tmp_path):
-    """json.dump is patched rather than fed unserialisable data because the C encoder
-    can emit the whole document in one chunk -- which would leave no partial file and so
-    would not reproduce the defect at all."""
+    """The conf row is written by the store in one transaction. A failure inside that
+    write must leave no conf row at all (never half a document), while the srt that was
+    already finished stays."""
     v = _generation_setup(monkeypatch, tmp_path, _two_card_model())
+    real_put = generate.artifact_store.put_json
 
-    def half_dump(obj, f, **kw):
-        f.write(json.dumps(obj)[:20])
-        raise RuntimeError("disk full")
+    def half_put(stem, kind, obj, **kw):
+        if kind == "conf":
+            raise RuntimeError("disk full")
+        return real_put(stem, kind, obj, **kw)
 
-    monkeypatch.setattr(generate.json, "dump", half_dump)
+    monkeypatch.setattr(generate.artifact_store, "put_json", half_put)
     with pytest.raises(RuntimeError):
         generate.process(str(v))
     assert (tmp_path / "ep.eng.dubtitles.srt").exists()  # the srt got all the way through
-    assert not (tmp_path / "ep.dubtitles.conf.json").exists()
+    assert not store_seed.has(str(tmp_path / "ep.dubtitles.conf.json"), "conf")
     assert _leftover_temps(tmp_path) == []
 
 
@@ -1501,19 +1524,16 @@ def test_a_failed_regeneration_does_not_destroy_the_previous_srt(monkeypatch, tm
 
 
 def test_both_writes_still_chown_and_land_on_the_happy_path(monkeypatch, tmp_path):
-    """The replace must not cost the files their ownership fix-up, and the chown must
-    address the FINAL path, not the temp one."""
+    """The srt file keeps its ownership fix-up, addressing the FINAL path, not a temp
+    one. conf and qc are store rows now, so there is no file to chown."""
     v = _generation_setup(monkeypatch, tmp_path, _two_card_model())
     chowned = []
     monkeypatch.setattr(generate.os, "chown", lambda p, u, g: chowned.append(p))
     assert generate.process(str(v)) == "ok"
-    srt, confp = str(tmp_path / "ep.eng.dubtitles.srt"), str(tmp_path / "ep.dubtitles.conf.json")
-    qcp = str(tmp_path / "ep.dubtitles.qc.json")
-    # the qc sidecar is chowned too, in _write_qc after it exists -- it is read
-    # library-wide by an aggregator that is not root
-    assert chowned == [srt, confp, qcp]
-    assert os.path.exists(srt) and os.path.exists(confp)
-    assert json.loads(open(confp).read())
+    srt = str(tmp_path / "ep.eng.dubtitles.srt")
+    assert chowned == [srt]
+    assert os.path.exists(srt)
+    assert store_seed.load(str(tmp_path / "ep.dubtitles.conf.json"), "conf")
     assert open(srt).read().startswith("1\n")
     assert _leftover_temps(tmp_path) == []
 
@@ -1539,7 +1559,7 @@ def test_every_displaced_card_that_matters_gets_an_event(monkeypatch, tmp_path):
     rather than only counting it."""
     v = _generation_setup(monkeypatch, tmp_path, _displaced_pair_model())
     assert generate.process(str(v)) == "ok"
-    doc = json.loads((tmp_path / "ep.dubtitles.qc.json").read_text())
+    doc = store_seed.load(str(tmp_path / "ep.dubtitles.qc.json"), "qc")
     evs = [e for e in doc["events"] if e.get("reason") == "cascade_shift"]
     assert len(evs) == 1
     e = evs[0]
@@ -1691,13 +1711,14 @@ def test_a_replay_without_segments_would_lose_the_confidences(tmp_path):
 
 
 def test_the_sidecar_is_group_writable_and_atomic(tmp_path):
-    """Sidecars must stay 0664 or a non-root writer cannot rewrite them."""
+    """The words cache is one store row now, written atomically by the store (one
+    transaction, so a crash cannot leave half a document). Pin the round trip."""
     words, segments = _clamped_fixture()
     stem = str(tmp_path / "ep")
     generate.write_words(stem, words, segments, 7.0, initial_prompt="x")
-    path = stem + generate.WORDS_SUFFIX
-    assert os.path.exists(path)
-    assert (os.stat(path).st_mode & 0o777) == common.SIDECAR_MODE
+    path = stem + common.WORDS_SUFFIX
+    assert store_seed.has(path, "words")
+    assert store_seed.load(path, "words")["words"] == words
 
 
 def test_a_sidecar_from_an_older_transcribe_version_is_treated_as_absent(tmp_path):
@@ -1708,10 +1729,9 @@ def test_a_sidecar_from_an_older_transcribe_version_is_treated_as_absent(tmp_pat
     words, segments = _clamped_fixture()
     stem = str(tmp_path / "ep")
     generate.write_words(stem, words, segments, 7.0, initial_prompt="x")
-    doc = json.load(open(stem + generate.WORDS_SUFFIX))
+    doc = store_seed.load(stem + common.WORDS_SUFFIX, "words")
     doc["transcribe_version"] = common.TRANSCRIBE_VERSION - 1
-    with open(stem + generate.WORDS_SUFFIX, "w") as f:
-        json.dump(doc, f)
+    store_seed.words(stem + common.WORDS_SUFFIX, doc)
 
     rec = qc.Recorder()
     assert common.read_words(stem, rec=rec) is None
@@ -1723,8 +1743,7 @@ def test_a_truncated_sidecar_is_counted_not_raised(tmp_path):
     from dubtitlerr.pipeline import qc
 
     stem = str(tmp_path / "ep")
-    with open(stem + generate.WORDS_SUFFIX, "w") as f:
-        f.write('{"schema_version": 1, "words": [')
+    artifact_store.put(stem, "words", '{"schema_version": 1, "words": [')
 
     rec = qc.Recorder()
     assert common.read_words(stem, rec=rec) is None
@@ -1765,25 +1784,31 @@ def test_words_json_is_written_through_out_for_and_found_again(tmp_path, monkeyp
     stem = str(media / "Show" / "ep")
     generate.write_words(stem, words, segments, 7.0, initial_prompt="x")
 
-    assert not os.path.exists(stem + generate.WORDS_SUFFIX), "write did not redirect"
+    assert not os.path.exists(stem + common.WORDS_SUFFIX), "no beside-media words file"
+    assert store_seed.has(stem + common.WORDS_SUFFIX, "words")
     assert common.read_words(stem) is not None, "read did not follow the redirect"
 
 
 def test_the_words_suffix_is_parked_with_the_other_sidecars():
-    """A parked old-version words.json left readable would be served to the cached path."""
-    assert generate.WORDS_SUFFIX in generate.SIDECAR_SUFFIXES
+    """A parked old-version words row left live would be served to the cached path."""
+    assert "words" in generate.STORE_SIDECAR_KINDS
 
 
-def test_write_words_propagates_so_the_caller_must_handle_it(tmp_path):
-    """_atomic_write deliberately does NOT swallow -- the srt and conf are the episode's
-    product and a run that lost them must not report ok. words.json is different: it is
-    a cache, and the transcription output is already committed by the time it is written.
-    So process() wraps this call, and this test is what makes that wrapper load-bearing
-    rather than decorative -- if write_words ever started swallowing, the counter in
-    process() would go silent and an uncacheable episode would look like a healthy one."""
+def test_write_words_propagates_so_the_caller_must_handle_it(tmp_path, monkeypatch):
+    """The store write deliberately does NOT swallow -- the srt and conf are the
+    episode's product and a run that lost them must not report ok. words is different: it
+    is a cache, and the transcription output is already committed by the time it is
+    written. So process() wraps this call, and this test is what makes that wrapper
+    load-bearing rather than decorative -- if write_words ever started swallowing, the
+    counter in process() would go silent and an uncacheable episode would look healthy."""
     words, segments = _clamped_fixture()
-    with pytest.raises(OSError):  # a missing parent directory: FileNotFoundError
-        generate.write_words(str(tmp_path / "no" / "such" / "dir" / "ep"), words, segments, 7.0)
+
+    def boom(*a, **kw):
+        raise OSError("store unavailable")
+
+    monkeypatch.setattr(generate.artifact_store, "put_json", boom)
+    with pytest.raises(OSError):
+        generate.write_words(str(tmp_path / "ep"), words, segments, 7.0)
 
 
 # --- per-tier staleness census (spec v5-two-tier-idempotency, S-4) -------------
@@ -1997,7 +2022,7 @@ def test_the_replay_writes_output_without_touching_a_model(tmp_path, monkeypatch
 
     assert generate.process_text(v) == "ok"
     assert os.path.exists(stem + ".eng.dubtitles.srt")
-    assert os.path.exists(stem + ".dubtitles.conf.json")
+    assert store_seed.has(stem + ".dubtitles.conf.json", "conf")
 
 
 def test_the_replay_reports_when_the_sidecar_is_unusable(tmp_path, monkeypatch):
@@ -2106,14 +2131,14 @@ def test_delayed_audio_shifts_cards_to_the_video_timeline(monkeypatch, tmp_path,
     monkeypatch.setattr(generate, "WMODEL", _FakeModel([_FakeSegment(0.0, 0.5, 0.05, [_FakeWord(" Hello.", 0.0, 0.5, 0.95)])]))
 
     assert generate.process(str(v)) == "ok"
-    conf = json.loads((tmp_path / "delayed.dubtitles.conf.json").read_text())
+    conf = store_seed.load(str(tmp_path / "delayed.dubtitles.conf.json"), "conf")
     assert conf[0]["start"] == pytest.approx(1.25 - reflow.LEAD_IN)
     assert conf[0]["end"] == pytest.approx(2.08 + reflow.LINGER)
 
     zero = tmp_path / "zero.mkv"
     zero.write_bytes(b"x" * 1000)
     assert generate.process(str(zero)) == "ok"
-    zero_conf = json.loads((tmp_path / "zero.dubtitles.conf.json").read_text())
+    zero_conf = store_seed.load(str(tmp_path / "zero.dubtitles.conf.json"), "conf")
     assert zero_conf[0]["start"] == pytest.approx(0.0)
     assert zero_conf[0]["end"] == pytest.approx(0.83 + reflow.LINGER)
     # the delayed card can spend its full lead-in; the zero-based one cannot go before
@@ -2150,8 +2175,9 @@ def test_zero_audio_start_preserves_pre_change_outputs_byte_for_byte(monkeypatch
     monkeypatch.setattr(generate, "audio_start_time", lambda video, idx: 0.0)
     assert generate.process(str(zero)) == "ok"
 
-    for suffix in (generate.SUFFIX, ".dubtitles.conf.json", generate.WORDS_SUFFIX):
-        assert (tmp_path / ("baseline" + suffix)).read_bytes() == (tmp_path / ("zero" + suffix)).read_bytes()
+    assert (tmp_path / ("baseline" + generate.SUFFIX)).read_bytes() == (tmp_path / ("zero" + generate.SUFFIX)).read_bytes()
+    for kind in ("conf", "words"):
+        assert artifact_store.get("baseline", kind) == artifact_store.get("zero", kind)
 
 
 def test_subframe_audio_start_does_not_shift_or_log(monkeypatch, tmp_path, capsys):
@@ -2167,7 +2193,7 @@ def test_subframe_audio_start_does_not_shift_or_log(monkeypatch, tmp_path, capsy
     monkeypatch.setattr(generate, "WMODEL", _FakeModel([_FakeSegment(0.0, 0.5, 0.05, [_FakeWord(" Hello.", 0.0, 0.5, 0.95)])]))
 
     assert generate.process(str(v)) == "ok"
-    conf = json.loads((tmp_path / "preskip.dubtitles.conf.json").read_text())
+    conf = store_seed.load(str(tmp_path / "preskip.dubtitles.conf.json"), "conf")
     assert conf[0]["start"] == pytest.approx(0.0)
     assert conf[0]["end"] == pytest.approx(0.83 + reflow.LINGER)
     assert "audio start offset" not in capsys.readouterr().out
@@ -2251,13 +2277,12 @@ def test_read_words_treats_a_missing_field_as_unknown_not_a_mismatch(tmp_path, m
     from dubtitlerr.pipeline import qc
 
     stem, expect = _write_words_matching_identity(tmp_path, monkeypatch)
-    path = stem + generate.WORDS_SUFFIX
-    doc = json.load(open(path))
+    path = stem + common.WORDS_SUFFIX
+    doc = store_seed.load(path, "words")
     del doc["compute_type"]
     del doc["beam_size"]
     doc["model"] = ""
-    with open(path, "w") as f:
-        json.dump(doc, f)
+    store_seed.words(path, doc)
     rec = qc.Recorder()
     result = common.read_words(stem, rec=rec, expect=expect)
     assert result is not None
@@ -2271,11 +2296,10 @@ def test_read_words_counts_a_transcribe_version_ahead_of_current_as_a_mismatch(t
     words, segments = _clamped_fixture()
     stem = str(tmp_path / "ep")
     generate.write_words(stem, words, segments, 7.0, initial_prompt="x")
-    path = stem + generate.WORDS_SUFFIX
-    doc = json.load(open(path))
+    path = stem + common.WORDS_SUFFIX
+    doc = store_seed.load(path, "words")
     doc["transcribe_version"] = common.TRANSCRIBE_VERSION + 1
-    with open(path, "w") as f:
-        json.dump(doc, f)
+    store_seed.words(path, doc)
     rec = qc.Recorder()
     assert common.read_words(stem, rec=rec) is None
     assert rec.counters["words_version_mismatch"] == 1
@@ -2373,7 +2397,7 @@ def test_a_local_sidecar_round_trips_and_keeps_its_frozen_field_set(tmp_path, mo
     from dubtitlerr.pipeline import qc
 
     stem, expect = _write_words_matching_identity(tmp_path, monkeypatch)
-    doc = json.load(open(stem + generate.WORDS_SUFFIX))
+    doc = store_seed.load(stem + common.WORDS_SUFFIX, "words")
     assert {k for k in doc if k in ("model", "initial_prompt", "compute_type", "beam_size", "backend")} == {
         "model",
         "initial_prompt",
@@ -2421,7 +2445,7 @@ def test_write_words_persists_compute_type_and_beam_size(tmp_path, monkeypatch):
     words, segments = _clamped_fixture()
     stem = str(tmp_path / "ep")
     generate.write_words(stem, words, segments, 7.0, initial_prompt="x")
-    doc = json.load(open(stem + generate.WORDS_SUFFIX))
+    doc = store_seed.load(stem + common.WORDS_SUFFIX, "words")
     assert doc["schema_version"] == common.WORDS_SCHEMA_VERSION
     assert doc["model"] == generate.MODEL
     assert doc["compute_type"] == generate.COMPUTE
@@ -2432,13 +2456,12 @@ def test_a_schema_1_sidecar_with_no_compute_fields_still_reads(tmp_path):
     words, segments = _clamped_fixture()
     stem = str(tmp_path / "ep")
     generate.write_words(stem, words, segments, 7.0, initial_prompt="x")
-    path = stem + generate.WORDS_SUFFIX
-    doc = json.load(open(path))
+    path = stem + common.WORDS_SUFFIX
+    doc = store_seed.load(path, "words")
     doc["schema_version"] = 1
     del doc["compute_type"]
     del doc["beam_size"]
-    with open(path, "w") as f:
-        json.dump(doc, f)
+    store_seed.words(path, doc)
     assert common.read_words(stem) is not None
 
 
@@ -2685,8 +2708,9 @@ def test_force_redo_parks_the_delivered_sidecar(tmp_path, monkeypatch):
     """A forced re-run must not leave last run's subtitle in place for the merge pass
     to find; it parks it exactly as a version bump would."""
     stem = tmp_path / "ep"
-    for name in ("ep.dub.en.ass", "ep.dub.en.srt", "ep.eng.dubtitles.srt", "ep.dubtitles.words.json"):
+    for name in ("ep.dub.en.ass", "ep.dub.en.srt", "ep.eng.dubtitles.srt"):
         (tmp_path / name).write_text("x", encoding="utf-8")
+    store_seed.words(str(stem) + common.WORDS_SUFFIX, {"words": []})
     monkeypatch.setenv("SIDECAR_SUFFIX", ".dub.en")
     generate.force_park_sidecars(str(stem))
     assert not (tmp_path / "ep.dub.en.ass").exists()
@@ -2694,7 +2718,7 @@ def test_force_redo_parks_the_delivered_sidecar(tmp_path, monkeypatch):
     assert (tmp_path / "ep.dub.en.ass.stale").exists()
     assert (tmp_path / "ep.eng.dubtitles.srt.stale").exists()
     # the transcript is parked too, so a forced run re-does the text tier as well
-    assert (tmp_path / "ep.dubtitles.words.json.stale").exists()
+    assert artifact_store.has_parked(str(stem), "words")
 
 
 def test_force_redo_is_off_by_default(monkeypatch):

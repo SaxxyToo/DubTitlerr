@@ -236,11 +236,7 @@ def tracks_from_streams(streams) -> list[reftracks.Track]:
 
 def read_sample(stem: str) -> str | None:
     """The episode's stored ASR card text, or None. Read-only; never fatal."""
-    try:
-        with open(stem + CONF_SUFFIX, encoding="utf-8") as f:
-            cards = json.load(f)
-    except (OSError, ValueError):
-        return None
+    cards = common.read_conf(stem)
     if not isinstance(cards, list):
         return None
     return " ".join(str(c.get("text") or "") for c in cards if isinstance(c, dict))

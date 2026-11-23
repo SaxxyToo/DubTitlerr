@@ -16,6 +16,8 @@ import os
 import subprocess
 import sys
 
+import store_seed
+
 from dubtitlerr.core import artifact_store, common
 
 EP_SUFFIX = ".dubtitles.conf.json"
@@ -33,8 +35,7 @@ def _stem(tmp_path, show, season, episode, ext="mkv", video_bytes=b"x"):
 
 
 def _conf(stem, cards):
-    with open(stem + EP_SUFFIX, "w") as f:
-        json.dump(cards, f)
+    store_seed.conf(stem + EP_SUFFIX, cards)
 
 
 def _stamp(stem, video):

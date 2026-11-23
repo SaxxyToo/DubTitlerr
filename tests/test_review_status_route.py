@@ -5,6 +5,7 @@ The handler itself is covered by its own tests; this pins the registration in re
 import time
 
 import pytest
+import store_seed
 
 from dubtitlerr.review import review_server
 
@@ -122,7 +123,7 @@ def test_the_fill_time_global_is_gone():
 def test_known_stems_stores_the_walk_start_not_the_walk_end(tmp_path, monkeypatch):
     media = tmp_path / "media" / "Show" / "Season 1"
     media.mkdir(parents=True)
-    (media / "ep.dubtitles.conf.json").write_text("[]")
+    store_seed.conf(str(media / "ep.dubtitles.conf.json"), [])
     monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path / "media")])
     monkeypatch.setattr(review_server, "_STEMS_CACHE", None)
     ticks = iter([100.0])  # the first call is the walk start; every later one is "after a 30 s walk"

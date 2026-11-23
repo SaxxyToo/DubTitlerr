@@ -1,11 +1,11 @@
 """The new workspace uses existing verdict semantics and never trusts client paths or indices alone."""
 
 import http.client
-import json
 import threading
 from pathlib import Path
 
 import pytest
+import store_seed
 
 from dubtitlerr.core import decisions, unresolved
 from dubtitlerr.review import review_server as rs
@@ -18,12 +18,11 @@ def episode(tmp_path, monkeypatch):
     season.mkdir(parents=True)
     stem = str(season / "Test Show - S01E01")
     Path(stem + ".mkv").write_bytes(b"fixture")
-    Path(stem + rs.CONF_SUFFIX).write_text(
-        json.dumps(
-            [
-                {"start": 3.0, "end": 5.0, "text": "We need a factory."},
-            ]
-        )
+    store_seed.conf(
+        stem + rs.CONF_SUFFIX,
+        [
+            {"start": 3.0, "end": 5.0, "text": "We need a factory."},
+        ],
     )
     unresolved.record(stem, "repair_applied", "accepted", original_text="We need a factory.", proposed_text="We need a needle.")
     gloss = tmp_path / "glossaries"
@@ -161,7 +160,7 @@ def test_a_save_with_nothing_to_save_has_the_documented_shape(episode):
 
 def test_shared_errors_are_keyed_by_id_everywhere(episode, monkeypatch):
     stem2 = episode.replace("S01E01", "S01E02")
-    Path(stem2 + rs.CONF_SUFFIX).write_text(json.dumps([{"start": 3.0, "end": 5.0, "text": "We need a factory."}]))
+    store_seed.conf(stem2 + rs.CONF_SUFFIX, [{"start": 3.0, "end": 5.0, "text": "We need a factory."}])
     unresolved.record(stem2, "repair_applied", "accepted", original_text="We need a factory.", proposed_text="We need a needle.")
     monkeypatch.setattr(rs, "_STEMS_CACHE", None)
     monkeypatch.setattr(rs, "_QUEUE_CACHE", {})

@@ -63,7 +63,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, ".")
-from dubtitlerr.core import common  # noqa: E402
+from dubtitlerr.core import artifact_store, common  # noqa: E402
 from dubtitlerr.glossary import glossary  # noqa: E402
 from dubtitlerr.pipeline import (
     hallucination,  # noqa: E402
@@ -73,6 +73,18 @@ from dubtitlerr.pipeline import (
     repair,  # noqa: E402
 )
 
+CONF_SUFFIX = ".dubtitles.conf.json"
+
+
+def _conf_stem(conf_path: str) -> str:
+    return conf_path[: -len(CONF_SUFFIX)] if conf_path.endswith(CONF_SUFFIX) else conf_path
+
+
+def _conf_name(conf_path: str) -> str:
+    """The conf's conventional filename, for the refs file's provenance field."""
+    stem = _conf_stem(conf_path)
+    return os.path.basename(stem + CONF_SUFFIX)
+
 
 def load_cards(raw_path, conf_path):
     """Cards to judge, from exactly one of the two inputs.
@@ -81,21 +93,27 @@ def load_cards(raw_path, conf_path):
     way generate.py does. It needs a capture tool this repo does not ship, so it means
     re-transcribing an episode on the GPU.
 
-    ``--conf`` is the practical path: a production ``<stem>.dubtitles.conf.json``. Those
-    rows are already post-reflow, post-hallucination-gate and post-collapse, and carry
-    every field ``repair.is_target()`` reads — and it is the very file ``repair.py``
-    consumes in production, so the bake-off judges the models on precisely the lines the
-    live pipeline would have sent them. No GPU, no re-derivation."""
+    ``--conf`` is the practical path: an episode stem whose stored conf (kind ``conf``) is
+    the production card list. Those rows are already post-reflow, post-hallucination-gate and
+    post-collapse, and carry every field ``repair.is_target()`` reads — and it is the very
+    document ``repair.py`` consumes in production, so the bake-off judges the models on
+    precisely the lines the live pipeline would have sent them. No GPU, no re-derivation.
+
+    An existing FILE argument is still read directly: a refs/conf copy outside the store is
+    an explicit external input to this analysis tool, not the episode's own artifact."""
     if bool(raw_path) == bool(conf_path):
-        sys.exit("give exactly one of --raw (whisper dump) or --conf (dubtitles.conf.json)")
+        sys.exit("give exactly one of --raw (whisper dump) or --conf (episode stem or conf.json)")
     if raw_path:
         return cards_from_raw(json.load(open(raw_path)))
-    rows = json.load(open(conf_path))  # noqa: SIM115
+    if os.path.isfile(conf_path):
+        rows = json.load(open(conf_path))  # noqa: SIM115
+    else:
+        rows = artifact_store.get_json(_conf_stem(conf_path), "conf")
     if not isinstance(rows, list):
-        sys.exit(f"{conf_path}: expected a JSON list of conf rows")
+        sys.exit(f"{conf_path}: expected a stored conf list (or a JSON list of conf rows)")
     for i, r in enumerate(rows):
         if not isinstance(r, dict) or "text" not in r:
-            sys.exit(f"{conf_path}: row {i} has no 'text' — not a dubtitles.conf.json")
+            sys.exit(f"{conf_path}: row {i} has no 'text' — not a dubtitles conf")
     return rows
 
 
@@ -149,7 +167,7 @@ def dump_refs(conf_path, cards, gloss, video, limit, sample, glossary_path=""):
             }
         )
     return {
-        "conf": os.path.basename(conf_path),
+        "conf": _conf_name(conf_path),
         "cards": len(cards),
         "episode": ordering.episode_key(video),
         "arc": glossary.arc_for(video),
@@ -169,9 +187,9 @@ def load_refs(refs_path, cards, conf_path, allow_conf_mismatch=False, glossary_p
     doc = json.load(open(refs_path))  # noqa: SIM115
     if not isinstance(doc, dict) or not isinstance(doc.get("targets"), list):
         sys.exit(f"{refs_path}: not a --dump-refs file (expected an object with a 'targets' list)")
-    if doc.get("conf") != os.path.basename(conf_path) and not allow_conf_mismatch:
+    if doc.get("conf") != _conf_name(conf_path) and not allow_conf_mismatch:
         sys.exit(
-            f"{refs_path}: cut from {doc.get('conf')!r}, but --conf is {os.path.basename(conf_path)!r} "
+            f"{refs_path}: cut from {doc.get('conf')!r}, but --conf is {_conf_name(conf_path)!r} "
             "(--allow-conf-mismatch if it is a renamed copy)"
         )
     dumped_sha = doc.get("glossary_sha256")

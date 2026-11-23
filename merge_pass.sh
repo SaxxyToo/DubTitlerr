@@ -211,7 +211,7 @@ fi
 # P29 presentation re-pass: an already-delivered episode is skipped below -- repair and
 # mux must not run again -- but its CARD STRUCTURE and TIMING still have to reach the
 # running PRESENTATION_EPOCH. One in-app rebuild per episode per epoch: the stage reads
-# the episode's own words.json and subtitle, rewrites only the dialogue cards, re-gates,
+# the episode's own stored words and subtitle, rewrites only the dialogue cards, re-gates,
 # and stamps the epoch. A no-op or a refused rebuild stamps too, so nothing churns; one
 # unreadable episode is reported and the pass carries on. PRESENTATION_REPASS=0 disables
 # just this pass.
@@ -294,7 +294,7 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 		# Drop records from older runs so the crash fallbacks and the gates below only ever see
 		# THIS run's outcome (a stale "ok" would otherwise hide a repair that died silently).
 		python3 -c "import sys; from dubtitlerr.core import common; common.clear_stage(sys.argv[1], 'repair', 'signs')" "$stem" </dev/null >/dev/null 2>&1 || true
-		python3 -m dubtitlerr.pipeline.repair "$stem.dubtitles.conf.json" </dev/null
+		python3 -m dubtitlerr.pipeline.repair "$stem" </dev/null
 		rc=$?
 		if [ $rc -ne 0 ]; then
 			python3 -c "import sys; from dubtitlerr.core import common; s=sys.argv[1]; rc=sys.argv[2]; sys.exit(0 if 'repair' in common.read_stages(s) else common.write_stage(s, 'repair', 'crashed', 'rc='+rc) or 1)" "$stem" "$rc" </dev/null >/dev/null 2>&1 || true

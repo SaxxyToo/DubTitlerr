@@ -21,6 +21,11 @@ import uuid
 
 import pysubs2
 
+# The per-episode internal artifacts (words, conf, qc, cuts, stamps, stages ...) live in ONE
+# SQLite store in the config volume, not beside the media (P39). stdlib-only, and it imports
+# nothing from here, so this is a leaf import like atomic_file.
+from dubtitlerr.core import artifact_store
+
 # The heartbeat document (readers here, writers in the shell loops) is stdlib-only for the same
 # reason atomic_file is: the loops' CLI must import it from an app dir with no pysubs2.
 from dubtitlerr.core import artifact_store as _store
@@ -306,11 +311,14 @@ WORDS_SCHEMA_VERSION = 3  # schema 3: the decoder fields are decoder_identity()'
 def read_words(stem, rec=None, expect: dict | None = None):
     """The persisted word list, or None when it cannot be used -- never an exception.
 
+    The doc is a store row (kind ``words``), not a file: P39 moved every per-episode internal
+    artifact into the config-volume SQLite store. ``artifact_store.get_json`` returns None for
+    both "absent" and "unparseable", which is exactly the fail-open behaviour a sidecar
+    reader needs and what the old ``open()/json.load`` pair produced.
+
     Every unusable state is COUNTED rather than swallowed, because the failure mode this
     guards is silent: a sidecar that is never found looks exactly like an episode that
     simply needs transcribing, and would re-transcribe forever while reporting healthy.
-    Read through out_for() to match write_words -- following one convention on write and
-    the other on read is precisely that silent miss.
 
     "expect"", when given, is generate.decoder_identity() -- what today's process would
     use to transcribe, and exactly what generate.write_words records (see
@@ -321,11 +329,8 @@ def read_words(stem, rec=None, expect: dict | None = None):
     file, or "model" written from an unset WHISPER_MODEL env as "" -- is UNKNOWN, not a
     mismatch (words_config_unknown), and the doc is still returned: the 366 live
     sidecars predate this check and must keep being served."""
-    path = out_for(stem + WORDS_SUFFIX)
-    try:
-        with open(path) as f:
-            doc = json.load(f)
-    except (OSError, ValueError):
+    doc = artifact_store.get_json(stem, "words")
+    if not isinstance(doc, dict):
         if rec:
             rec.count("words_missing")
         return None
@@ -361,6 +366,30 @@ def read_words(stem, rec=None, expect: dict | None = None):
     if rec:
         rec.count("words_reused")
     return doc
+
+
+def read_conf(stem):
+    """The episode's conf card list (store kind ``conf``), or None when unusable.
+
+    fail-open contract: absent, unreadable and non-list all return None. Callers that must
+    distinguish "no conf" from "bad conf" (timing_compare reports them apart) check for
+    themselves with ``artifact_store.exists``.
+
+    The document is the same JSON ARRAY generate.py has always written -- moving it into the
+    store changed the location and the transport, never the shape.
+    """
+    doc = artifact_store.get_json(stem, "conf")
+    return doc if isinstance(doc, list) else None
+
+
+def write_conf(stem, rows):
+    """Store the conf card list. Raises on a store failure, like the atomic file write did."""
+    artifact_store.put_json(stem, "conf", rows)
+
+
+def conf_rows(stem):
+    """The card list, or [] when the episode has no usable conf."""
+    return read_conf(stem) or []
 
 
 _PROCESS_BOOT_ID = uuid.uuid4().hex

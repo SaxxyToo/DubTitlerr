@@ -16,6 +16,8 @@ import stat
 import subprocess
 import sys
 
+import store_seed
+
 from dubtitlerr.core import artifact_store, common
 from dubtitlerr.pipeline import presentation
 
@@ -167,53 +169,65 @@ sys.path.insert(0, {repo!r})
 # This stub shadows the packaged module; the app copy of common serves stage records.
 from dubtitlerr.core import common
 common.OUTPUT_ROOT = ""
-if "--delivered" in sys.argv:  # the real predicate, from the module mux.py exposes it in
-    # Load the REAL mux from the repo: purge the app-bound package modules, then re-import
-    # with the repo first on sys.path (this stub currently occupies the module name).
-    for _k in [_k for _k in list(sys.modules) if _k == "dubtitlerr" or _k.startswith("dubtitlerr.")]:
-        del sys.modules[_k]
-    from dubtitlerr.pipeline import mux as _real_mux
-    sys.exit(0 if _real_mux.delivered(sys.argv[sys.argv.index("--delivered") + 1]) else 1)
-name = {name!r}
-arg = sys.argv[-1]
-for suffix in (".dubtitles.conf.json", ".eng.dubtitles.srt", ".mkv", ".mp4"):
-    if arg.endswith(suffix):
-        stem = arg[: -len(suffix)]
-        break
-with open(os.environ["CALLLOG"], "a") as f:
-    f.write(name + " " + os.path.basename(stem) + "\\n")
-if os.environ.get("ARGLOG"):  # the path exactly as the stage received it
-    with open(os.environ["ARGLOG"], "a") as f:
-        f.write(arg + "\\n")
-if os.environ.get("STUB_REPLACE_ROOT_IN") == name:
-    # The library root is swapped for a fresh directory at the same path while this stage
-    # runs (a rename, a restore from backup, an NFS remount): the pass's working directory
-    # is now a deleted inode, and only a path that starts from "/" still reaches the files.
-    root = os.environ["MERGE_ROOTS"]
-    os.rename(root, root + ".old")
-    os.mkdir(root)
-    for n in os.listdir(root + ".old"):
-        os.rename(os.path.join(root + ".old", n), os.path.join(root, n))
-    os.rmdir(root + ".old")
-if os.environ.get("STUB_STOP_AFTER") == name:  # the window closes while this stage runs
-    open(os.environ["STOP_FLAG"], "w").close()
-mode = os.environ.get("STUB_" + name.upper(), "ok")
-late_crash = mode == "ok-then-exit3"
-if late_crash:
-    mode = "ok"
-if mode == "exit3":  # dies without recording anything
-    sys.exit(3)
-if mode == "silent":  # exits 0 without recording anything
-    sys.exit(0)
-if mode != "ok":
-    common.write_stage(stem, name, mode)
-    sys.exit(0)
-common.write_stage(stem, name, "ok")
-if name == "signs":
-    open(stem + ".eng.dubtitles.ass", "w").close()
-    os.remove(stem + ".eng.dubtitles.srt")
-if late_crash:
-    sys.exit(3)
+
+
+def _stage():
+    if "--delivered" in sys.argv:  # the real predicate, from the module mux.py exposes it in
+        # Load the REAL mux from the repo: purge the app-bound package modules, then re-import
+        # with the repo first on sys.path (this stub currently occupies the module name).
+        for _k in [_k for _k in list(sys.modules) if _k == "dubtitlerr" or _k.startswith("dubtitlerr.")]:
+            del sys.modules[_k]
+        from dubtitlerr.pipeline import mux as _real_mux
+        sys.exit(0 if _real_mux.delivered(sys.argv[sys.argv.index("--delivered") + 1]) else 1)
+    name = {name!r}
+    arg = sys.argv[-1]
+    stem = arg
+    for suffix in (".dubtitles.conf.json", ".eng.dubtitles.srt", ".mkv", ".mp4"):
+        if arg.endswith(suffix):
+            stem = arg[: -len(suffix)]
+            break
+    with open(os.environ["CALLLOG"], "a") as f:
+        f.write(name + " " + os.path.basename(stem) + "\\n")
+    if os.environ.get("ARGLOG"):  # the path exactly as the stage received it
+        with open(os.environ["ARGLOG"], "a") as f:
+            f.write(arg + "\\n")
+    if os.environ.get("STUB_REPLACE_ROOT_IN") == name:
+        # The library root is swapped for a fresh directory at the same path while this stage
+        # runs (a rename, a restore from backup, an NFS remount): the pass's working directory
+        # is now a deleted inode, and only a path that starts from "/" still reaches the files.
+        root = os.environ["MERGE_ROOTS"]
+        os.rename(root, root + ".old")
+        os.mkdir(root)
+        for n in os.listdir(root + ".old"):
+            os.rename(os.path.join(root + ".old", n), os.path.join(root, n))
+        os.rmdir(root + ".old")
+    if os.environ.get("STUB_STOP_AFTER") == name:  # the window closes while this stage runs
+        open(os.environ["STOP_FLAG"], "w").close()
+    mode = os.environ.get("STUB_" + name.upper(), "ok")
+    late_crash = mode == "ok-then-exit3"
+    if late_crash:
+        mode = "ok"
+    if mode == "exit3":  # dies without recording anything
+        sys.exit(3)
+    if mode == "silent":  # exits 0 without recording anything
+        sys.exit(0)
+    if mode != "ok":
+        common.write_stage(stem, name, mode)
+        sys.exit(0)
+    common.write_stage(stem, name, "ok")
+    if name == "signs":
+        open(stem + ".eng.dubtitles.ass", "w").close()
+        os.remove(stem + ".eng.dubtitles.srt")
+    if late_crash:
+        sys.exit(3)
+
+
+# Only when run AS the stage. The stub is also IMPORTED: presentation.episode_path() imports
+# mux for SIDECAR_SUFFIX, and a real mux.py is a library at import time, so the stub must be
+# one too -- an import that logged a call, renamed the library root or exited would fabricate
+# stage invocations the pass never made (P39: restoration reaches that import on every stem).
+if __name__ == "__main__":
+    _stage()
 """
 
 
@@ -503,7 +517,7 @@ def test_a_stopped_repair_holds_the_stem_back_and_the_next_pass_retries_it(tmp_p
     (app / "dubtitlerr" / "pipeline" / "repair.py").write_text(_REAL_REPAIR.format(repo=_REPO))
     row = {"text": "garbled line here", "avg_logprob": -0.9, "no_speech_prob": 0.1}
     rows = [{**row, "start": k * 3.0, "end": k * 3.0 + 2.0} for k in range(3)]
-    (root / "Show" / "ep01.dubtitles.conf.json").write_text(json.dumps(rows))
+    store_seed.conf(str(root / "Show" / "ep01.dubtitles.conf.json"), rows)
     srt = root / "Show" / "ep01.eng.dubtitles.srt"
     srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nSHIPPED\n\n")
     shipped = srt.read_bytes()

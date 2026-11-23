@@ -31,8 +31,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dubtitlerr.core import unresolved
-from dubtitlerr.core.common import STAMP_SUFFIX, TRACK_NAME, read_stamp, stamp_valid, ts_srt
+from dubtitlerr.core import artifact_store, unresolved
+from dubtitlerr.core.common import STAMP_SUFFIX, TRACK_NAME, read_conf, read_stamp, stamp_valid, ts_srt
 from dubtitlerr.pipeline import reflow
 
 CONF_SUFFIX = ".dubtitles.conf.json"
@@ -59,7 +59,6 @@ def completed_episodes(show: str, media_root: str) -> list[str]:
     ONE store query for the whole tree: review_server measured the old `os.walk` of
     media_root at 297s for 989 episodes over a network mount, so this asks the store for
     the delivered stems under that root and filters by show in memory."""
-    from dubtitlerr.core import artifact_store
 
     stems = []
     for stem in artifact_store.stems(root=media_root, kind="done"):
@@ -76,13 +75,11 @@ def completed_episodes(show: str, media_root: str) -> list[str]:
 
 
 def dialogue_srt(stem: str) -> str | None:
-    """The dialogue-only SRT rebuilt from `.dubtitles.conf.json`. None (never raises) when
-    the file is missing or unparseable -- this runs inside a loop over hundreds of real
-    episodes and one bad conf.json must not abort the batch."""
-    try:
-        with open(stem + CONF_SUFFIX, encoding="utf-8") as f:
-            cards = json.load(f)
-    except (OSError, ValueError):
+    """The dialogue-only SRT rebuilt from the stored conf card list (kind ``conf``). None
+    (never raises) when it is missing or unusable -- this runs inside a loop over hundreds
+    of real episodes and one bad conf must not abort the batch."""
+    cards = read_conf(stem)
+    if cards is None:
         return None
     try:
         blocks = [

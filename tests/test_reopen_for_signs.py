@@ -6,8 +6,9 @@ dub_signs_merge reaches only work done after it. These tests pin the three thing
 make the re-open safe: the sidecar exists before the stamp is dropped, the stale .ass is
 gone so the merge actually re-runs, and an already-open episode is left alone."""
 
-import json
 import os
+
+import store_seed
 
 from dubtitlerr.core import artifact_store
 from tools import reopen_for_signs as rfs
@@ -19,10 +20,9 @@ STAMP = ".dubtitles.done"
 
 
 def _muxed(tmp_path, name, ass=False):
-    """An episode as mux.py leaves it: conf.json and a stamp, no sidecar."""
+    """An episode as mux.py leaves it: stored conf and a stamp, no sidecar."""
     stem = str(tmp_path / name)
-    with open(stem + CONF, "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "I saw Spandam"}], f)
+    store_seed.conf(stem + CONF, [{"start": 0.0, "end": 2.0, "text": "I saw Spandam"}])
     artifact_store.put_json(stem, "done", {"muxed": True})
     if ass:
         with open(stem + ASS, "w") as f:
@@ -56,8 +56,7 @@ def test_an_already_open_episode_is_left_completely_alone(tmp_path):
     """No stamp means it is already in the merge queue, or mid-run. Rebuilding its srt
     would race whichever pass owns it."""
     stem = str(tmp_path / "ep_c")
-    with open(stem + CONF, "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "already queued"}], f)
+    store_seed.conf(stem + CONF, [{"start": 0.0, "end": 2.0, "text": "already queued"}])
     with open(stem + ASS, "w") as f:
         f.write("[Events]\n")
 

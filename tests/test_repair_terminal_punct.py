@@ -2,10 +2,9 @@
 list; REPAIR_GUARD_TERMINAL_PUNCT=1 refuses a proposal that adds or removes a terminal '?', swaps '!' and '?', or converts a
 trailing ellipsis to or from '.'/'!'. Synthetic lines only."""
 
-import json
-
 import pytest
 import repair_ref_stub
+import store_seed
 
 from dubtitlerr.core import artifact_store, unresolved
 from dubtitlerr.glossary import glossary
@@ -24,7 +23,7 @@ def run_episode(tmp_path, monkeypatch, cards, answers, name="ep", dur=6.0):
         for k, t in enumerate(cards)
     ]
     open(stem + repair.SRT_SUFFIX, "w").close()
-    json.dump(conf, open(stem + repair.CONF_SUFFIX, "w"))
+    store_seed.conf(stem + repair.CONF_SUFFIX, conf)
     monkeypatch.setattr(repair, "find_video", lambda s: str(sub / "ep.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: glossary.load_dict({}))
     monkeypatch.setattr(

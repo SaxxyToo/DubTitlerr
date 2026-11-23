@@ -44,7 +44,7 @@ import pysubs2
 
 sys.path.insert(0, ".")
 import tools.vad as vad  # noqa: E402
-from dubtitlerr.core import common  # noqa: E402
+from dubtitlerr.core import artifact_store, common  # noqa: E402
 from dubtitlerr.core.common import atomic_write
 from dubtitlerr.pipeline import hallucination  # noqa: E402  -- pure stdlib (see hallucination.py docstring), no GPU import
 
@@ -54,6 +54,7 @@ log = common.log
 
 TOLERANCE_DEFAULT = 0.30
 TOLERANCE_MIN, TOLERANCE_MAX = 0.0, 2.0
+CONF_SUFFIX = ".dubtitles.conf.json"  # legacy path form accepted by load_conf
 
 MIN_CUES_DEFAULT = 50
 MIN_PLAIN_SHARE_DEFAULT = 0.70
@@ -144,21 +145,22 @@ def find_episodes(show_dirs: list) -> list:
 # ============================================================================
 
 
-def load_conf(path: str) -> tuple:
-    """Load a <stem>.dubtitles.conf.json sidecar. Returns (status, rows):
-      - missing file            -> ("no-conf", [])           (not an error, just skip)
-      - unreadable/malformed    -> ("bad-conf", [])
+def load_conf(target: str) -> tuple:
+    """Load an episode's stored conf card list (kind ``conf``; a legacy path is accepted).
+    Returns (status, rows):
+      - no stored conf          -> ("no-conf", [])           (not an error, just skip)
+      - unparseable/not a list  -> ("bad-conf", [])
       - otherwise               -> ("ok", cleaned_rows)       (bad rows dropped, not fatal)
 
     Rows with start >= end or a negative start are silently dropped (edge case in
     spec-v3.md); everything else -- including unrounded floats, extra keys like `flag`/
     `word_probs` -- is passed through untouched."""
-    if not os.path.exists(path):
+    stem = target[: -len(CONF_SUFFIX)] if target.endswith(CONF_SUFFIX) else target
+    if not artifact_store.exists(stem, "conf"):
         return "no-conf", []
     try:
-        with open(path) as f:
-            rows = json.load(f)
-    except (FileNotFoundError, PermissionError, json.JSONDecodeError):
+        rows = artifact_store.get_json(stem, "conf")
+    except Exception:  # noqa: BLE001 - an unreadable store is this episode's bad conf, not the run's
         return "bad-conf", []
     if not isinstance(rows, list):
         return "bad-conf", []
@@ -675,8 +677,7 @@ def process_episode(
     vad_aggressiveness: int = 2,
 ) -> dict:
     stem, _ext = os.path.splitext(video)
-    conf_path = stem + ".dubtitles.conf.json"
-    status, rows = load_conf(conf_path)
+    status, rows = load_conf(stem)
     if status in ("no-conf", "bad-conf"):
         return {"video": video, "status": status}
 

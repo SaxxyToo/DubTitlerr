@@ -79,14 +79,20 @@ VIDEO_EXTS = (".mkv", ".mp4", ".m4v")
 
 # Everything that belongs to an episode and should follow its rename. Deliberately
 # explicit: a glob would sweep up the markers below.
+#
+# The DELIVERABLES are files; every internal artifact (stamp, stages, conf, words, qc, cuts,
+# repair records, the queue) is a store row now, and re-keying those is a store operation
+# (see _rekey_store_rows). Keeping a filename here for one of them would silently miss it.
 REKEY_SUFFIXES = (
-    common.WORDS_SUFFIX,
-    ".dubtitles.conf.json",
-    ".dubtitles.qc.json",
-    ".dubtitles.mux.log",
     ".eng.dubtitles.srt",
     ".eng.dubtitles.ass",
 )
+
+# Store kinds that must NOT follow the rename:
+#   fail / crash / no-speech  poison and failure markers naming the stem they describe
+#   mux.log / mux-recovery    notes about a specific mux attempt
+#   <kind>.parked             a previous generation waiting for its rebuild, not live output
+STORE_REKEY_EXCLUDE = ("fail", "crash", "no-speech", "mux.log", "mux-recovery")
 
 # Never re-keyed, and the reason each one must stay put:
 #   .dubtitles.fail   poison marker naming the stem generate crashed on
@@ -204,9 +210,14 @@ def find_matches(root: str) -> list[Match]:
 def _rekey_store_rows(old_stem: str, new_stem: str) -> None:
     """Move the episode's store artifacts onto the renamed video's stem.
 
-    Never overwrites a live row: a stem that already holds that kind keeps its own.
+    Every kind the old stem holds, including ``<kind>.parked`` rows: the artifact belongs to
+    the episode, not to the filename it was written under. Never overwrites a live row: a
+    stem that already holds that kind keeps its own.
     """
-    for kind in ("done", "stages", "repair-summary", "repair.csv", "unresolved", "unresolved.counters", "unresolved.audit"):
+    for kind in artifact_store.kinds(old_stem):
+        base = kind[: -len(artifact_store.PARK_SUFFIX)] if kind.endswith(artifact_store.PARK_SUFFIX) else kind
+        if base in STORE_REKEY_EXCLUDE:
+            continue
         if artifact_store.exists(new_stem, kind):
             continue  # never overwrite live output
         payload = artifact_store.get(old_stem, kind)
