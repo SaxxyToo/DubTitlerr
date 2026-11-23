@@ -49,8 +49,9 @@ def test_workspace_entries_have_stable_handles(episode):
 def test_workspace_stale_verdict_cannot_decide_replaced_row(episode):
     row = rs.handle_episode(episode)["entries"][0]
     stale_id = row.get("id", "old-entry")
-    Path(unresolved.path_for(episode)).write_text(
-        json.dumps(
+    unresolved._rewrite(
+        episode,
+        [
             {
                 "stage": "repair_applied",
                 "reason": "accepted",
@@ -58,8 +59,7 @@ def test_workspace_stale_verdict_cannot_decide_replaced_row(episode):
                 "proposed_text": "Different proposal",
                 "resolved": False,
             }
-        )
-        + "\n"
+        ],
     )
     result = rs.handle_decide_batch(episode, [{"index": row["index"], "id": stale_id, "verdict": "accept"}])
     assert result["saved"] == 0

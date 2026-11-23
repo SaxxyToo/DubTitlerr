@@ -34,6 +34,8 @@ def _run_loop(tmp_path, sweep, with_order=True, **extra):
     # review_requests now shares the atomic-write primitive, which is stdlib-only so this
     # minimal app dir stays pysubs2-free.
     shutil.copy(REPO / "dubtitlerr" / "core" / "atomic_file.py", app / "dubtitlerr" / "core" / "atomic_file.py")
+    # review_requests reads the review queue from the artifact store (P39-B4); stdlib-only.
+    shutil.copy(REPO / "dubtitlerr" / "core" / "artifact_store.py", app / "dubtitlerr" / "core" / "artifact_store.py")
     # The no-media-server bootstrap: gen_loop.sh runs this CLI when the order file is
     # missing, and it must import from the same pysubs2-free skeleton.
     shutil.copy(REPO / "dubtitlerr" / "core" / "media_types.py", app / "dubtitlerr" / "core" / "media_types.py")

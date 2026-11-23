@@ -2,7 +2,7 @@
 """Offline acceptance replay for the R3 role-aware repair gates.
 
 Re-judges the proposals the live repair stage already REFUSED, using the stored
-``.dubtitles.unresolved.jsonl`` entries as the only input: original text, proposed text, the
+``.dubtitles.unresolved.jsonl`` entries (now the store's ``unresolved`` kind) as the only input: original text, proposed text, the
 reference window that entry recorded, and the card duration recovered from the sibling
 ``.dubtitles.conf.json``. No model is called, no pipeline stage runs, and nothing is written.
 
@@ -21,21 +21,20 @@ The table prints COUNTS ONLY. Subtitle text is never written to stdout, a file, 
 
 Usage:
     python3 tools/gate_replay.py "/mnt/tdarr-media/anime-tv" --dub-show "DAN DA DAN"
-    python3 tools/gate_replay.py path/to/episode.dubtitles.unresolved.jsonl --verbose
+    python3 tools/gate_replay.py path/to/library-or-stem --verbose
 
 Exit status: 0 when every show replayed, 1 when a translation-role regression was found.
 """
 
 import argparse
 import collections
-import glob
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dubtitlerr.core import decisions  # noqa: E402
+from dubtitlerr.core import artifact_store, decisions  # noqa: E402
 from dubtitlerr.pipeline import repair  # noqa: E402
 
 JUDGED_REASONS = ("rejected_guard", "rejected_name_invented", "rejected_name_part")
@@ -43,14 +42,11 @@ DEFAULT_DURATION = 6.0  # only for an entry whose conf.json lost the card; count
 
 
 def _stems(root):
-    """Every episode stem under ``root`` that has an unresolved queue file."""
+    """Every episode stem under ``root`` that has a queue row in the artifact store."""
     if os.path.isfile(root):
-        name = os.path.basename(root)
-        return [root[: -len(".dubtitles.unresolved.jsonl")]] if name.endswith(".dubtitles.unresolved.jsonl") else []
-    out = []
-    for path in sorted(glob.glob(os.path.join(root, "**", "*.dubtitles.unresolved.jsonl"), recursive=True)):
-        out.append(path[: -len(".dubtitles.unresolved.jsonl")])
-    return out
+        stem = root[: -len(".dubtitles.unresolved.jsonl")] if root.endswith(".dubtitles.unresolved.jsonl") else root
+        return [stem] if artifact_store.exists(stem, "unresolved") else []
+    return artifact_store.stems(root=root, kind="unresolved")
 
 
 def _durations(stem):
@@ -135,21 +131,8 @@ def replay(stems, dub_shows, gloss=None):
 
 
 def _entries(stem):
-    path = stem + ".dubtitles.unresolved.jsonl"
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    e = json.loads(line)
-                except ValueError:
-                    continue  # torn final line, same rule as unresolved.items()
-                if isinstance(e, dict):
-                    yield e
-    except OSError:
-        return
+    """Every queue entry for ``stem`` from the artifact store (corrupt lines skipped)."""
+    return artifact_store.read_jsonl(stem, "unresolved")
 
 
 def _gloss_for(stem):
@@ -181,7 +164,7 @@ def table(rows):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Offline acceptance replay for the R3 role-aware repair gates.")
-    ap.add_argument("roots", nargs="+", help="library root, show directory, or one .dubtitles.unresolved.jsonl")
+    ap.add_argument("roots", nargs="+", help="library root, show directory, or one episode stem")
     ap.add_argument("--dub-show", action="append", default=None, help="show substring judged as ref_role=dub (repeatable)")
     ap.add_argument("--verbose", action="store_true", help="also print the classic-guard crosstab and unusable-input counts")
     a = ap.parse_args(argv)
@@ -189,7 +172,7 @@ def main(argv=None):
     dub_shows = a.dub_show or ["DAN DA DAN"]
     stems = [s for root in a.roots for s in _stems(root)]
     if not stems:
-        print("no .dubtitles.unresolved.jsonl found under: " + ", ".join(a.roots))
+        print("no unresolved queue rows found under: " + ", ".join(a.roots))
         return 2
 
     # One glossary per show: the guards read it, and a replay on the wrong one lies about

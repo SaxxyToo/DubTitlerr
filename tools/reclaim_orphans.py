@@ -83,7 +83,6 @@ REKEY_SUFFIXES = (
     common.WORDS_SUFFIX,
     ".dubtitles.conf.json",
     ".dubtitles.qc.json",
-    ".dubtitles.unresolved.jsonl",
     ".dubtitles.mux.log",
     ".eng.dubtitles.srt",
     ".eng.dubtitles.ass",
@@ -207,7 +206,7 @@ def _rekey_store_rows(old_stem: str, new_stem: str) -> None:
 
     Never overwrites a live row: a stem that already holds that kind keeps its own.
     """
-    for kind in ("done", "stages", "repair-summary", "repair.csv"):
+    for kind in ("done", "stages", "repair-summary", "repair.csv", "unresolved", "unresolved.counters", "unresolved.audit"):
         if artifact_store.exists(new_stem, kind):
             continue  # never overwrite live output
         payload = artifact_store.get(old_stem, kind)
