@@ -1,20 +1,31 @@
 """Unit tests for repair.py pure helpers (C1) plus V2 A1/A2/A3/A10 coverage: backend
 dispatch, explicit connect/read timeouts + per-call latency, two-pass repair, and the
-repair-summary.json writer. The llama.cpp box and Ollama are NOT reachable from this
+repair-summary store artifact (kind ``repair-summary``). The llama.cpp box and Ollama are NOT reachable from this
 environment -- every HTTP-touching test here mocks repair._post_json, its underlying
 http.client connection, or the llm_*/llm functions; no live LLM call is ever made. Live
 llama.cpp integration is PENDING manual verification on real hardware."""
 
 import csv
+import io
 import json
 import os
 
 import pytest
 import repair_ref_stub
 
-from dubtitlerr.core import common, decisions, unanchored, unresolved
+from dubtitlerr.core import artifact_store, common, decisions, unanchored, unresolved
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import reflow, repair
+
+
+def _repair_summary(stem):
+    """The stored repair summary (kind ``repair-summary``), as the old file's parsed JSON."""
+    return artifact_store.get_json(stem, "repair-summary")
+
+
+def _repair_csv(stem):
+    """The stored repair audit (kind ``repair.csv``), as text."""
+    return artifact_store.get_text(stem, "repair.csv")
 
 # --- T1 hoist: dialogue_intervals now lives in common.py --------------------
 
@@ -369,8 +380,7 @@ def test_process_writes_latency_ms_column(tmp_path, monkeypatch):
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     assert repair.process(conf_path) == "repaired"
-    with open(stem + ".dubtitles.repair.csv") as f:
-        rows = list(csv.reader(f))
+    rows = list(csv.reader(io.StringIO(_repair_csv(stem), newline="")))
     assert rows[0] == ["orig", "repaired", "ref", "latency_ms"]
     assert len(rows) == 2
     assert rows[1][0] == "garbled line" and rows[1][1] == "a fixed line"
@@ -435,8 +445,7 @@ def test_process_two_pass_reverifies_name_change(tmp_path, monkeypatch):
     monkeypatch.setattr(repair, "MODEL_SECONDARY", "secondary-model")
 
     assert repair.process(conf_path) == "repaired"
-    with open(stem + ".dubtitles.repair.csv") as f:
-        rows = list(csv.reader(f))
+    rows = list(csv.reader(io.StringIO(_repair_csv(stem), newline="")))
     assert len(rows) == 2
     assert rows[1][0] == "I saw spondum"
     assert rows[1][1] == "I saw Spandam there"  # secondary's output won (name-change trigger)
@@ -470,7 +479,7 @@ def test_process_two_pass_is_noop_when_secondary_equals_primary(tmp_path, monkey
     assert calls == [None]  # only the primary call, no secondary re-check
 
 
-# --- A10: repair-summary.json -------------------------------------------------
+# --- A10: repair summary (store kind ``repair-summary``) ----------------------
 
 
 def test_p95_empty_is_zero():
@@ -497,7 +506,7 @@ def test_process_writes_repair_summary_json(tmp_path, monkeypatch):
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["targets"] == 1
     assert summary["repaired"] == 1
     assert summary["skipped_no_ref"] == 0
@@ -528,7 +537,7 @@ def _unchanged_episode(tmp_path, monkeypatch, stem_name):
     # existed this outcome incremented nothing and recorded nothing.
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "garbled line")
     repair.process(conf_path)
-    return json.load(open(stem + ".dubtitles.repair-summary.json"))
+    return _repair_summary(stem)
 
 
 def test_summary_counts_a_verbatim_model_response_as_unchanged(tmp_path, monkeypatch):
@@ -583,7 +592,8 @@ def test_process_logs_chown_failure_instead_of_swallowing(tmp_path, monkeypatch,
 
     assert repair.process(conf_path) == "repaired"  # chown failure must not abort the show
     out = capsys.readouterr().out
-    assert out.count("chown failed for") == 3  # srt_out, rep_out, summary_out
+    # Only the delivered srt is a file now; the repair csv and summary live in the store.
+    assert out.count("chown failed for") == 1
 
 
 def test_process_counts_skipped_no_ref_and_never_calls_llm(tmp_path, monkeypatch):
@@ -605,7 +615,7 @@ def test_process_counts_skipped_no_ref_and_never_calls_llm(tmp_path, monkeypatch
     )
 
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["targets"] == 1
     assert summary["repaired"] == 0
     assert summary["skipped_no_ref"] == 1
@@ -1032,19 +1042,18 @@ def test_process_rejects_a_repair_that_does_not_fit_the_cards_duration(tmp_path,
     stem = str(tmp_path / "ep_tight")
     conf_path = _repair_env(tmp_path, monkeypatch, stem, [_conf_row(0.0, 1.0, "garbled line here")], "a garbled line here")
     assert repair.process(conf_path) == "repaired"  # the srt is always rewritten
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["repaired"] == 0 and summary["rejected_guard"] == 1
     srt = open(stem + repair.SRT_SUFFIX).read()
     assert "a garbled line here" not in srt and "garbled line here" in srt  # the card kept its text
-    with open(stem + ".dubtitles.repair.csv") as f:
-        assert len(list(csv.reader(f))) == 1  # header only: nothing written
+    assert len(list(csv.reader(io.StringIO(_repair_csv(stem), newline="")))) == 1  # header only: nothing written
 
 
 def test_process_accepts_the_same_repair_on_a_card_with_room(tmp_path, monkeypatch):
     stem = str(tmp_path / "ep_roomy")
     conf_path = _repair_env(tmp_path, monkeypatch, stem, [_conf_row(0.0, 2.0, "garbled line here")], "a garbled line here")
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["repaired"] == 1 and summary["rejected_guard"] == 0
 
 
@@ -1060,7 +1069,7 @@ def test_process_gates_on_display_duration_not_source_duration(tmp_path, monkeyp
         "a garbled line here",
     )
     repair.process(conf_path)
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["repaired"] == 0 and summary["rejected_guard"] == 1
 
 
@@ -1078,10 +1087,9 @@ def test_process_secondary_output_goes_through_the_same_gate(tmp_path, monkeypat
     monkeypatch.setattr(repair, "MODEL_SECONDARY", "secondary-model")
 
     assert repair.process(conf_path) == "repaired"
-    with open(stem + ".dubtitles.repair.csv") as f:
-        rows = list(csv.reader(f))
+    rows = list(csv.reader(io.StringIO(_repair_csv(stem), newline="")))
     assert rows[1][1] == "I saw Spandam"  # 19 chars at 1.0s is 19 cps -- refused
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["repaired"] == 1 and summary["rejected_secondary"] == 1
 
 
@@ -1096,8 +1104,7 @@ def test_process_secondary_output_that_borrows_the_reference_is_refused(tmp_path
     conf_path = _repair_env(tmp_path, monkeypatch, stem, [_conf_row(0.0, 3.0, "I saw spondum")], fake_llm, g=g)
     monkeypatch.setattr(repair, "MODEL_SECONDARY", "secondary-model")
     repair.process(conf_path)
-    with open(stem + ".dubtitles.repair.csv") as f:
-        assert list(csv.reader(f))[1][1] == "I saw Spandam"
+    assert list(csv.reader(io.StringIO(_repair_csv(stem), newline="")))[1][1] == "I saw Spandam"
 
 
 # --- C6: reference selection anchors on SOURCE timing, not display timing -----
@@ -1149,8 +1156,7 @@ def test_process_selects_the_reference_by_the_source_window(tmp_path, monkeypatc
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     assert repair.process(conf_path) == "repaired"
-    with open(stem + ".dubtitles.repair.csv") as f:
-        rows = list(csv.reader(f))
+    rows = list(csv.reader(io.StringIO(_repair_csv(stem), newline="")))
     assert rows[1][2] == "the right line"
 
 
@@ -1171,8 +1177,7 @@ def test_process_still_uses_display_timing_for_a_pre_c6_sidecar(tmp_path, monkey
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "a fixed line")
 
     assert repair.process(conf_path) == "repaired"
-    with open(stem + ".dubtitles.repair.csv") as f:
-        rows = list(csv.reader(f))
+    rows = list(csv.reader(io.StringIO(_repair_csv(stem), newline="")))
     assert rows[1][2] == "the neighbour's line"
 
 
@@ -1264,7 +1269,7 @@ def test_process_feeds_the_prompt_only_the_winning_track_and_records_its_role(tm
     assert applied[0]["ref_provenance"] == "native"
     assert applied[0]["ref_track_title"] == "English Dub"
     assert applied[0]["reference"] == "dub caption wording"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["anchor_mode"] == "native-dub"
 
 
@@ -1273,7 +1278,7 @@ def test_process_records_translation_anchor_mode_when_only_a_translation_anchors
     trans = repair_ref_stub.track([(0.0, 2.0, "translation wording")], role="translation", index=2)
     conf_path, _ = _r2_episode(tmp_path, monkeypatch, stem, [trans])
     repair.process(conf_path)
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["anchor_mode"] == "native-translation"
     assert [e for e in unresolved.items(stem) if e.get("stage") == "repair_applied"][0]["ref_role"] == "translation"
 
@@ -1286,7 +1291,7 @@ def test_process_keeps_the_skip_behaviour_when_no_classified_track_overlaps(tmp_
     conf_path, prompts = _r2_episode(tmp_path, monkeypatch, stem, [empty])
     assert repair.process(conf_path) == "repaired"  # the srt is still rewritten
     assert prompts == []  # the LLM was never asked
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["skipped_no_ref"] == 1 and summary["repaired"] == 0
     assert summary["anchor_mode"] == "none"
     assert [e.get("reason") for e in unresolved.items(stem)] == ["no_reference"]
@@ -1326,7 +1331,7 @@ def test_ref_classic_restores_the_legacy_merged_pool(tmp_path, monkeypatch):
 
     assert repair.process(conf_path) == "repaired"
     assert "dub caption wording" in prompts[0] and "translation wording" in prompts[0]  # the old joined string
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["anchor_mode"] == "unclassified"
     applied = [e for e in unresolved.items(stem) if e.get("stage") == "repair_applied"][0]
     assert "ref_role" not in applied  # classic entries stay unclassified
@@ -1456,8 +1461,7 @@ def test_process_takes_no_reference_from_an_implausible_source_window(tmp_path, 
 
     repair.process(conf_path)
 
-    with open(stem + ".dubtitles.repair-summary.json") as f:
-        summary = json.load(f)
+    summary = _repair_summary(stem)
     assert summary["skipped_no_ref"] == 1, "the bad window must yield no anchor"
     assert summary["rules"]["rule_source_window_activated"] == 1
     assert summary["rules"]["rule_source_window_evaluated"] == 1
@@ -1492,8 +1496,7 @@ def test_process_still_anchors_a_plausible_window(tmp_path, monkeypatch):
 
     repair.process(conf_path)
 
-    with open(stem + ".dubtitles.repair-summary.json") as f:
-        summary = json.load(f)
+    summary = _repair_summary(stem)
     assert summary["skipped_no_ref"] == 0
     assert summary["rules"]["rule_source_window_activated"] == 0
     assert summary["rules"]["rule_source_window_evaluated"] == 1
@@ -1904,7 +1907,7 @@ def test_an_accepted_repair_is_queued_with_the_text_before_and_after(tmp_path, m
     assert entries[0]["original_text"] == "garbled line here"
     assert entries[0]["proposed_text"] == "a garbled line here"
 
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert len(entries) == summary["repaired"]
 
 
@@ -1918,7 +1921,7 @@ def test_a_rejected_repair_is_not_queued_as_accepted(tmp_path, monkeypatch):
 
     stages = [e["stage"] for e in unresolved.items(stem)]
     assert "repair_applied" not in stages
-    assert json.load(open(stem + ".dubtitles.repair-summary.json"))["repaired"] == 0
+    assert _repair_summary(stem)["repaired"] == 0
 
 
 def test_the_queue_records_the_secondary_models_text_not_the_first_passes(tmp_path, monkeypatch):
@@ -1954,8 +1957,7 @@ def test_the_queue_records_the_secondary_models_text_not_the_first_passes(tmp_pa
     assert queued[0]["original_text"] == "I saw spondum"
     assert queued[0]["proposed_text"] == "I saw Spandam there", "the queue must show what SHIPPED"
     # ...and it agrees with the audit trail the same run wrote.
-    with open(stem + ".dubtitles.repair.csv") as f:
-        assert list(csv.reader(f))[1][1] == queued[0]["proposed_text"]
+    assert list(csv.reader(io.StringIO(_repair_csv(stem), newline="")))[1][1] == queued[0]["proposed_text"]
 
 
 # --- [S-4] the decision-store consult ----------------------------------------
@@ -2325,7 +2327,7 @@ def test_the_summary_still_accounts_for_every_target_once_verdicts_fire(tmp_path
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: (store, "Show"))
 
     repair.process(conf_path)
-    s = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    s = _repair_summary(stem)
 
     assert s["verdict_reject"] == 1, "a reject verdict must be counted, not silently dropped from the accounting"
     assert s["verdict_unfittable"] == 1, "a verdict refused on timing must be counted too"
@@ -2454,7 +2456,7 @@ def test_process_honours_the_shows_declaration_not_just_the_global(tmp_path, mon
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: calls.append(prompt) or "garbled line")
 
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["skipped_no_ref"] == 0
     assert calls, "the declared show must reach the LLM"
 
@@ -2482,8 +2484,16 @@ def test_a_pass_that_would_skip_every_target_refuses_to_overwrite_prior_repairs(
     shipped = "1\n00:00:00,000 --> 00:00:02,000\nOur mods will never give up.\n\n"
     open(srt_path, "w").write(shipped)
     prior = {"targets": 144, "repaired": 3, "skipped_no_ref": 0}
+    # Seed the store from the exact bytes the old beside-media writer produced
+    # (``json.dump(..., indent=2)``), so the refusal decision is proven on the same
+    # evidence the file reader used before P39 -- and the row is not clobbered.
     summary_path = stem + ".dubtitles.repair-summary.json"
-    json.dump(prior, open(summary_path, "w"))
+    with open(summary_path, "w") as f:
+        json.dump(prior, f, indent=2)
+    old_file_bytes = open(summary_path, "rb").read()
+    os.remove(summary_path)
+    artifact_store.put(stem, "repair-summary", old_file_bytes)
+    assert repair.prior_repairs(stem) == 3
 
     g = glossary.load_dict({"show": "One Pace"})  # declares nothing -> gate shut
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
@@ -2493,7 +2503,8 @@ def test_a_pass_that_would_skip_every_target_refuses_to_overwrite_prior_repairs(
 
     assert repair.process(conf_path) == "refused"
     assert open(srt_path).read() == shipped, "the shipped repairs were overwritten with raw ASR"
-    assert json.load(open(summary_path))["repaired"] == 3, "the prior summary was clobbered"
+    assert _repair_summary(stem)["repaired"] == 3, "the prior summary was clobbered"
+    assert artifact_store.get(stem, "repair-summary") == old_file_bytes, "the stored row changed"
 
 
 def test_refusing_to_overwrite_prior_repairs_records_a_failure_not_no_reference(tmp_path, monkeypatch):
@@ -2509,7 +2520,7 @@ def test_refusing_to_overwrite_prior_repairs_records_a_failure_not_no_reference(
         srt_path,
         [{"start": 0.0, "end": 2.0, "text": "our mods will never give up", "avg_logprob": -0.9, "no_speech_prob": 0.1}],
     )
-    json.dump({"targets": 144, "repaired": 3, "skipped_no_ref": 0}, open(stem + ".dubtitles.repair-summary.json", "w"))
+    artifact_store.put_json(stem, "repair-summary", {"targets": 144, "repaired": 3, "skipped_no_ref": 0})
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
     monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_prior_stage.mkv"))
     monkeypatch.setattr(repair, "glossary_for", lambda video: glossary.load_dict({"show": "One Pace"}))
@@ -2594,8 +2605,7 @@ def test_an_interrupted_srt_write_leaves_the_previous_srt_intact(tmp_path, monke
 
 def test_an_interrupted_csv_write_leaves_the_previous_csv_intact(tmp_path, monkeypatch):
     stem, conf_path, srt_path = _atomic_repair_setup(tmp_path, monkeypatch)
-    csv_path = stem + ".dubtitles.repair.csv"
-    open(csv_path, "w").write("PREVIOUS CSV\n")
+    artifact_store.put_text(stem, "repair.csv", "PREVIOUS CSV\n")
 
     def boom(f, *a, **k):
         raise RuntimeError("csv died")
@@ -2605,17 +2615,19 @@ def test_an_interrupted_csv_write_leaves_the_previous_csv_intact(tmp_path, monke
         repair.process(conf_path)
     except RuntimeError:
         pass
-    assert open(csv_path).read() == "PREVIOUS CSV\n"
+    assert artifact_store.get_text(stem, "repair.csv") == "PREVIOUS CSV\n"
 
 
 def test_repair_outputs_have_the_sidecar_mode_and_unchanged_rendering(tmp_path, monkeypatch):
     stem, conf_path, srt_path = _atomic_repair_setup(tmp_path, monkeypatch)
     repair.process(conf_path)
-    for suffix in (repair.SRT_SUFFIX, ".dubtitles.repair.csv", ".dubtitles.repair-summary.json"):
-        assert os.stat(stem + suffix).st_mode & 0o777 == common.SIDECAR_MODE, suffix
+    assert os.stat(srt_path).st_mode & 0o777 == common.SIDECAR_MODE
     assert open(srt_path).read().startswith("1\n00:00:00,000 --> 00:00:01,500\n")
-    assert open(stem + ".dubtitles.repair.csv", newline="").read().startswith("orig,repaired,ref,latency_ms\r\n")
-    assert open(stem + ".dubtitles.repair-summary.json").read().startswith("{\n  \"targets\"")
+    # The store payloads are byte-identical to the files those writers used to leave:
+    # csv.writer with newline="" (CRLF rows) and json.dump(indent=2).
+    assert _repair_csv(stem).startswith("orig,repaired,ref,latency_ms\r\n")
+    assert _repair_summary(stem)
+    assert artifact_store.get_text(stem, "repair-summary").startswith('{\n  "targets"')
 
 
 def test_the_refusal_is_narrow_and_a_quiet_episode_still_rewrites(tmp_path, monkeypatch):
@@ -2637,7 +2649,7 @@ def test_the_refusal_is_narrow_and_a_quiet_episode_still_rewrites(tmp_path, monk
             {"start": 10.0, "end": 12.0, "text": "unanchored line", "avg_logprob": -0.9, "no_speech_prob": 0.1},
         ],
     )
-    json.dump({"targets": 2, "repaired": 3}, open(stem + ".dubtitles.repair-summary.json", "w"))
+    artifact_store.put_json(stem, "repair-summary", {"targets": 2, "repaired": 3})
 
     g = glossary.load_dict({"show": "One Pace"})
     monkeypatch.setattr(repair, "REPAIR_UNANCHORED", False)
@@ -2647,7 +2659,7 @@ def test_the_refusal_is_narrow_and_a_quiet_episode_still_rewrites(tmp_path, monk
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "anchored line")  # nothing to fix
 
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["repaired"] == 0 and summary["skipped_no_ref"] == 1
 
 
@@ -2737,7 +2749,7 @@ def test_an_llm_empty_card_still_ships_a_stored_human_correction(tmp_path, monke
 
     assert repair.process(conf_path) == "repaired"
     assert "I saw Spandam." in open(srt_path).read(), "the human's text was replaced by raw ASR"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["verdict_rescued"] == 1
     assert summary["llm_empty"] == 0, "a rescued card must land in exactly one bucket"
 
@@ -2765,7 +2777,7 @@ def test_an_unanchored_card_still_ships_a_stored_human_correction(tmp_path, monk
 
     assert repair.process(conf_path) == "repaired"
     assert "I saw Spandam." in open(srt_path).read()
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["verdict_rescued"] == 1
     assert summary["skipped_no_ref"] == 0
 
@@ -2796,7 +2808,7 @@ def test_a_rescued_correction_too_wide_for_one_line_ships_as_two_cues(tmp_path, 
     srt = open(srt_path).read()
     assert "abandon ship at once" in srt and "Nobody thought twice" in srt
     assert srt.count(" --> ") == 2
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["verdict_rescued"] == 1
     assert summary["verdict_unfittable"] == 0
 
@@ -2827,7 +2839,7 @@ def test_a_rescued_correction_that_cannot_be_rendered_is_still_refused(tmp_path,
     shipped = open(srt_path).read()
     assert too_long not in shipped, "an unrenderable human line must not be forced onto the card"
     assert "I saw spondum" in shipped
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["verdict_unfittable"] == 1
     assert summary["verdict_rescued"] == 0
 
@@ -2856,7 +2868,7 @@ def test_a_skipped_card_a_human_ruled_on_is_never_silent(tmp_path, monkeypatch):
     monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["verdict_owed"] == 1
     assert summary["skipped_no_ref"] == 0
     assert "I saw spondum" in open(srt_path).read(), "a rejection leaves the ASR text standing"
@@ -2891,7 +2903,7 @@ def test_a_forced_verdict_on_a_skipped_card_still_ships(tmp_path, monkeypatch):
     shipped = open(srt_path).read()
     assert "Hammy-Rat Network is online!" in shipped, "the forced wording must reach the srt"
     assert "hammy-rat network" not in shipped, "and must not arrive as the folded match key"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["verdict_rescued"] == 1 and summary["verdict_owed"] == 0
 
 
@@ -2915,7 +2927,7 @@ def test_an_accept_verdict_on_a_skipped_card_is_owed_not_guessed(tmp_path, monke
     monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["verdict_owed"] == 1, "owed, so the reviewer is told rather than guessed for"
     assert "I saw spondum" in open(srt_path).read()
 
@@ -2950,7 +2962,7 @@ def test_an_approval_orphaned_by_a_new_proposal_is_queued_not_silent(tmp_path, m
     monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["verdict_stale_proposal"] == 1, "the orphaned approval must be counted"
     queued = [json.loads(x) for x in open(stem + ".dubtitles.unresolved.jsonl") if x.strip()]
     stale = [q for q in queued if q.get("reason") == "verdict_stale_proposal"]
@@ -2982,7 +2994,7 @@ def test_a_superseded_rejection_is_not_flagged_as_stale(tmp_path, monkeypatch):
     monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([]))
 
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["verdict_stale_proposal"] == 0
 
 
@@ -3421,7 +3433,7 @@ def test_an_unreachable_secondary_pass_is_counted_separately_and_never_gated(tmp
     monkeypatch.setattr(repair.glossary, "correct", lambda t, *a, **k: gated.append(t) or real_correct(t, *a, **k))
     assert repair.process(conf_path) == "repaired"
     assert repair.LLM_UNREACHABLE not in gated
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["repaired"] == 1 and summary["rejected_secondary"] == 0
     assert summary["unreachable_secondary"] == 1 and summary["unreachable"] == 0
 
@@ -3481,7 +3493,7 @@ def test_a_poison_pill_line_below_the_threshold_still_ships(tmp_path, monkeypatc
     """GUARD: passes on the old code. 1 line of 20 always failing is 5%: the episode completes."""
     stem, conf_path = _many_target_episode(tmp_path, monkeypatch, 20, 20, _flaky_llm({7}))
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["unreachable"] == 1 and summary["repaired"] == 19
 
 
@@ -3760,7 +3772,7 @@ def test_retry_sleeps_do_not_inflate_the_reported_latency(tmp_path, monkeypatch)
     conf_path = _repair_env(tmp_path, monkeypatch, stem, [_conf_row(0.0, 2.0, "garbled line here")], lambda p, model=None: None)
     monkeypatch.setattr(repair, "llm", lambda p, model=None: repair.llm_openai(p, model))
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["mean_latency_ms"] == 3000  # three 1 s attempts; the 2 s + 4 s of backoff are not model time
 
 
@@ -3806,7 +3818,7 @@ def test_a_stop_requested_mid_loop_leaves_the_srt_untouched_and_records_stopped(
     assert len(calls) == 3  # checked between targets: the 4th was never started
     assert open(stem + repair.SRT_SUFFIX, "rb").read() == shipped
     assert common.read_stages(stem)["repair"]["outcome"] == "stopped"
-    assert not os.path.exists(stem + ".dubtitles.repair-summary.json")
+    assert not artifact_store.exists(stem, "repair-summary")
     out = capsys.readouterr().out
     assert "soft stop requested: repair stopped before the srt rewrite, the episode is retried on the next pass" in out
 
@@ -3887,7 +3899,7 @@ def test_one_deterministic_400_in_five_lines_ships_the_other_four(tmp_path, monk
     """The reviewer's probe_poison.py: this episode was refused on every pass."""
     stem, conf_path = _rejecting_episode(tmp_path, monkeypatch, 5, {2})
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["repaired"] == 4 and summary["rejected_4xx"] == 1 and summary["unreachable"] == 0
     assert summary["llm_empty"] == 1  # the rejected line lands in the existing llm_empty bucket
     queued = [json.loads(line) for line in open(stem + ".dubtitles.unresolved.jsonl")]
@@ -4097,7 +4109,7 @@ def test_one_context_overflow_400_on_a_small_default_backend_episode_ships(tmp_p
     """1 of 8 lines drawing HTTP 400 is 12.5%: it used to refuse the episode on every pass."""
     stem, conf_path = _default_backend_episode(tmp_path, monkeypatch, 8, {3}, call, reply)
     assert repair.process(conf_path) == "repaired"
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = _repair_summary(stem)
     assert summary["repaired"] == 7 and summary["rejected_4xx"] == 1 and summary["unreachable"] == 0
 
 

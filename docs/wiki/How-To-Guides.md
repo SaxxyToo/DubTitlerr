@@ -476,10 +476,12 @@ that first. `<ERROR rate-limited ...>` means the provider is throttling you, and
 still on or `REPAIR_MAX_TOKENS` is too low.
 
 **5. Run one episode and read the summary.** Queue one show and wait for repair to finish an
-episode. Then open `<stem>.dubtitles.repair-summary.json`. Repair worked when `unreachable` is
+episode. Then read the stored summary:
+`python3 -m dubtitlerr.core.artifact_store get --stem <stem> --kind repair-summary`.
+Repair worked when `unreachable` is
 `0` and `repaired` is above `0`. `llm_empty` counts the targets the model answered with nothing,
-and `rejected_4xx` counts the ones the provider refused as a request. `<stem>.dubtitles.stages.json`
-shows the stage as `ok`.
+and `rejected_4xx` counts the ones the provider refused as a request. The `stages` artifact
+(`--kind stages`) shows the stage as `ok`.
 
 **6. If repair refuses an episode.** The stage shows `backend-unreachable` and the `.srt` is
 left as it was. The log says why: too many failed targets, too many in a row, or the episode
@@ -1074,7 +1076,9 @@ images it failed to produce are the thing that is missing, not the tag.
 Include:
 
 1. The **log lines around the failure**.
-2. `.dubtitles.repair-summary.json` — it names the model, the rules and the counts.
+2. The `repair-summary` artifact
+   (`python3 -m dubtitlerr.core.artifact_store get --stem <stem> --kind repair-summary`) — it names
+   the model, the rules and the counts.
 3. `.dubtitles.crash.json`, if there is one.
 4. Whether the show is **anchored or unanchored**, plus the `ffprobe` track listing from the
    first recipe on this page.

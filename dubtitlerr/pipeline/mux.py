@@ -334,7 +334,7 @@ def _stages_ran(stem: str, src: str) -> dict:
     None rather than a confident wrong answer."""
     st = {
         # repair writes its summary unconditionally, even when every card was skipped
-        "repair": os.path.exists(stem + ".dubtitles.repair-summary.json"),
+        "repair": artifact_store.exists(stem, "repair-summary"),
         # an .ass source means the signs/songs track was merged in; a bare .srt means it was not
         "signs_merge": src.endswith(ASS_SUFFIX),
     }
