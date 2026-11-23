@@ -106,7 +106,7 @@ def process(conf_path: str, apply: bool, samples: list) -> dict:
     stem = conf_path[: -len(CONF_SUFFIX)]
     gloss = glossary_for(stem)
     try:
-        cards = json.load(open(conf_path))
+        cards = json.load(open(conf_path))  # noqa: SIM115
     except Exception as e:
         return {"stem": stem, "error": str(e)}
 

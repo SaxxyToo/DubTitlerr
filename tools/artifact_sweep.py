@@ -74,7 +74,7 @@ def render_srt(cues):
 
 
 def srt_hits(path):
-    cues = parse_srt(open(path, encoding="utf-8", errors="replace").read())
+    cues = parse_srt(open(path, encoding="utf-8", errors="replace").read())  # noqa: SIM115
     return [c["text"] for c in cues if boilerplate.is_boilerplate(c["text"])]
 
 

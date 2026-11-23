@@ -1147,7 +1147,7 @@ def fetch_episode_titles(wiki_api: str, show_key: str, page_title: str) -> list[
     os.makedirs(CACHE_DIR, exist_ok=True)
     cache_path = os.path.join(CACHE_DIR, re.sub(r"[^A-Za-z0-9]+", "_", show_key) + "_episodes.json")
     try:
-        doc = json.load(open(cache_path))
+        doc = json.load(open(cache_path))  # noqa: SIM115
     except (OSError, ValueError):
         doc = {}
     pages = doc.get("pages", {}) if doc.get("api") == wiki_api else {}
@@ -1162,7 +1162,7 @@ def fetch_episode_titles(wiki_api: str, show_key: str, page_title: str) -> list[
     titles = sorted(resolve_redirects(wiki_api, plot_section_links(wt)))
     if titles:
         pages[page_title] = {"fetched_at": time.time(), "titles": titles}
-        json.dump({"api": wiki_api, "pages": pages}, open(cache_path, "w"))
+        json.dump({"api": wiki_api, "pages": pages}, open(cache_path, "w"))  # noqa: SIM115
     return titles
 
 
@@ -1289,7 +1289,7 @@ def fetch_titles(wiki_api: str, show_key: str) -> list[str]:
     os.makedirs(CACHE_DIR, exist_ok=True)
     cache = os.path.join(CACHE_DIR, re.sub(r"[^A-Za-z0-9]+", "_", show_key) + ".json")
     try:
-        c = json.load(open(cache))
+        c = json.load(open(cache))  # noqa: SIM115
         if c.get("api") == wiki_api and (time.time() - c.get("fetched_at", 0)) < WIKI_TTL:
             return c["titles"]
     except (OSError, ValueError):
@@ -1307,7 +1307,7 @@ def fetch_titles(wiki_api: str, show_key: str) -> list[str]:
         if not cont:
             break
     if titles:
-        json.dump({"api": wiki_api, "fetched_at": time.time(), "titles": titles}, open(cache, "w"))
+        json.dump({"api": wiki_api, "fetched_at": time.time(), "titles": titles}, open(cache, "w"))  # noqa: SIM115
     return titles
 
 
@@ -1402,7 +1402,7 @@ def fetch_arc_titles_cached(wiki_api: str, show_key: str, arc: str) -> tuple[set
     the plain links are kept and the result is simply not cached, so the next pass resolves them."""
     path = _arc_cache_path(show_key)
     try:
-        doc = json.load(open(path))
+        doc = json.load(open(path))  # noqa: SIM115
     except (OSError, ValueError):
         doc = {}
     arcs = doc.get("arcs", {}) if doc.get("api") == wiki_api and doc.get("v") == ARC_CACHE_VERSION else {}
@@ -1420,7 +1420,7 @@ def fetch_arc_titles_cached(wiki_api: str, show_key: str, arc: str) -> tuple[set
         arcs[arc] = {"fetched_at": time.time(), "titles": sorted(titles)}
         try:
             os.makedirs(CACHE_DIR, exist_ok=True)
-            json.dump({"v": ARC_CACHE_VERSION, "api": wiki_api, "arcs": arcs}, open(path, "w"))
+            json.dump({"v": ARC_CACHE_VERSION, "api": wiki_api, "arcs": arcs}, open(path, "w"))  # noqa: SIM115
         except OSError:
             pass  # a cache that cannot be written costs a refetch, nothing more
     return titles, "fetched", redirects_ok
@@ -1484,7 +1484,7 @@ def fetch_scope_cached(cfg: dict, scope: dict, show_key: str) -> tuple[set[str],
     path = _arc_cache_path(show_key)
     wiki = (cfg.get("wiki") or "").rstrip("/")
     try:
-        doc = json.load(open(path))
+        doc = json.load(open(path))  # noqa: SIM115
     except (OSError, ValueError):
         doc = {}
     arcs = doc.get("arcs", {}) if doc.get("api") == wiki and doc.get("v") == ARC_CACHE_VERSION else {}
@@ -1507,7 +1507,7 @@ def fetch_scope_cached(cfg: dict, scope: dict, show_key: str) -> tuple[set[str],
     arcs[ck] = {"fetched_at": time.time(), "titles": sorted(res.titles)}
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
-        json.dump({"v": ARC_CACHE_VERSION, "api": wiki, "arcs": arcs}, open(path, "w"))
+        json.dump({"v": ARC_CACHE_VERSION, "api": wiki, "arcs": arcs}, open(path, "w"))  # noqa: SIM115
     except OSError:
         # The arc cache is memory-only this run; a failed write costs one extra wiki call next time.
         pass
@@ -1545,7 +1545,7 @@ def _tag_arcs(gloss_path: str, show_dir: str, override: str | None = None) -> di
     from dubtitlerr.glossary import glossary
 
     try:
-        gloss = json.load(open(gloss_path))
+        gloss = json.load(open(gloss_path))  # noqa: SIM115
     except (OSError, ValueError) as e:
         return {"note": f"load-failed: {e}"}
     show = gloss.get("show") or os.path.splitext(os.path.basename(gloss_path))[0]
@@ -1680,7 +1680,7 @@ def verify(gloss_path: str, override: str | None = None, force: bool = False) ->
 
 def _verify(gloss_path: str, override: str | None = None, force: bool = False) -> dict:
     try:
-        gloss = json.load(open(gloss_path))
+        gloss = json.load(open(gloss_path))  # noqa: SIM115
     except (OSError, ValueError) as e:
         return {"note": f"load-failed: {e}"}
     show = gloss.get("show") or os.path.splitext(os.path.basename(gloss_path))[0]

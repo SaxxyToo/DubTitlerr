@@ -90,7 +90,7 @@ def load_cards(raw_path, conf_path):
         sys.exit("give exactly one of --raw (whisper dump) or --conf (dubtitles.conf.json)")
     if raw_path:
         return cards_from_raw(json.load(open(raw_path)))
-    rows = json.load(open(conf_path))
+    rows = json.load(open(conf_path))  # noqa: SIM115
     if not isinstance(rows, list):
         sys.exit(f"{conf_path}: expected a JSON list of conf rows")
     for i, r in enumerate(rows):
@@ -166,7 +166,7 @@ def load_refs(refs_path, cards, conf_path, allow_conf_mismatch=False, glossary_p
     were cut for, so each exits with a message naming the problem: another conf, a different
     card count, a duplicate or non-integer idx, a target with no text, a card retimed since, or
     text that differs from the conf's."""
-    doc = json.load(open(refs_path))
+    doc = json.load(open(refs_path))  # noqa: SIM115
     if not isinstance(doc, dict) or not isinstance(doc.get("targets"), list):
         sys.exit(f"{refs_path}: not a --dump-refs file (expected an object with a 'targets' list)")
     if doc.get("conf") != os.path.basename(conf_path) and not allow_conf_mismatch:

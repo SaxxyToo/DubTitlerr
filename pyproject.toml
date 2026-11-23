@@ -76,10 +76,26 @@ target-version = "py39"
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W", "UP", "B"]
+select = ["E", "F", "I", "W", "UP", "B", "SIM115"]
 # The existing scripts use a deliberate terse one-liner house style
 # (`if x: return`, `a; b`). Keep the real-bug rules; don't fight the style.
 ignore = ["E701", "E702"]
+# SIM115 ("use a context manager for opening files") is gated so the class cannot grow back:
+# CodeQL's quality pack used to catch it and no longer runs here (see .github/workflows/codeql.yml),
+# which left nothing watching it at all. The 43 product sites that predate the gate carry a bare
+# directive each -- one-shot reads whose handle CPython closes on the next refcount drop -- and the
+# explanation lives here rather than 43 times in the tree. tests/ is exempt outright: those are
+# throwaway fixture reads and the rule earns nothing there.
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["SIM115"]
+# review_apply.py's single site stays out of the line-level baseline deliberately: line 95 carries a
+# dismissed CodeQL py/path-injection alert (#27, false positive -- the stem is validated upstream by
+# review_server._resolve), and editing that line makes CodeQL report the alert as *new* for the PR
+# ("new alerts in code changed by this pull request"), which fails the CodeQL check. A directive on
+# that line would cost more than it buys, so the file is exempt instead. The same trap applies to any
+# line carrying a dismissed alert: prefer leaving such a line byte-identical to main.
+"dubtitlerr/review/review_apply.py" = ["SIM115"]
 
 [tool.ruff.format]
 # `ruff format --check .` is a gate in CI and scripts/check.sh. This exclude list is a

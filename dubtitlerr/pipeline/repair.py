@@ -1623,7 +1623,7 @@ def _process_episode(conf_path):
     if not os.path.exists(srt) or not os.path.exists(conf_path):
         write_stage(stem, "repair", "ok", "no-srt" if not os.path.exists(srt) else "no-conf")
         return "skip"
-    conf = json.load(open(conf_path))
+    conf = json.load(open(conf_path))  # noqa: SIM115
     # For card_split's word-alignment path only (see card_split.card_words). None on any episode
     # whose sidecar is missing/stale/version-mismatched -- word-alignment then degrades to
     # the proportional fallback for every card, same as it always has.

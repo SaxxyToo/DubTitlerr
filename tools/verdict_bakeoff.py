@@ -140,8 +140,8 @@ def main(argv=None):
     ap.add_argument("--json", default="")
     a = ap.parse_args(argv)
 
-    gloss = glossary_mod.load_dict(json.load(open(a.glossary, encoding="utf-8")))
-    targets = targets_from_store(json.load(open(a.store, encoding="utf-8")))
+    gloss = glossary_mod.load_dict(json.load(open(a.glossary, encoding="utf-8")))  # noqa: SIM115
+    targets = targets_from_store(json.load(open(a.store, encoding="utf-8")))  # noqa: SIM115
     if a.limit:
         targets = targets[: a.limit]
 
@@ -164,7 +164,7 @@ def main(argv=None):
     print(f"  hit  rate (exact+near over {t['positives']:>3} answerable) : {hr:.0%}" if hr is not None else "  hit rate: n/a")
     print(f"  trap rate (over {t['rejects']:>3} the human refused) : {tr:.0%}" if tr is not None else "  trap rate: n/a")
     if a.json:
-        json.dump({a.model: {"tally": t, "rows": rows}}, open(a.json, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        json.dump({a.model: {"tally": t, "rows": rows}}, open(a.json, "w", encoding="utf-8"), ensure_ascii=False, indent=1)  # noqa: SIM115
     return 0
 
 

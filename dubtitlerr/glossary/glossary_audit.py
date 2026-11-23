@@ -65,7 +65,7 @@ def cached_titles(*show_keys: str) -> tuple[list[str], str]:
         if not key:
             continue
         try:
-            doc = json.load(open(cache_path(key)))
+            doc = json.load(open(cache_path(key)))  # noqa: SIM115
         except (OSError, ValueError):
             continue
         titles = doc.get("titles")
@@ -162,7 +162,7 @@ def audit_gloss(gloss: dict, titles: list[str] | None) -> dict:
 def audit(gloss_path: str, titles: list[str] | None = None) -> dict:
     """Audit the glossary file at ``gloss_path``; returns the report. Read-only, never raises for bad content."""
     try:
-        doc = json.load(open(gloss_path))
+        doc = json.load(open(gloss_path))  # noqa: SIM115
     except (OSError, ValueError) as e:
         return {"note": f"load-failed: {e}", "junk": [], "junk_count": 0}
     if not isinstance(doc, dict):
@@ -202,7 +202,7 @@ def _write_cleanup(path: str, run: dict) -> str:
     """Append ``run`` to the cleanup log (newest 20 kept), atomically. Returns the path."""
     doc = {"runs": []}
     try:
-        loaded = json.load(open(path))
+        loaded = json.load(open(path))  # noqa: SIM115
         if isinstance(loaded, dict) and isinstance(loaded.get("runs"), list):
             doc = loaded
     except (OSError, ValueError):
@@ -226,7 +226,7 @@ def fix(gloss_path: str, titles: list[str] | None = None) -> dict:
     rep.setdefault("cleanup", {"removed": 0, "log": None})
     if rep.get("junk_count"):
         try:
-            doc = json.load(open(gloss_path))
+            doc = json.load(open(gloss_path))  # noqa: SIM115
         except (OSError, ValueError) as e:
             rep["cleanup"] = {"removed": 0, "log": None, "note": f"load-failed: {e}"}
             return rep
@@ -269,7 +269,7 @@ def main() -> None:
     titles = None
     if a.titles:
         try:
-            doc = json.load(open(a.titles))
+            doc = json.load(open(a.titles))  # noqa: SIM115
             titles = doc.get("titles") if isinstance(doc, dict) else doc
         except (OSError, ValueError) as e:
             print(json.dumps({"note": f"titles-unreadable: {e}"}), flush=True)

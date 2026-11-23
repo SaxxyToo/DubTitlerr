@@ -196,7 +196,7 @@ class Journal:
                 kept.sort(key=lambda e: (e["at"], e["key"]))
                 body = "".join(json.dumps(e, ensure_ascii=False, sort_keys=True) + "\n" for e in kept)
                 try:
-                    if open(self.path, encoding="utf-8", errors="replace").read() == body:
+                    if open(self.path, encoding="utf-8", errors="replace").read() == body:  # noqa: SIM115
                         self._entries = {e["key"]: e for e in kept}
                         return len(kept)  # already compact: leave the file (and its mtime) alone
                 except OSError:
