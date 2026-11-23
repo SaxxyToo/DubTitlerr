@@ -218,8 +218,17 @@ internal artifact. They live in one SQLite database in the config volume:
 Schema: `artifacts(stem, kind, payload, meta, updated_at)`, primary key `(stem, kind)`. `stem`
 is the episode path without its extension — the same key the pipeline already uses for
 `common.out_for` — and `kind` is the suffix class (`conf`, `words`, `stages`, `done`,
-`unresolved`, …). The database is part of the config volume, so it is included in whatever
-backs that volume up. There is no service to run and no port to open.
+`unresolved`, …). There is no service to run and no port to open.
+
+**`artifacts.db` is the one file that must be in the config-volume backup.** Before P39 the
+per-episode state lived beside the media, so a media-tree backup carried it; now a media backup
+carries only the media and the delivered subtitles. Losing the config volume costs a full
+re-transcription of every episode and destroys the review-queue evidence. `deploy/dubtitlerr-config-backup.sh`
+(systemd `deploy/dubtitlerr-config-backup.{service,timer}`) snapshots the config volume daily and
+takes the store through `sqlite3 ".backup"`, which is consistent while the pipeline is running —
+a plain `cp` of a live WAL database needs its `-wal`/`-shm` pair and can still tear. To restore,
+stop the container, put the snapshot's `artifacts.db` back as `$CONFIG_DIR/artifacts.db`, and
+start it; the rows are the episode state.
 
 Why: the media tree used to carry 11–13 artifacts per episode (~8,477 files, 316 MB, measured
 2026-11-22). It is NFS-backed, so each entry also costs scan, sweep and backup metadata

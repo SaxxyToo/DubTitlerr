@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily config-volume snapshot for DubTitlerr (artifact store included)
+Documentation=file:///usr/local/bin/dubtitlerr-config-backup.sh
+
+[Timer]
+# 03:20 is outside the merge window's early hours and before the nightly publish slots, so the
+# snapshot sees a settled queue rather than a sweep in progress (it is safe either way -- the
+# store snapshot is consistent -- but a quiet moment keeps the diff small).
+OnCalendar=*-*-* 03:20:00
+# A host that was down at 03:20 takes the snapshot at the next boot instead of skipping a day.
+Persistent=true
+RandomizedDelaySec=10m
+Unit=dubtitlerr-config-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,30 @@
+[Unit]
+# One snapshot of the DubTitlerr config volume, driven by dubtitlerr-config-backup.timer.
+#
+# This unit exists because the P39 artifact store lives in the config volume: artifacts.db
+# carries every per-episode internal artifact (stage records, transcript confidences, repair
+# audits, the unresolved queue, the markers), so a media-tree backup is no longer a complete
+# backup of the pipeline's state. Losing that file costs a full re-transcription and the
+# review-queue evidence.
+#
+# No Requires=docker.service: the script only reads files, and it must also be usable while
+# the container is stopped (e.g. immediately before/after a migration).
+Description=Snapshot the DubTitlerr config volume (P39 artifact store included)
+Documentation=file:///usr/local/bin/dubtitlerr-config-backup.sh
+
+[Service]
+Type=oneshot
+# Backups of the config volume are fast (tens of MB), but the optional mirror is a network
+# copy: allow an hour before systemd calls it hung.
+TimeoutStartSec=1h
+Environment=CONFIG_DIR=/config
+Environment=BACKUP_DIR=/var/backups/dubtitlerr-config
+Environment=RETAIN_DAYS=14
+# COPY_TO mirrors each snapshot to another host, e.g.
+#   COPY_TO=backup-host:/srv/backups/dubtitlerr-config
+# Keep host names and any ssh options out of this unit and in this file.
+EnvironmentFile=-/etc/default/dubtitlerr-config-backup
+ExecStart=/usr/local/bin/dubtitlerr-config-backup.sh
+
+[Install]
+WantedBy=multi-user.target
