@@ -117,14 +117,52 @@ def test_restart_means_a_server_or_container_scope_and_back():
         assert (entry["applies"] == "restart") == reads_at_boot, key
 
 
-def test_only_first_wave_entries_are_editable_and_secrets_are_flagged():
-    assert {k for k, e in reg.REGISTRY.items() if e["editable"]} == {k for keys in FIRST_WAVE.values() for k in keys}
+def test_only_first_wave_and_wave_two_entries_are_editable_and_secrets_are_flagged():
+    assert {k for k, e in reg.REGISTRY.items() if e["editable"]} == {k for keys in FIRST_WAVE.values() for k in keys} | set(
+        reg.WAVE2_EDITABLE
+    )
     assert {k for k, e in reg.REGISTRY.items() if e["secret"] and e["editable"]} == {
         "PLEX_TOKEN",
         "WATCHSTATE_API_KEY",
         "JELLYFIN_API_KEY",
         "WEBHOOK_TOKEN",
+        "JIMAKU_API_KEY",
     }
+
+
+def test_the_bootstrap_cleanup_moved_the_library_paths_and_media_ids_out_of_the_forced_tier():
+    """S3: nothing in container_run.sh needs these before settings.json can be read, so they are store-manageable.
+
+    They keep `scope: container` / `applies: restart` because their readers cache the value at process start and the boot
+    export is what carries it — the same shape MERGE_INTERVAL already had.
+    """
+    for key in ("ANIME_ROOT", "MERGE_ROOTS", "MUX_ROOTS", "MEDIA_UID", "MEDIA_GID"):
+        entry = reg.REGISTRY[key]
+        assert entry["managed_by"] is None, key
+        assert entry["editable"] is True, key
+        assert entry["scope"] == ["container"] and entry["applies"] == "restart", key
+    for key in ("ANIME_ROOT", "MERGE_ROOTS", "MUX_ROOTS"):
+        assert reg.REGISTRY[key]["advanced"] is False, "a moved library must be findable without Show Advanced"
+    jimaku = reg.REGISTRY["JIMAKU_API_KEY"]
+    assert jimaku["managed_by"] is None and jimaku["editable"] is True and jimaku["secret"] is True
+    assert jimaku["scope"] == ["gen"] and jimaku["applies"] == "next_show"
+
+
+def test_the_two_documented_exclusions_stay_out_of_the_store():
+    """REVIEW_AUTH gates the store's own write path; TZ is not read by the pipeline at all."""
+    auth = reg.REGISTRY["REVIEW_AUTH"]
+    assert auth["managed_by"] == "bootstrap" and auth["editable"] is False
+    assert "container environment" in auth["help"]
+    assert "TZ" not in reg.REGISTRY
+
+
+def test_the_reclassified_values_are_validated_as_paths_and_ids():
+    assert reg.validate("ANIME_ROOT", "/media/Anime Library") == "/media/Anime Library"
+    with pytest.raises(reg.Invalid, match="must be an absolute path"):
+        reg.validate("ANIME_ROOT", "media/Anime Library")
+    with pytest.raises(reg.Invalid, match="must be at least 0"):
+        reg.validate("MEDIA_UID", -1)
+    assert reg.validate("MEDIA_GID", 100) == 100
 
 
 def test_validate_accepts_canonical_values_and_rejects_the_rest():

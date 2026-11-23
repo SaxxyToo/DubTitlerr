@@ -126,6 +126,8 @@ docker run -d --name dubtitlerr -p 8842:8842 --add-host=host.docker.internal:hos
 
 Both images need `mkvtoolnix` — the merge stage shells out to `mkvmerge` to read the video's subtitle streams and attachments. A lite build without it fails at the first merge pass with `FATAL: mkvmerge not found — image is misbuilt`.
 
+`ANIME_ROOT`, `MERGE_ROOTS`, `MUX_ROOTS`, `MEDIA_UID`, `MEDIA_GID` and `JIMAKU_API_KEY` are also rows in **Settings** (General, and Connect for the key), stored in the config volume, so a deployment that keeps the defaults needs none of them on the command line. A stored value wins over the environment, and the environment wins over the built-in default. `REVIEW_AUTH` and `TZ` stay container values.
+
 **Run the published release, or build your own.** Releases are published to GHCR by the release
 workflow: `ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z` (and `:latest`) for the full image,
 `ghcr.io/saxxytoo/dubtitlerr:vX.Y.Z-lite` (and `:latest-lite`) for the lite image. Pin a release
