@@ -166,6 +166,27 @@ test('leaving an edited page asks first: Stay and review keeps the edit, Discard
   await expect(page.getByRole('button', { name: 'No Changes' })).toBeDisabled();
 });
 
+test('Ctrl+S behind the Unsaved changes dialog does not save the page', async ({ page }) => {
+  await openSignedIn(page, '#/settings/library');
+  await page.getByLabel('Require English audio', { exact: true }).uncheck();
+  const saves: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'PUT' && r.url().includes('/api/settings')) saves.push(r.url());
+  });
+  await page.evaluate(() => (location.hash = '#/settings/output'));
+  const dialog = page.getByRole('dialog', { name: 'Unsaved changes' });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Control+s');
+  // The modal owns the keyboard: the shortcut must not reach the page behind it. Give a save that
+  // was (wrongly) fired time to hit the server before asserting that none did.
+  await page.waitForTimeout(500);
+  expect(saves).toEqual([]);
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Stay and review' }).click();
+  await expect(page.getByRole('button', { name: 'Save Changes' })).toBeEnabled();
+});
+
 test('the sidebar also asks before an edited page is left, and a saved page leaves without a question', async ({
   page,
 }) => {

@@ -1,10 +1,17 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
+  import { rememberFocus, restoreFocus } from '../../lib/focus.js';
+
   let { step, detail, onclose }: { step: 'waiting' | 'timeout'; detail: string; onclose: () => void } =
     $props();
   let dialog = $state<HTMLDialogElement>();
   $effect(() => {
-    if (dialog && !dialog.open) dialog.showModal();
+    if (dialog && !dialog.open) {
+      rememberFocus();
+      dialog.showModal();
+    }
   });
+  onDestroy(restoreFocus);
 </script>
 
 <!-- Not dismissable while waiting: Escape is swallowed, because the page cannot be used until the builder is back.

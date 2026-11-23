@@ -10,6 +10,7 @@
   }: { username: string; role: string; onlogout: () => void; disabled?: boolean } = $props();
   let open = $state(false);
   let wrap = $state<HTMLDivElement>();
+  let toggle = $state<HTMLButtonElement>();
   let current = $state('');
   let next = $state('');
   let again = $state('');
@@ -40,18 +41,22 @@
   function outside(e: MouseEvent) {
     if (open && wrap && !wrap.contains(e.target as Node)) open = false;
   }
+  // Escape is heard wherever focus sits, not only inside the wrapper, and it hands focus back to the
+  // button that opened the menu instead of dropping it to <body>.
+  function escape(e: KeyboardEvent) {
+    if (open && e.key === 'Escape') {
+      open = false;
+      toggle?.focus();
+    }
+  }
 </script>
 
-<svelte:window onclick={outside} />
+<svelte:window onclick={outside} onkeydown={escape} />
 
-<div
-  class="account-menu-wrap"
-  bind:this={wrap}
-  onkeydown={(e) => e.key === 'Escape' && (open = false)}
-  role="presentation"
->
+<div class="account-menu-wrap" bind:this={wrap} role="presentation">
   <button
     class="icon-button"
+    bind:this={toggle}
     aria-label="Account menu"
     aria-expanded={open}
     aria-controls="account-menu"

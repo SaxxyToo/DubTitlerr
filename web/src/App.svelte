@@ -35,6 +35,7 @@
   import AccountMenu from './lib/AccountMenu.svelte';
   import { apiFetch, logout as endSession, me as fetchMe } from './lib/session.js';
   import { canonicalHash, hashFor, parseHash, parseSettingsCategory } from './lib/route.js';
+  import { rememberFocus, restoreFocus } from './lib/focus.js';
   import { isSaveShortcut } from './lib/settingsModel.js';
   import { EPISODE_SORTS, LINE_SORTS, readSortPref, sortEpisodes, writeSortPref } from './lib/episodeSort.js';
   import type { Draft, Entry, Episode, SaveResult, Shared, Verdict } from './types';
@@ -145,6 +146,16 @@
   $effect(() => {
     if (showHelp && helpDialog && !helpDialog.open) helpDialog.showModal();
   });
+  // The help overlay unmounts when it closes, so focus goes back to whichever button opened it
+  // (the topbar icon and the footer chip are both triggers).
+  function openHelp() {
+    rememberFocus();
+    showHelp = true;
+  }
+  function closeHelp() {
+    showHelp = false;
+    void tick().then(restoreFocus);
+  }
   let audioRequest = 0;
   let lastEvidenceId = '';
   // Filters can change the active question without clicking Next. Never keep another line's clip on screen.
@@ -599,6 +610,9 @@
     }
   }
   function keydown(e: KeyboardEvent) {
+    // A modal owns the keyboard while it is open: no review shortcut and no Ctrl+S may fire behind
+    // the help overlay or the Unsaved/Restart dialogs.
+    if (document.querySelector('dialog[open]')) return;
     if (e.key === 'Escape' && mobileNav) {
       closeDrawer(true);
       return;
@@ -636,7 +650,7 @@
       e.preventDefault();
       void playClip();
     }
-    if (key === '?') showHelp = !showHelp;
+    if (key === '?') openHelp();
   }
   function beforeUnload(e: BeforeUnloadEvent) {
     if (staged || (view === 'glossary' && glossaryDirty) || (view === 'settings' && settingsDirty)) {
@@ -667,6 +681,9 @@
     account = { state: 'login', username: '', role: '' };
     message = '';
     error = '';
+    // The account menu that started this unmounts with the session; without this, focus falls to
+    // <body>. Land it on the page content, which is now the sign-in panel.
+    void tick().then(() => document.getElementById('main')?.focus());
   }
   onMount(() => {
     if (location.hash !== '' && location.hash !== canonicalHash(location.hash))
@@ -735,7 +752,7 @@
         >{#if view === 'inbox' || view === 'shared'}<button
             class="icon-button"
             aria-label="Keyboard shortcuts"
-            onclick={() => (showHelp = !showHelp)}><CircleHelp size={19} /></button
+            onclick={() => (showHelp ? closeHelp() : openHelp())}><CircleHelp size={19} /></button
           >{/if}{#if authenticated}<AccountMenu
             username={account.username}
             role={account.role}
@@ -918,7 +935,7 @@
                 >
               </div>
               {#if current}
-                <div class="line-strip" aria-label="Review lines">
+                <div class="line-strip" role="group" aria-label="Review lines">
                   {#each visible as e, i (e.id)}<button
                       class:active={current.id === e.id}
                       class:decided={!!drafts[e.id]}
@@ -1056,15 +1073,10 @@
                             size={17}
                           />{:else if verdict === 'force'}<LockKeyhole size={17} />{:else}<ClipboardCheck
                             size={17}
-                          />{/if}{verdictLabels[verdict]}<kbd
-                          >{verdict === 'accept'
-                            ? 'A'
-                            : verdict === 'reject'
-                              ? 'R'
-                              : verdict === 'correct'
-                                ? 'C'
-                                : '!'}</kbd
-                        ></button
+                          />{/if}{verdictLabels[verdict]}{#if verdict === 'accept'}<kbd>A</kbd
+                          >{:else if verdict === 'reject'}<kbd>R</kbd>{:else if verdict === 'correct'}<kbd
+                            >C</kbd
+                          >{/if}</button
                       >{/each}<button
                       class="secondary deck-nav"
                       onclick={() => move(1)}
@@ -1124,7 +1136,9 @@
                   >{/if}<button class="primary" onclick={save} disabled={!staged || saving || loading}
                   >{#if saving}<LoaderCircle size={16} class="spin" />{:else}<Save size={16} />{/if}{saving
                     ? 'Working…'
-                    : `Save ${staged || ''} choice${staged === 1 ? '' : 's'}`}<kbd>⌘ / Ctrl S</kbd></button
+                    : staged
+                      ? `Save ${staged} choice${staged === 1 ? '' : 's'}`
+                      : 'Save choices'}<kbd>⌘ / Ctrl S</kbd></button
                 >
               </div>
             </footer>
@@ -1134,9 +1148,7 @@
           <ShieldCheck size={14} /><span
             >Human decisions are show-wide. Review the exact wording; a saved verdict may settle the same line
             in other episodes.</span
-          ><button class="text-button" onclick={() => (showHelp = true)}
-            >Keyboard shortcuts <kbd>?</kbd></button
-          >
+          ><button class="text-button" onclick={openHelp}>Keyboard shortcuts <kbd>?</kbd></button>
         </div>
       {/if}
     </main>
@@ -1147,20 +1159,20 @@
     bind:this={helpDialog}
     class="help-panel"
     aria-labelledby="help-title"
-    onclose={() => (showHelp = false)}
+    onclose={closeHelp}
   >
     <div class="panel-title">
       <h2 id="help-title">Keep your hands on the keyboard</h2>
-      <button class="icon-button" aria-label="Close keyboard shortcuts" onclick={() => (showHelp = false)}
+      <button class="icon-button" aria-label="Close keyboard shortcuts" onclick={closeHelp}
         ><X size={20} /></button
       >
     </div>
     <p>Shortcuts work outside form controls. Choices are staged, never auto-saved.</p>
-    {#each [['J / ↓', 'Next line'], ['K / ↑', 'Previous line'], ['A', 'Keep repair (when offered)'], ['R', 'Keep original'], ['C', 'Write correction'], ['Space', 'Play / pause dub preview'], ['Escape', 'Clear current choice'], ['Ctrl / ⌘ S', 'Save staged choices']] as item (item[0])}<div
+    {#each [['J / ↓', 'Next line'], ['K / ↑', 'Previous line'], ['A', 'Keep repair (when offered)'], ['R', 'Keep original'], ['C', 'Write correction'], ['Space', 'Play / pause dub preview'], ['Escape', 'Clear current choice'], ['Ctrl / ⌘ S', 'Save staged choices'], ['?', 'Show this help']] as item (item[0])}<div
         class="shortcut-row"
       >
         <span>{item[1]}</span><kbd>{item[0]}</kbd>
-      </div>{/each}<button class="primary" onclick={() => (showHelp = false)}>Back to review</button>
+      </div>{/each}<button class="primary" onclick={closeHelp}>Back to review</button>
   </dialog>{/if}
 
 {#if unsavedGo}
