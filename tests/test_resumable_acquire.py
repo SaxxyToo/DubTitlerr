@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import store_seed
 
 from dubtitlerr.core import adjudication_journal as aj
 from dubtitlerr.glossary import glossary_acquire as ga
@@ -32,7 +33,7 @@ def build_show(d, pairs=PAIRS, extra=()):
             f"{c} once more.",
         ] * 6
     texts += list(extra)
-    (d / "Ep01.dubtitles.conf.json").write_text(json.dumps([{"start": i, "end": i + 1, "text": t} for i, t in enumerate(texts)]))
+    store_seed.conf(str(d / "Ep01.dubtitles.conf.json"), [{"start": i, "end": i + 1, "text": t} for i, t in enumerate(texts)])
     gp = d / "S.json"
     gp.write_text(json.dumps({"show": "S"}))
     return gp
@@ -95,8 +96,11 @@ def test_a_changed_context_or_model_is_asked_again(acq, monkeypatch):
     acq()
     base = len(acq.state["calls"])
     acq.drop_cache()
-    conf = acq.gp.parent / "Ep01.dubtitles.conf.json"
-    conf.write_text(conf.read_text().replace("Hey Smokey.", "Hey Smokey, listen."))  # Smokey's context lines change
+    conf_path = str(acq.gp.parent / "Ep01.dubtitles.conf.json")
+    rows = store_seed.load(conf_path, "conf")
+    store_seed.conf(
+        conf_path, [{**r, "text": str(r.get("text", "")).replace("Hey Smokey.", "Hey Smokey, listen.")} for r in rows]
+    )  # Smokey's context lines change
     acq()
     asked = len(acq.state["calls"]) - base
     assert asked == 1, "only the pair whose context lines changed (Smokey/Smoker) is asked again"
@@ -143,13 +147,12 @@ def test_tier_b_term_picks_are_journaled_and_reused(tmp_path, monkeypatch):
     monkeypatch.delenv("ACQUIRE_NO_CACHE", raising=False)
     gp = tmp_path / "One Pace.json"
     gp.write_text(json.dumps({"show": "One Pace"}))
-    (tmp_path / "Ep01.dubtitles.conf.json").write_text(
-        json.dumps(
-            [
-                {"start": i, "end": i + 1, "text": t}
-                for i, t in enumerate(["I saw Kasumi walk.", "I saw Kasumi again.", "I saw Kasumi thrice."] * 3)
-            ]
-        )
+    store_seed.conf(
+        str(tmp_path / "Ep01.dubtitles.conf.json"),
+        [
+            {"start": i, "end": i + 1, "text": t}
+            for i, t in enumerate(["I saw Kasumi walk.", "I saw Kasumi again.", "I saw Kasumi thrice."] * 3)
+        ],
     )
     monkeypatch.setattr(gv, "VERIFY_BACKEND", "llamacpp")
     monkeypatch.setattr(gv, "backend_problem", lambda backend=None: "")

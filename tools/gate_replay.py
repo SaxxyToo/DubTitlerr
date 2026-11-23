@@ -35,7 +35,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dubtitlerr.core import decisions  # noqa: E402
+from dubtitlerr.core import (
+    common,  # noqa: E402
+    decisions,  # noqa: E402
+)
 from dubtitlerr.pipeline import repair  # noqa: E402
 
 JUDGED_REASONS = ("rejected_guard", "rejected_name_invented", "rejected_name_part")
@@ -54,19 +57,17 @@ def _stems(root):
 
 
 def _durations(stem):
-    """Map ``decisions.key(original_text)`` -> card duration in seconds, from the conf sidecar.
+    """Map ``decisions.key(original_text)`` -> card duration in seconds, from the stored conf.
 
     A queue entry carries no timing (unresolved.card_starts derives it the same way), so the
     card the proposal was judged on is found by text identity. Missing/duplicate cards simply
     fall out of the map; the caller counts those and uses DEFAULT_DURATION.
     """
     out = {}
-    try:
-        with open(stem + ".dubtitles.conf.json", encoding="utf-8") as f:
-            cards = json.load(f)
-    except (OSError, ValueError, TypeError):
+    cards = common.read_conf(stem)
+    if cards is None:
         return out
-    for c in cards if isinstance(cards, list) else ():
+    for c in cards:
         if not isinstance(c, dict):
             continue
         try:

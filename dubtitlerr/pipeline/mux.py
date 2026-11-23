@@ -339,11 +339,12 @@ def _stages_ran(stem: str, src: str) -> dict:
         "signs_merge": src.endswith(ASS_SUFFIX),
     }
     try:
-        with open(stem + ".dubtitles.qc.json", encoding="utf-8") as f:
-            counters = json.load(f).get("counters") or {}
-        st["punctuation"] = counters.get("restore_runs_sent", 0) > 0
-    except (OSError, ValueError):
-        pass  # no qc sidecar (pre-QC episode) -> cannot tell, so say nothing
+        doc = artifact_store.get_json(stem, "qc")
+        if isinstance(doc, dict):
+            counters = doc.get("counters") or {}
+            st["punctuation"] = counters.get("restore_runs_sent", 0) > 0
+    except Exception:  # noqa: BLE001 - no qc artifact (pre-QC episode) -> cannot tell, so say nothing
+        pass
     return st
 
 
@@ -476,14 +477,14 @@ def held_for_review(stem):
     # keep the history -- it is what a human already judged, and the input to the later
     # accept_repair tightening -- and ignore the orphans here.
     #
-    # FAILS CLOSED. An unreadable conf.json means we cannot tell an orphan from a live entry,
+    # FAILS CLOSED. No stored conf means we cannot tell an orphan from a live entry,
     # and the alternative to holding is releasing unreviewed repairs. Normalised with
     # decisions.key so a doubled space cannot orphan a live entry.
     # unresolved.live_only answers the same question for the review page, and it fails OPEN
-    # where this must fail CLOSED -- so the SET is shared and the direction is not. An
-    # unreadable conf.json means an orphan cannot be told from a live entry, and here the
+    # where this must fail CLOSED -- so the SET is shared and the direction is not. A missing
+    # or unreadable conf means an orphan cannot be told from a live entry, and here the
     # cost of guessing wrong is releasing an unreviewed repair.
-    if os.path.exists(stem + unresolved.CONF_SUFFIX):
+    if artifact_store.exists(stem, "conf"):
         pend = unresolved.live_only(stem, pend)
         if not pend:
             return False

@@ -17,6 +17,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+import store_seed
 
 from dubtitlerr.core import media_select, unresolved
 from dubtitlerr.pipeline import generate
@@ -110,7 +111,7 @@ def clip(tmp_path, monkeypatch):
     """The minimum preview_audio needs: a known stem, a card, a review entry and media."""
     stem = str(tmp_path / "episode")
     pathlib.Path(stem + ".mkv").write_bytes(b"fixture")
-    pathlib.Path(stem + rs.CONF_SUFFIX).write_text(json.dumps([{"text": "Hello.", "start": 3.0, "end": 200.0}]))
+    store_seed.conf(stem + rs.CONF_SUFFIX, [{"text": "Hello.", "start": 3.0, "end": 200.0}])
     unresolved.record(stem, "repair_applied", "accepted", original_text="Hello.", proposed_text="Hello!")
     row = unresolved.items(stem)[0]
     monkeypatch.setattr(rs, "ROOTS", [str(tmp_path)])

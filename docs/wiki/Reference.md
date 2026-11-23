@@ -205,13 +205,10 @@ change. The merged `.ass` keeps the same `...eng.dubtitles.*` name, so it still 
 | -------------------------------- | ------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `.eng.dubtitles.srt`             | `generate.py`, `repair.py`, `review_apply.py`                | `dub_signs_merge.py`, `mux.py`               | The dialogue transcript from the dub audio                                                                          |
 | `.eng.dubtitles.ass`             | `dub_signs_merge.py`, `review_apply.py`                      | `mux.py`                                     | Dialogue plus signs, songs and credits                                                                              |
-| `.dubtitles.conf.json`           | `generate.py`, `repair.py`                                   | `repair.py`, `glossary_acquire.py`, `mux.py` | Per-cue `avg_logprob` and `no_speech_prob`                                                                          |
-| `.dubtitles.words.json`          | `generate.py`                                                | `generate.py`                                | Per-word confidences and audio duration, plus the decoder identity (`backend`, `model`) it was produced under; lets a text-tier re-run skip the GPU |
 | `.dubtitles.fail`                | `generate.py`                                                | `generate.py`, `review_requests.py`          | Poison marker while an episode is in flight / after a hard crash. Generate refuses the episode and a request containing it fails; see [Crash-marked episodes](#crash-marked-episodes) |
 | `.dubtitles.mux-recovery`        | `mux.py`                                                     | `mux.py`, the `deploy/` close unit           | Written when a failed cross-device copy may have damaged the episode. While it exists, mux refuses that episode     |
 | `.muxtmp.mkv.recovered`          | `mux.py`                                                     | you                                          | The complete muxed file that failed copy kept. The marker names its path                                            |
 | `.dubtitles.crash.json`          | `generate.py`                                                | `review_requests.py`                         | Exception type, message and time from that crash; read by the `crash-marked` listing          |
-| `.dubtitles.qc.json`             | `generate.py`                                                | `mux.py`                                     | Quality counters, cps quantiles, layout violations, and duration flags (schema version 5: overlong and drip_chain)  |
 | `.dubtitles.repair.csv`          | `repair.py`                                                  | -                                            | Audit trail: original, repaired, reference, latency                                                                 |
 | `.dubtitles.repair-summary.json` | `repair.py`                                                  | `mux.py`                                     | Targets, repaired, skipped, latency, model, rules, and `anchor_mode`                                                |
 | `.dubtitles.unresolved.jsonl`    | `unresolved.py`                                              | `unresolved.py`, `review_server.py`          | Rejections awaiting human triage (the review queue)                                                                 |
@@ -234,12 +231,21 @@ Why: the media tree used to carry 11–13 artifacts per episode (~8,477 files, 3
 2026-11-22). It is NFS-backed, so each entry also costs scan, sweep and backup metadata
 traffic. The store keeps the same information with one file in an already-persisted volume.
 
-Two kinds that used to sit beside the video now live only here:
+Six kinds that used to sit beside the video now live only here:
 
 | Kind     | Old suffix             | Written by                                                   | Read by                                               | Contents                                                                                          |
 | -------- | ---------------------- | ------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `done`   | `.dubtitles.done`      | `common.write_stamp` (`mux.py`, migration tools)              | `generate.py`, `mux.py`, `review_*`, `tools/*`        | Completion stamp: muxed size, mtime, tier versions, decoder identity (`asr_backend`, `asr_model`)  |
 | `stages` | `.dubtitles.stages.json` | `repair.py`, `dub_signs_merge.py`, `mux.py`, `merge_pass.sh` | `merge_pass.sh`, `mux.py`, `review_status.py`         | One outcome per stage (repair, signs, mux). See [Stage outcomes](#stage-outcomes)                  |
+| `words`  | `.dubtitles.words.json` | `generate.py`                                                | `generate.py`                                         | Per-word confidences and audio duration, plus the decoder identity (`backend`, `model`) it was produced under; lets a text-tier re-run skip the GPU |
+| `conf`   | `.dubtitles.conf.json` | `generate.py`, `repair.py`                                   | `repair.py`, `glossary_acquire.py`, `recreate_srt.py`, `review_*`, `unresolved.py`, `mux.py` | Per-cue `avg_logprob` and `no_speech_prob`, the decisions every repair-stage reader shares |
+| `qc`     | `.dubtitles.qc.json`   | `generate.py`                                                | `mux.py`                                              | Quality counters, cps quantiles, layout violations, and duration flags (schema version 5: overlong and drip_chain) |
+| `cuts`   | `.dubtitles.cuts.json` | `generate.py`                                                | `generate.py`                                         | Scene-cut cache for the sign/song timing pass, keyed by the video's own fingerprint                |
+
+A parked artifact is the previous generation of a live kind, kept under `<kind>.parked` while a
+rebuild runs (`artifact_store.park`/`unpark`). The live row is deleted so nothing serves the
+superseded payload; a failed rebuild leaves the old payload one call from being restored, and no
+`.stale` file is written beside the media.
 
 The `done` payload is byte-identical to the old file, so `stamp_valid` decides exactly as it
 did: a size or mtime mismatch, an older tier, or another decoder reads stale. No code reads

@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import store_seed
 
 from dubtitlerr.core import unresolved
 from dubtitlerr.review import review_server as rs
@@ -16,7 +17,7 @@ from dubtitlerr.review import review_server as rs
 def clip(tmp_path, monkeypatch):
     stem = str(tmp_path / "episode")
     Path(stem + ".mkv").write_bytes(b"fixture")
-    Path(stem + rs.CONF_SUFFIX).write_text(json.dumps([{"text": "Hello.", "start": 3.0, "end": 200.0}]))
+    store_seed.conf(stem + rs.CONF_SUFFIX, [{"text": "Hello.", "start": 3.0, "end": 200.0}])
     unresolved.record(stem, "repair_applied", "accepted", original_text="Hello.", proposed_text="Hello!")
     row = unresolved.items(stem)[0]
     monkeypatch.setattr(rs, "ROOTS", [str(tmp_path)])
@@ -57,7 +58,7 @@ def test_clip_limits_duration_and_selects_non_commentary_english_track(clip, mon
 
 @pytest.mark.parametrize("bounds", [(float("nan"), 5), (3, float("inf")), (-2, 4), (5, 3)])
 def test_unusable_cue_bounds_do_not_run_extraction(clip, monkeypatch, bounds):
-    Path(clip["stem"] + rs.CONF_SUFFIX).write_text(json.dumps([{"text": "Hello.", "start": bounds[0], "end": bounds[1]}]))
+    store_seed.conf(clip["stem"] + rs.CONF_SUFFIX, [{"text": "Hello.", "start": bounds[0], "end": bounds[1]}])
     monkeypatch.setattr(rs.subprocess, "run", lambda *a, **kw: pytest.fail("invalid cue reached ffmpeg"))
     assert rs.preview_audio(clip)[0] == 400
 

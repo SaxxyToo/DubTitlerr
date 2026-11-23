@@ -48,7 +48,7 @@ import re
 import time
 
 from dubtitlerr.core import decisions, queue_policy
-from dubtitlerr.core.common import SIDECAR_MODE, atomic_write, out_for
+from dubtitlerr.core.common import SIDECAR_MODE, atomic_write, out_for, read_conf
 
 # Imported as a NAME so the CLI resolves a show exactly the way the store and the mux gate
 # do. decisions.py imports stdlib plus common, and common imports nothing from this repo
@@ -446,10 +446,12 @@ def live_only(stem: str, entries: list) -> list:
     Shared with mux.held_for_review rather than reimplemented -- two answers to "is this
     entry still live" would drift, and the drift would be invisible until a reviewer was
     shown a queue the gate disagreed with."""
+    cards = read_conf(stem)
+    if cards is None:
+        return list(entries)  # same fail-open arm as an unreadable sidecar
     try:
-        with open(out_for(stem + CONF_SUFFIX), encoding="utf-8") as f:
-            live = {decisions.key(c.get("text", "")) for c in json.load(f) if isinstance(c, dict)}
-    except (OSError, ValueError, TypeError):
+        live = {decisions.key(c.get("text", "")) for c in cards if isinstance(c, dict)}
+    except TypeError:
         return list(entries)
     return [e for e in entries if decisions.key(e.get("original_text", "")) in live]
 
@@ -473,14 +475,15 @@ def card_starts(stem: str) -> dict:
     Keyed on decisions.key, the same identity live_only matches on, so the two cannot
     disagree about which entry describes which card. Returns {} rather than raising."""
     out: dict = {}
+    cards = read_conf(stem)
+    if cards is None:
+        return {}
     try:
-        with open(out_for(stem + CONF_SUFFIX), encoding="utf-8") as f:
-            cards = json.load(f)
         for c in cards:
             if not isinstance(c, dict):
                 continue
             out.setdefault(decisions.key(c.get("text", "")), []).append(float(c.get("start", 0.0)))
-    except (OSError, ValueError, TypeError):
+    except (TypeError, ValueError):
         return {}
     return out
 
@@ -507,9 +510,10 @@ def card_context(stem: str, width: int = 1) -> dict:
     cannot disagree about which entry describes which card. Returns {} rather than raising:
     observability never fails an episode."""
     out: dict = {}
+    cards = read_conf(stem)
+    if cards is None:
+        return {}
     try:
-        with open(out_for(stem + CONF_SUFFIX), encoding="utf-8") as f:
-            cards = json.load(f)
         rows = [c for c in cards if isinstance(c, dict)]
         texts = [str(c.get("text", "")) for c in rows]
         for i, c in enumerate(rows):

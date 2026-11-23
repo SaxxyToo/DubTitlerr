@@ -41,7 +41,7 @@ import json
 import os
 
 from dubtitlerr.core import artifact_store, decisions
-from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, atomic_write, log, read_words, ts_srt
+from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, atomic_write, log, read_conf, read_words, ts_srt
 from dubtitlerr.pipeline import card_split, reflow
 
 # The SAME fits_card repair.py applies, imported rather than reimplemented. Two writers of
@@ -91,13 +91,12 @@ def apply_episode(stem: str, store: dict, apply: bool = False) -> dict:
     from disk. That is enough to decide ELIGIBILITY, and eligibility is all this decides:
     repair.py re-runs afterwards and applies the verdicts through the full pair key."""
     res = {"stem": stem, "changed": 0}
-    try:
-        rows = json.load(open(stem + CONF_SUFFIX, encoding="utf-8"))
-    except (OSError, ValueError):
+    rows = read_conf(stem)
+    if rows is None:
         res["error"] = "no conf.json"
         return res
     if not isinstance(rows, list):
-        res["error"] = "conf.json is not a list of cards"
+        res["error"] = "conf is not a list of cards"
         return res
 
     # card_split's word-alignment path only; None on any episode with no usable sidecar,
@@ -159,7 +158,7 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
     a = ap.parse_args(argv)
 
-    stems = [a.target] if os.path.exists(a.target + CONF_SUFFIX) else _walk(a.target)
+    stems = [a.target] if artifact_store.exists(a.target, "conf") else _walk(a.target)
     # Resolved PER EPISODE, cached per show. Resolving once from the first episode found is
     # wrong the moment a sweep spans two shows -- and wrong in silence, because episodes
     # checked against another show's store report 0 changed, which reads exactly like
@@ -200,10 +199,7 @@ def main(argv=None):
 
 
 def _walk(root: str) -> list:
-    out = []
-    for dp, _dns, fs in os.walk(root):
-        out += [os.path.join(dp, f[: -len(CONF_SUFFIX)]) for f in fs if f.endswith(CONF_SUFFIX)]
-    return sorted(out)
+    return sorted(artifact_store.stems(root, kind="conf"))
 
 
 if __name__ == "__main__":

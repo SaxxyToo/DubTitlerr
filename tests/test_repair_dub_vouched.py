@@ -7,10 +7,10 @@ DAN DA DAN refusals must be admitted under role=dub, and every translation-role 
 stay exactly what the classic gates returned.
 """
 
-import json
 
 import pytest
 import repair_ref_stub
+import store_seed
 
 from dubtitlerr.core import unresolved
 from dubtitlerr.glossary import glossary
@@ -185,8 +185,7 @@ def test_dub_role_only_moves_the_vouched_pairs():
 
 def _write_conf(conf_path, srt_path, rows):
     open(srt_path, "w").close()
-    with open(conf_path, "w") as f:
-        json.dump(rows, f)
+    store_seed.conf(conf_path, rows)
 
 
 def _episode(tmp_path, monkeypatch, stem, role, cue_text, out):

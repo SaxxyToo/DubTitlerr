@@ -11,6 +11,8 @@ than crashing the sweep.
 import json
 import os
 
+import store_seed
+
 from dubtitlerr.core import artifact_store, common
 from tools import reapply_glossary as rg
 
@@ -23,8 +25,7 @@ def _episode(tmp_path, cards, *, with_stamp=True):
     season = tmp_path / "Test" / "Season 01"
     season.mkdir(parents=True)
     stem = str(season / "Test - S01E01")
-    with open(stem + rg.CONF_SUFFIX, "w") as f:
-        json.dump(cards, f)
+    store_seed.conf(stem + rg.CONF_SUFFIX, cards)
     if with_stamp:
         artifact_store.put_json(stem, "done", {"muxed": True, "version": 4})
     gdir = tmp_path / "glossaries"
@@ -39,12 +40,12 @@ def test_a_dry_run_changes_nothing_on_disk(tmp_path, monkeypatch):
     proposed diff would silently mutate finished episodes."""
     stem, gdir = _episode(tmp_path, [{"text": "He used hockey", "start": 0.0, "end": 1.0}])
     monkeypatch.setattr(rg, "GLOSSARY_DIR", gdir)
-    before = open(stem + rg.CONF_SUFFIX).read()
+    before = store_seed.load(stem + rg.CONF_SUFFIX, "conf")
 
     res = rg.process(stem + rg.CONF_SUFFIX, apply=False, samples=[])
 
     assert res["changed"] == 1, "fixture proves nothing if the correction did not fire"
-    assert open(stem + rg.CONF_SUFFIX).read() == before
+    assert store_seed.load(stem + rg.CONF_SUFFIX, "conf") == before
     assert not os.path.exists(stem + rg.SRT_SUFFIX)
     assert artifact_store.exists(stem, "done"), "dry run must not re-open the episode"
 
@@ -60,7 +61,7 @@ def test_apply_writes_the_sidecar_before_dropping_the_stamp(tmp_path, monkeypatc
     assert res["stamp_dropped"] is True
     assert not artifact_store.exists(stem, "done")
     assert os.path.exists(stem + rg.SRT_SUFFIX), "stamp dropped without output to replace it"
-    assert json.load(open(stem + rg.CONF_SUFFIX))[0]["text"] == "He used Haki"
+    assert store_seed.load(stem + rg.CONF_SUFFIX, "conf")[0]["text"] == "He used Haki"
 
 
 def test_an_unchanged_episode_is_left_completely_alone(tmp_path, monkeypatch):
@@ -80,8 +81,7 @@ def test_an_unreadable_conf_is_reported_not_raised(tmp_path, monkeypatch):
     """One corrupt sidecar must not abort a sweep over hundreds of episodes."""
     stem, gdir = _episode(tmp_path, [{"text": "x", "start": 0.0, "end": 1.0}])
     monkeypatch.setattr(rg, "GLOSSARY_DIR", gdir)
-    with open(stem + rg.CONF_SUFFIX, "w") as f:
-        f.write("{not json")
+    artifact_store.put_text(stem, "conf", "{not json")
 
     res = rg.process(stem + rg.CONF_SUFFIX, apply=True, samples=[])
 
@@ -99,7 +99,7 @@ def test_render_srt_matches_the_shape_generate_writes(tmp_path):
 def test_find_confs_walks_a_directory_and_sorts(tmp_path):
     stem, _ = _episode(tmp_path, [{"text": "x", "start": 0.0, "end": 1.0}])
     found = rg.find_confs(str(tmp_path))
-    assert found == [stem + rg.CONF_SUFFIX]
+    assert found == [stem]
 
 
 # --- tier classification (spec v5-two-tier-idempotency, S-3) -------------------
@@ -112,20 +112,18 @@ def _episode_with_words(tmp_path, cards, stored_prompt, gloss):
     season = tmp_path / "One Pace" / "Season 01"
     season.mkdir(parents=True)
     stem = str(season / "One Pace - S01E01")
-    with open(stem + rg.CONF_SUFFIX, "w") as f:
-        json.dump(cards, f)
-    with open(stem + common.WORDS_SUFFIX, "w") as f:
-        json.dump(
-            {
-                "schema_version": common.WORDS_SCHEMA_VERSION,
-                "transcribe_version": common.TRANSCRIBE_VERSION,
-                "initial_prompt": stored_prompt,
-                "audio_duration": 10.0,
-                "segments": [],
-                "words": [{"text": "x", "start": 0.0, "end": 1.0, "prob": 1.0, "seg": 0}],
-            },
-            f,
-        )
+    store_seed.conf(stem + rg.CONF_SUFFIX, cards)
+    store_seed.words(
+        stem + common.WORDS_SUFFIX,
+        {
+            "schema_version": common.WORDS_SCHEMA_VERSION,
+            "transcribe_version": common.TRANSCRIBE_VERSION,
+            "initial_prompt": stored_prompt,
+            "audio_duration": 10.0,
+            "segments": [],
+            "words": [{"text": "x", "start": 0.0, "end": 1.0, "prob": 1.0, "seg": 0}],
+        },
+    )
     gdir = tmp_path / "glossaries"
     gdir.mkdir()
     with open(gdir / "One Pace.json", "w") as f:
@@ -158,7 +156,7 @@ def test_a_hard_fixes_only_edit_flags_nothing_for_the_gpu(tmp_path, monkeypatch)
 
     assert res["tier"] is None, "a hard_fixes edit must not reach the GPU"
     assert res["changed"] == 1, "but the correction must still be applied"
-    assert json.load(open(stem + rg.CONF_SUFFIX))[0]["text"] == "He used Haki"
+    assert store_seed.load(stem + rg.CONF_SUFFIX, "conf")[0]["text"] == "He used Haki"
 
 
 def test_a_prompt_changing_edit_is_flagged_transcription_stale(tmp_path, monkeypatch):

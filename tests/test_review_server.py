@@ -13,6 +13,7 @@ import time
 from typing import Any
 
 import pytest
+import store_seed
 
 from dubtitlerr.core import common, decisions, unresolved
 from dubtitlerr.review import review_server
@@ -29,8 +30,9 @@ _CARDS = ["I saw spondum", "the ship sailed", "he went thataway", "we run this j
 def _episode(tmp_path, name="ep"):
     """An episode with a queue holding one of each reason that matters here."""
     stem = str(tmp_path / name)
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(_CARDS)], f)
+    store_seed.conf(
+        stem + ".dubtitles.conf.json", [{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(_CARDS)]
+    )
     unresolved.record(stem, "repair_applied", "accepted", original_text=_CARDS[0], proposed_text="I saw Spandam")
     unresolved.record(
         stem, "repair", "rejected_guard", original_text=_CARDS[1], proposed_text="the ship has sailed", reference="ref"
@@ -182,8 +184,9 @@ def test_forcing_an_unanchored_card_is_labelled_permanent(tmp_path, monkeypatch)
     # BOTH originals are real cards of this episode. An entry whose text is not in conf.json
     # is an orphan and is now filtered out of the view, so a fixture that invents originals
     # would silently test an empty list.
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "x"}, {"start": 2.0, "end": 4.0, "text": "p"}], f)
+    store_seed.conf(
+        stem + ".dubtitles.conf.json", [{"start": 0.0, "end": 2.0, "text": "x"}, {"start": 2.0, "end": 4.0, "text": "p"}]
+    )
     unresolved.record(stem, "repair", "rejected_guard", original_text="x", proposed_text="y", reference="the fansub line")
     unresolved.record(stem, "repair", "rejected_guard", original_text="p", proposed_text="q")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
@@ -199,8 +202,9 @@ def test_a_classified_repair_is_labelled_with_the_role_of_its_reference(tmp_path
     separate translation, which is a judgement call. Both are "a reference" in the old view."""
     stem = str(tmp_path / "ep_roles")
     cards = ["I saw spondum", "the ship sailed", "he went thataway"]
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(cards)], f)
+    store_seed.conf(
+        stem + ".dubtitles.conf.json", [{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(cards)]
+    )
     unresolved.record(
         stem,
         "repair_applied",
@@ -242,8 +246,9 @@ def test_a_legacy_entry_with_a_reference_is_unclassified_not_unanchored(tmp_path
     repaired again -- the one claim that changes what a force means."""
     stem = str(tmp_path / "ep_legacy")
     cards = ["a legacy anchored line", "a legacy bare line"]
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(cards)], f)
+    store_seed.conf(
+        stem + ".dubtitles.conf.json", [{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(cards)]
+    )
     unresolved.record(
         stem,
         "repair",
@@ -287,14 +292,13 @@ def test_a_shared_line_reports_an_anchor_only_when_its_episodes_agree(tmp_path, 
     mixed = ("mixed anchor line here", "Mixed anchor line here.")
     for name, roles in (("e01", ("dub", "dub")), ("e02", ("dub", "translation"))):
         stem = str(tmp_path / name)
-        with open(stem + ".dubtitles.conf.json", "w") as f:
-            json.dump(
-                [
-                    {"start": 100.0, "end": 102.0, "text": same[0]},
-                    {"start": 300.0, "end": 302.0, "text": mixed[0]},
-                ],
-                f,
-            )
+        store_seed.conf(
+            stem + ".dubtitles.conf.json",
+            [
+                {"start": 100.0, "end": 102.0, "text": same[0]},
+                {"start": 300.0, "end": 302.0, "text": mixed[0]},
+            ],
+        )
         for (o, p), role in zip((same, mixed), roles):
             unresolved.record(
                 stem,
@@ -331,8 +335,7 @@ def test_duplicate_queue_entries_from_a_rerun_collapse_to_one_row(tmp_path, monk
     siblings need no separate resolution, they are hidden by the same text-keyed check
     the moment the one visible row is decided."""
     stem = str(tmp_path / "ep_dup")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "I saw spondum"}], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"start": 0.0, "end": 2.0, "text": "I saw spondum"}])
     for _ in range(4):
         unresolved.record(stem, "repair", "rejected_guard", original_text="I saw spondum", proposed_text="I saw Spandam")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
@@ -347,8 +350,7 @@ def test_deciding_the_collapsed_row_clears_every_duplicate_next_load(tmp_path, m
     one visible row genuinely settles the ones hidden behind it, not just re-hides them
     until the cache clears."""
     stem = str(tmp_path / "ep_dup2")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "I saw spondum"}], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"start": 0.0, "end": 2.0, "text": "I saw spondum"}])
     for _ in range(3):
         unresolved.record(stem, "repair", "rejected_guard", original_text="I saw spondum", proposed_text="I saw Spandam")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
@@ -419,8 +421,7 @@ def test_the_index_lists_only_episodes_with_something_pending(tmp_path, monkeypa
     read. Counted on the PRIMARY view, matching what the episode page opens with."""
     busy = _episode(tmp_path, "busy")
     quiet = str(tmp_path / "quiet")
-    with open(quiet + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 1.0, "text": "q"}], f)
+    store_seed.conf(quiet + ".dubtitles.conf.json", [{"start": 0.0, "end": 1.0, "text": "q"}])
     unresolved.record(quiet, "repair", "no_reference", original_text="q")
     monkeypatch.setattr(review_server, "known_stems", lambda: [busy, quiet])
 
@@ -434,10 +435,10 @@ def test_known_stems_only_finds_episodes_under_the_configured_roots(tmp_path, mo
     unlisted -- it is unreachable by every route."""
     inside = tmp_path / "lib"
     inside.mkdir()
-    (inside / ("a" + review_server.CONF_SUFFIX)).write_text("[]")
+    store_seed.conf(str(inside / ("a" + review_server.CONF_SUFFIX)), [])
     outside = tmp_path / "elsewhere"
     outside.mkdir()
-    (outside / ("b" + review_server.CONF_SUFFIX)).write_text("[]")
+    store_seed.conf(str(outside / ("b" + review_server.CONF_SUFFIX)), [])
     monkeypatch.setattr(review_server, "ROOTS", [str(inside)])
 
     found = review_server.known_stems()
@@ -539,8 +540,14 @@ def test_a_generated_token_is_stable_when_it_cannot_be_persisted(tmp_path, monke
     monkeypatch.setattr(review_server, "TOKEN_DIR", unwritable)
     monkeypatch.setattr(review_server, "_GENERATED", None)
 
-    def boom(*a, **k):
-        raise OSError("read-only filesystem")
+    real_makedirs = os.makedirs
+
+    def boom(path, *a, **k):
+        # Only the token directory is unwritable: the P39 artifact store lives elsewhere and
+        # must still open, or this measures the store's failure instead of the token's.
+        if str(path).startswith(unwritable):
+            raise OSError("read-only filesystem")
+        return real_makedirs(path, *a, **k)
 
     monkeypatch.setattr(review_server.os, "makedirs", boom)
 
@@ -552,25 +559,26 @@ def test_a_generated_token_is_stable_when_it_cannot_be_persisted(tmp_path, monke
 
 
 def test_the_stem_walk_is_cached_so_an_unauthenticated_get_cannot_thrash_the_disk(tmp_path, monkeypatch):
-    """GET routes are never gated, and every one of them resolved a stem by walking the
-    whole media root. On a 20,000-episode library over CIFS that is a full recursive walk
-    per unauthenticated request -- a denial of service that costs the caller one HTTP GET.
+    """GET routes are never gated, and every one of them resolved a stem against the
+    episode allow-list. That list used to cost a recursive walk of the whole media root; it
+    is now one store query (P39), but it is still per-root work a caller pays for with one
+    HTTP GET, so the cache stays.
 
     Cached with a short TTL rather than forever: an episode appearing mid-session should
     still show up without a restart."""
     root = tmp_path / "lib"
     root.mkdir()
-    (root / ("a" + review_server.CONF_SUFFIX)).write_text("[]")
+    store_seed.conf(str(root / ("a" + review_server.CONF_SUFFIX)), [])
     monkeypatch.setattr(review_server, "ROOTS", [str(root)])
     monkeypatch.setattr(review_server, "_STEMS_CACHE", None)
-    walks = []
-    real_walk = review_server.os.walk
-    monkeypatch.setattr(review_server.os, "walk", lambda *a, **k: (walks.append(1), real_walk(*a, **k))[1])
+    queries = []
+    real_stems = review_server.artifact_store.stems
+    monkeypatch.setattr(review_server.artifact_store, "stems", lambda *a, **k: (queries.append(1), real_stems(*a, **k))[1])
 
     for _ in range(5):
         review_server.known_stems()
 
-    assert len(walks) == 1, "five requests, one walk"
+    assert len(queries) == 1, "five requests, one walk"
 
 
 def test_the_stem_cache_expires(tmp_path, monkeypatch):
@@ -578,7 +586,7 @@ def test_the_stem_cache_expires(tmp_path, monkeypatch):
     invisible to the reviewer until the container restarts."""
     root = tmp_path / "lib"
     root.mkdir()
-    (root / ("a" + review_server.CONF_SUFFIX)).write_text("[]")
+    store_seed.conf(str(root / ("a" + review_server.CONF_SUFFIX)), [])
     monkeypatch.setattr(review_server, "ROOTS", [str(root)])
     monkeypatch.setattr(review_server, "_STEMS_CACHE", None)
     # BOTH, because the TTL is now a floor and the walk's own cost is the other term. On a
@@ -588,7 +596,7 @@ def test_the_stem_cache_expires(tmp_path, monkeypatch):
     monkeypatch.setattr(review_server, "STEMS_TTL_FACTOR", 0.0)
 
     assert len(review_server.known_stems()) == 1
-    (root / ("b" + review_server.CONF_SUFFIX)).write_text("[]")
+    store_seed.conf(str(root / ("b" + review_server.CONF_SUFFIX)), [])
 
     assert len(review_server.known_stems()) == 2, "a new episode must appear without a restart"
 
@@ -602,19 +610,22 @@ def test_the_token_never_lands_at_the_filesystem_root(monkeypatch):
     assert review_server.token_dir_for("/srv/dub/decisions") == "/srv/dub"
 
 
-def test_a_symlinked_conf_outside_the_roots_is_not_in_the_allow_list(tmp_path, monkeypatch):
+def test_a_symlinked_store_key_outside_the_roots_is_not_in_the_allow_list(tmp_path, monkeypatch):
     """The media tree is deliberately group-writable, so anything with local write access
-    could plant a symlinked conf.json whose stem then entered the allow-list -- and
-    handle_apply would follow it out of the roots. Needs a pre-existing local capability, so
-    it is a second line of defence rather than the first, but membership in known_stems() is
-    documented as the boundary and should actually be one."""
+    could plant a path whose stem then entered the allow-list -- and handle_apply would
+    follow it out of the roots. Needs a pre-existing local capability, so it is a second
+    line of defence rather than the first, but membership in known_stems() is documented as
+    the boundary and should actually be one.
+
+    P39: the conf is a store row, so the plant is a symlinked directory that a store key
+    resolves through, not a symlinked conf.json file."""
     root = tmp_path / "lib"
     root.mkdir()
     secret = tmp_path / "elsewhere"
     secret.mkdir()
-    (secret / ("evil" + review_server.CONF_SUFFIX)).write_text("[]")
-    os.symlink(secret / ("evil" + review_server.CONF_SUFFIX), root / ("evil" + review_server.CONF_SUFFIX))
-    (root / ("good" + review_server.CONF_SUFFIX)).write_text("[]")
+    os.symlink(secret, root / "evil")
+    store_seed.conf(str(root / "evil" / ("evil" + review_server.CONF_SUFFIX)), [])
+    store_seed.conf(str(root / ("good" + review_server.CONF_SUFFIX)), [])
     monkeypatch.setattr(review_server, "ROOTS", [str(root)])
     monkeypatch.setattr(review_server, "_STEMS_CACHE", None)
 
@@ -786,8 +797,7 @@ def test_the_episode_view_hides_entries_orphaned_by_a_re_transcription(tmp_path,
     them is how a queue of thousands of dead items happens. The mux gate already ignores
     them; the page was still listing them."""
     stem = str(tmp_path / "ep_orph")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "a line the episode still has"}], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"start": 0.0, "end": 2.0, "text": "a line the episode still has"}])
     unresolved.record(stem, "repair_applied", "accepted", original_text="a line the episode still has", proposed_text="fix")
     unresolved.record(stem, "repair_applied", "accepted", original_text="text from an OLD transcript", proposed_text="fix2")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
@@ -829,8 +839,7 @@ def _lib(tmp_path, spec):
         for name, adm, ref in eps:
             stem = str(d / name)
             cards = [{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": f"card {i}"} for i in range(adm + ref)]
-            with open(stem + ".dubtitles.conf.json", "w") as f:
-                json.dump(cards, f)
+            store_seed.conf(stem + ".dubtitles.conf.json", cards)
             for i in range(adm):
                 unresolved.record(stem, "repair_applied", "accepted", original_text=f"card {i}", proposed_text=f"fix {i}")
             for i in range(adm, adm + ref):
@@ -876,8 +885,9 @@ def _triage_episode(tmp_path, name="triage"):
         "There's only one who deserves the flame fruit.",
     ]
     stem = str(tmp_path / name)
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 60.0 + i * 30, "end": 62.0 + i * 30, "text": t} for i, t in enumerate(cards)], f)
+    store_seed.conf(
+        stem + ".dubtitles.conf.json", [{"start": 60.0 + i * 30, "end": 62.0 + i * 30, "text": t} for i, t in enumerate(cards)]
+    )
     for c, p in zip(cards, props):
         unresolved.record(stem, "repair_applied", "accepted", original_text=c, proposed_text=p)
     return stem
@@ -1059,8 +1069,10 @@ def _shared_library(tmp_path):
     for i, name in enumerate(("e01", "e02", "e03")):
         own = (f"line {i} as heard", f"Line {i} as heard.")
         stem = str(tmp_path / name)
-        with open(stem + ".dubtitles.conf.json", "w") as f:
-            json.dump([{"start": 100.0, "end": 102.0, "text": song[0]}, {"start": 300.0, "end": 302.0, "text": own[0]}], f)
+        store_seed.conf(
+            stem + ".dubtitles.conf.json",
+            [{"start": 100.0, "end": 102.0, "text": song[0]}, {"start": 300.0, "end": 302.0, "text": own[0]}],
+        )
         for o, p in (song, own):
             unresolved.record(stem, "repair_applied", "accepted", original_text=o, proposed_text=p)
         stems.append(stem)
@@ -1129,8 +1141,7 @@ def _two_shared_pairs(tmp_path, monkeypatch):
     pairs = [("A harmless line", "A corrected line"), ("B harmless line", "B WRONG line")]
     for name in ("e01", "e02"):
         stem = str(tmp_path / name)
-        with open(stem + ".dubtitles.conf.json", "w") as f:
-            json.dump([{"start": 100.0, "end": 102.0, "text": o} for o, _ in pairs], f)
+        store_seed.conf(stem + ".dubtitles.conf.json", [{"start": 100.0, "end": 102.0, "text": o} for o, _ in pairs])
         for o, p in pairs:
             unresolved.record(stem, "repair_applied", "accepted", original_text=o, proposed_text=p)
     monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
@@ -1185,23 +1196,23 @@ def test_the_stem_cache_outlives_the_walk_that_fills_it(tmp_path, monkeypatch):
     Measured on the live library 2026-08-28: known_stems() takes 297s over 989 episodes on a
     network mount, against a 30s TTL — so every request re-walked the whole media tree and
     the cache had never once been hit. The TTL cannot be a constant when the cost it is
-    hiding is a property of someone else's filesystem."""
+    hiding is a property of someone else's filesystem. P39 replaced the walk with a store
+    query; the cost is still the store's, and the rule is unchanged."""
     walks = []
     clock = {"t": 1000.0}
-    real_walk = os.walk
+    real_stems = review_server.artifact_store.stems
 
-    def slow_walk(root):
-        walks.append(root)
+    def slow_stems(*args, **kwargs):
+        walks.append(args)
         clock["t"] += 300.0  # what the live library actually costs
-        return real_walk(root)
+        return real_stems(*args, **kwargs)
 
     stem = str(tmp_path / "ep")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 2.0, "text": "x"}], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"start": 0.0, "end": 2.0, "text": "x"}])
     monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
     monkeypatch.setattr(review_server, "_STEMS_CACHE", None)
     monkeypatch.setattr(review_server.time, "monotonic", lambda: clock["t"])
-    monkeypatch.setattr(os, "walk", slow_walk)
+    monkeypatch.setattr(review_server.artifact_store, "stems", slow_stems)
 
     assert review_server.known_stems() == [stem]
     clock["t"] += 60.0  # twice the old TTL later

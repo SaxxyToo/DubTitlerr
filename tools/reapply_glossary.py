@@ -47,7 +47,6 @@ Env: GLOSSARY_DIR (same meaning as the rest of the pipeline).
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -55,7 +54,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dubtitlerr.core import artifact_store  # noqa: E402
-from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, atomic_write, read_words, ts_srt  # noqa: E402
+from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, atomic_write, read_conf, read_words, ts_srt, write_conf  # noqa: E402
 from dubtitlerr.glossary import glossary  # noqa: E402
 
 CONF_SUFFIX = ".dubtitles.conf.json"
@@ -79,13 +78,16 @@ def glossary_for(stem: str) -> dict:
 
 
 def find_confs(target: str) -> list[str]:
-    """A conf.json path, or every conf.json under a directory, sorted."""
+    """A legacy conf.json path or an episode stem, or every conf in a directory, sorted.
+
+    Returns STEMS: the conf itself is a store row, so the stem is what the rest of the tool
+    needs. A filename is accepted (and normalised) so old invocations keep working.
+    """
     if os.path.isfile(target):
+        return [target[: -len(CONF_SUFFIX)] if target.endswith(CONF_SUFFIX) else target]
+    if artifact_store.exists(target, "conf"):
         return [target]
-    out = []
-    for dp, _, fns in os.walk(target):
-        out += [os.path.join(dp, f) for f in fns if f.endswith(CONF_SUFFIX)]
-    return sorted(out)
+    return sorted(artifact_store.stems(target, kind="conf"))
 
 
 def render_srt(cards: list[dict]) -> str:
@@ -103,13 +105,12 @@ def _chown(path: str) -> None:
         pass  # non-root, or a filesystem without it
 
 
-def process(conf_path: str, apply: bool, samples: list) -> dict:
-    stem = conf_path[: -len(CONF_SUFFIX)]
+def process(target: str, apply: bool, samples: list) -> dict:
+    stem = target[: -len(CONF_SUFFIX)] if target.endswith(CONF_SUFFIX) else target
     gloss = glossary_for(stem)
-    try:
-        cards = json.load(open(conf_path))  # noqa: SIM115
-    except Exception as e:
-        return {"stem": stem, "error": str(e)}
+    cards = read_conf(stem)
+    if cards is None:
+        return {"stem": stem, "error": "no usable conf"}
 
     changed_cards = 0
     total_edits = 0
@@ -144,8 +145,7 @@ def process(conf_path: str, apply: bool, samples: list) -> dict:
     # Write conf first: it is the record of truth. If we die between the two writes the
     # episode still has a valid stamp and its old muxed track -- consistent, just not yet
     # improved. The reverse order would leave a corrected sidecar next to a stale conf.
-    atomic_write(conf_path, lambda f: json.dump(cards, f))
-    _chown(conf_path)
+    write_conf(stem, cards)
 
     srt = stem + SRT_SUFFIX
     atomic_write(srt, lambda f: f.write(render_srt(cards)))
@@ -162,7 +162,7 @@ def process(conf_path: str, apply: bool, samples: list) -> dict:
 def main() -> int:
     # __doc__ is None under `python -OO`; the tool must still run there.
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
-    ap.add_argument("targets", nargs="+", help="conf.json files, or directories to walk")
+    ap.add_argument("targets", nargs="+", help="episode stems, or directories to sweep")
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
     ap.add_argument("--show-lines", type=int, default=15, help="sample diffs to print")
     # Episode filenames are full of spaces, apostrophes and "!" — shell globbing them is
@@ -177,7 +177,7 @@ def main() -> int:
         pat = re.compile(args.match)
         confs = [p for p in confs if pat.search(os.path.basename(p))]
     if not confs:
-        print("no conf.json found under:", ", ".join(args.targets))
+        print("no stored conf found under:", ", ".join(args.targets))
         return 1
 
     samples: list = []

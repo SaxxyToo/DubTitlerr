@@ -1,10 +1,11 @@
 """Per-stage unresolved queue -- the missing human rung of the deterministic -> LLM -> human
 ladder for the subtitle path (glossary_acquire already has one; repair/punctuation did not)."""
 
-import json
 import os
 import stat
 import time
+
+import store_seed
 
 from dubtitlerr.core import decisions, unresolved
 
@@ -275,13 +276,11 @@ def test_live_only_drops_entries_whose_original_is_gone(tmp_path):
     """An entry orphaned by a re-transcription describes text the episode no longer has.
     Nothing will re-queue it, so nothing will ever resolve it -- it is not a question anyone
     can answer, and showing it is how a review queue of 6,000 dead items happens."""
-    import json as _j
 
     from dubtitlerr.core import unresolved as u
 
     stem = str(tmp_path / "ep")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        _j.dump([{"start": 0.0, "end": 2.0, "text": "a line the episode still has"}], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"start": 0.0, "end": 2.0, "text": "a line the episode still has"}])
     entries = [
         {"stage": "repair_applied", "reason": "accepted", "original_text": "a line the episode still has"},
         {"stage": "repair_applied", "reason": "accepted", "original_text": "text from an OLD transcript"},
@@ -294,13 +293,11 @@ def test_live_only_drops_entries_whose_original_is_gone(tmp_path):
 
 def test_live_only_normalises_like_the_decision_store(tmp_path):
     """Matched through decisions.key, so whitespace or case cannot orphan a live entry."""
-    import json as _j
 
     from dubtitlerr.core import unresolved as u
 
     stem = str(tmp_path / "ep_ws")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        _j.dump([{"start": 0.0, "end": 2.0, "text": "I saw spondum"}], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"start": 0.0, "end": 2.0, "text": "I saw spondum"}])
 
     assert len(u.live_only(stem, [{"stage": "repair_applied", "original_text": "  I saw   SPONDUM "}])) == 1
 
@@ -326,15 +323,14 @@ def test_card_starts_maps_a_line_to_every_time_it_appears(tmp_path):
     with no backfill. Matched on decisions.key, the same identity live_only uses, so a line
     that differs only in case or whitespace is still the same line."""
     stem = str(tmp_path / "ep")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump(
-            [
-                {"start": 12.5, "end": 14.0, "text": "Roger's treasure belongs to me"},
-                {"start": 90.0, "end": 92.0, "text": "we run this joint"},
-                {"start": 300.25, "end": 302.0, "text": "ROGER'S   TREASURE belongs to me"},
-            ],
-            f,
-        )
+    store_seed.conf(
+        stem + ".dubtitles.conf.json",
+        [
+            {"start": 12.5, "end": 14.0, "text": "Roger's treasure belongs to me"},
+            {"start": 90.0, "end": 92.0, "text": "we run this joint"},
+            {"start": 300.25, "end": 302.0, "text": "ROGER'S   TREASURE belongs to me"},
+        ],
+    )
     starts = unresolved.card_starts(stem)
 
     assert starts[decisions.key("roger's treasure belongs to me")] == [12.5, 300.25], (
@@ -437,18 +433,17 @@ def test_card_context_gives_the_neighbouring_cards_for_every_occurrence(tmp_path
     The break this catches: return a flat list per line instead of one entry per occurrence
     and a repeated line shows the wrong neighbours for every card after the first."""
     stem = str(tmp_path / "ep")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump(
-            [
-                {"start": 1.0, "end": 2.0, "text": "We're looking"},
-                {"start": 2.0, "end": 3.0, "text": "for a factory"},
-                {"start": 3.0, "end": 4.0, "text": "somewhere near here"},
-                {"start": 90.0, "end": 91.0, "text": "unrelated line"},
-                {"start": 300.0, "end": 301.0, "text": "FOR A   FACTORY"},
-                {"start": 301.0, "end": 302.0, "text": "he said again"},
-            ],
-            f,
-        )
+    store_seed.conf(
+        stem + ".dubtitles.conf.json",
+        [
+            {"start": 1.0, "end": 2.0, "text": "We're looking"},
+            {"start": 2.0, "end": 3.0, "text": "for a factory"},
+            {"start": 3.0, "end": 4.0, "text": "somewhere near here"},
+            {"start": 90.0, "end": 91.0, "text": "unrelated line"},
+            {"start": 300.0, "end": 301.0, "text": "FOR A   FACTORY"},
+            {"start": 301.0, "end": 302.0, "text": "he said again"},
+        ],
+    )
     ctx = unresolved.card_context(stem, width=1)
     occ = ctx[decisions.key("for a factory")]
     assert len(occ) == 2, "both occurrences, in card order"
@@ -463,15 +458,14 @@ def test_card_context_at_the_episode_edges_returns_what_exists(tmp_path):
     The break this catches: index arithmetic that wraps, so the first card shows the LAST
     card of the episode as its predecessor."""
     stem = str(tmp_path / "edge")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump(
-            [
-                {"start": 1.0, "end": 2.0, "text": "first line"},
-                {"start": 2.0, "end": 3.0, "text": "middle line"},
-                {"start": 3.0, "end": 4.0, "text": "last line"},
-            ],
-            f,
-        )
+    store_seed.conf(
+        stem + ".dubtitles.conf.json",
+        [
+            {"start": 1.0, "end": 2.0, "text": "first line"},
+            {"start": 2.0, "end": 3.0, "text": "middle line"},
+            {"start": 3.0, "end": 4.0, "text": "last line"},
+        ],
+    )
     ctx = unresolved.card_context(stem, width=1)
     assert ctx[decisions.key("first line")][0]["before"] == []
     assert ctx[decisions.key("last line")][0]["after"] == []
@@ -483,8 +477,7 @@ def test_card_context_width_two_reaches_two_cards_either_side(tmp_path):
 
     The break this catches: hard-code width 1 and this returns one neighbour."""
     stem = str(tmp_path / "wide")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": float(i), "end": i + 1.0, "text": f"line {i}"} for i in range(5)], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"start": float(i), "end": i + 1.0, "text": f"line {i}"} for i in range(5)])
     occ = unresolved.card_context(stem, width=2)[decisions.key("line 2")][0]
     assert occ["before"] == ["line 0", "line 1"]
     assert occ["after"] == ["line 3", "line 4"]
@@ -526,8 +519,7 @@ def test_a_torn_tail_does_not_hold_back_an_opted_in_episode_from_being_held(tmp_
     stem = str(tmp_path / "ep")
     with open(unresolved.path_for(stem), "w") as f:
         f.write('{"stage":"repair_applied","reas')
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        f.write('[{"text": "the old line"}]')
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"text": "the old line"}])
     unresolved.record(stem, "repair_applied", "accepted", original_text="the old line", proposed_text="the wrong line")
     monkeypatch.setattr(mux, "REVIEW_GATE_SHOWS", ["S"])
     monkeypatch.setattr(mux, "show_for", lambda _: "S")

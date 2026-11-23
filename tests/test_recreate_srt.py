@@ -2,14 +2,14 @@
 rebuild must re-wrap or the episode ships as unwrapped single lines -- the library-wide
 defect this suite exists to prevent."""
 
-import json
+import store_seed
 
 from dubtitlerr.pipeline import recreate_srt, reflow
 
 
 def _write_conf(tmp_path, cards):
     p = tmp_path / ("ep" + recreate_srt.CONF_SUFFIX)
-    p.write_text(json.dumps(cards))
+    store_seed.conf(str(p), cards)
     return str(p)
 
 

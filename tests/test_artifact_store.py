@@ -363,6 +363,55 @@ def test_sweep_drops_junk_rows_from_the_store(tmp_path):
     assert store.exists("show/ep01", "conf")
 
 
+# --- park / unpark -----------------------------------------------------------------
+
+
+def test_park_hides_the_live_row_and_keeps_the_payload(tmp_path):
+    stem = _stem(tmp_path)
+    store.put_json(stem, "conf", [{"start": 0.0, "end": 1.0, "text": "before"}])
+    assert store.park(stem, "conf") is True
+    assert not store.exists(stem, "conf")
+    assert store.get_json(stem, "conf.parked") == [{"start": 0.0, "end": 1.0, "text": "before"}]
+
+
+def test_park_missing_kind_is_a_no_op(tmp_path):
+    stem = _stem(tmp_path)
+    assert store.park(stem, "qc") is False
+    assert not store.has_parked(stem, "qc")
+
+
+def test_unpark_restores_the_payload_verbatim_and_clears_the_parked_row(tmp_path):
+    stem = _stem(tmp_path)
+    payload = {"decoder": "large-v3-turbo", "words": [{"text": "hi", "start": 0.0}]}
+    store.put_json(stem, "words", payload, meta={"size": 12})
+    store.park(stem, "words")
+    assert store.exists(stem, "words") is False
+    assert store.unpark(stem, "words") is True
+    assert store.get_json(stem, "words") == payload
+    assert not store.has_parked(stem, "words")
+    # the payload's own provenance survives; only the parking bookkeeping is dropped
+    assert store.meta(stem, "words").get("size") == 12
+
+
+def test_unpark_with_nothing_parked_returns_false(tmp_path):
+    assert store.unpark(_stem(tmp_path), "cuts") is False
+
+
+def test_parked_kind_has_no_filename_suffix_so_export_skips_it(tmp_path):
+    stem = _stem(tmp_path)
+    store.put_json(stem, "conf", [])
+    store.park(stem, "conf")
+    result = store.export_tree(str(tmp_path / "media"), apply=False)
+    assert result["exported"] == 0
+
+
+def test_put_rejects_an_unknown_kind_including_a_fake_parked_one(tmp_path):
+    with pytest.raises(ValueError):
+        store.put(_stem(tmp_path), "not-a-kind", "{}")
+    with pytest.raises(ValueError):
+        store.put(_stem(tmp_path), "not-a-kind.parked", "{}")
+
+
 # --- CLI --------------------------------------------------------------------------
 
 

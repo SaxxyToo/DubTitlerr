@@ -7,6 +7,7 @@ import shutil
 import time
 
 import pytest
+import store_seed
 
 from dubtitlerr.core import artifact_store
 from dubtitlerr.pipeline import mux
@@ -960,8 +961,7 @@ def test_stages_ran_reads_the_sidecars_still_on_disk(tmp_path):
     the one moment the pipeline can say what actually ran."""
     stem = str(tmp_path / "ep")
     open(stem + ".dubtitles.repair-summary.json", "w").write("{}")
-    with open(stem + ".dubtitles.qc.json", "w") as f:
-        f.write('{"counters": {"restore_runs_sent": 12}}')
+    store_seed.qc(stem + ".dubtitles.qc.json", {"counters": {"restore_runs_sent": 12}})
     got = mux._stages_ran(stem, stem + ".eng.dubtitles.ass")
     assert got["repair"] is True
     assert got["signs_merge"] is True  # muxed from .ass -> signs were merged
@@ -1165,11 +1165,11 @@ def test_a_queued_line_that_already_has_a_verdict_does_not_hold_the_episode(tmp_
 
 
 def _conf(stem, texts):
-    """The episode's current conf.json -- the ASR text of each card."""
-    import json as _j
-
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        _j.dump([{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(texts)], f)
+    """The episode's current stored conf -- the ASR text of each card."""
+    store_seed.conf(
+        stem + ".dubtitles.conf.json",
+        [{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": t} for i, t in enumerate(texts)],
+    )
 
 
 def test_an_entry_orphaned_by_a_version_bump_does_not_hold_the_episode(tmp_path, monkeypatch):

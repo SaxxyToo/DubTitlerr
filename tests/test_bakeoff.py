@@ -13,6 +13,7 @@ import json
 
 import pytest
 import repair_ref_stub
+import store_seed
 
 import tools.bakeoff as bo
 
@@ -1335,7 +1336,7 @@ def _differential(tmp_path, monkeypatch, capsys, arc=None):
         _row("he saw spondum there", -1.4, 4.0, 6.0, source_start=4.0, source_end=5.5),
     ]
     open(stem + _prod.SRT_SUFFIX, "w").close()
-    open(conf_path, "w").write(json.dumps(rows))
+    store_seed.conf(conf_path, rows)
     gdata = {
         "names": ["Zoro", "Spandam"],
         "hard_fixes": {"Zorro": "Zoro"},

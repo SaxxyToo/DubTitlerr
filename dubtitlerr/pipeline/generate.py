@@ -14,7 +14,7 @@ Per video:
      task=transcribe (English dub -> English text),
      word_timestamps + vad_filter + initial_prompt glossary,
   3. conservative name-correction sweep against the franchise glossary,
-  4. write <stem>.eng.dubtitles.srt + <stem>.dubtitles.conf.json (segment
+  4. write <stem>.eng.dubtitles.srt and the conf card list (store kind ``conf``; segment
      confidences: start,end,avg_logprob,no_speech_prob) for the repair stage.
 
 Usage:
@@ -63,7 +63,6 @@ from dubtitlerr.core.common import (
     TRANSCRIBE_VERSION,
     VIDEO_EXTS,
     WORDS_SCHEMA_VERSION,
-    WORDS_SUFFIX,
     atomic_write,
     load_extras,
     out_for,
@@ -473,11 +472,20 @@ def _card_word_probs(card, words, rec=None):
 
 
 QC_SUFFIX = ".dubtitles.qc.json"
-STALE_SUFFIX = ".stale"  # parked, not deleted -- see park_stale_sidecars
-# WORDS_SUFFIX is parked with the rest: a words.json left behind by a superseded
-# pipeline would otherwise be READ by the cached text-tier path, replaying an older
-# run's transcript into a current-version episode.
-SIDECAR_SUFFIXES = (".eng.dubtitles.ass", ".eng.dubtitles.srt", ".dubtitles.conf.json", QC_SUFFIX, WORDS_SUFFIX)
+CONF_SUFFIX = ".dubtitles.conf.json"
+STALE_SUFFIX = ".stale"  # parked DELIVERABLE copies, not deleted -- see park_stale_sidecars
+# The transcript/diagnostics cluster used to be sidecars. It is now store rows (P39):
+#   conf  -- per-cue confidences repair.py reads
+#   qc    -- quality counters
+#   words -- the decoder's word list a text-tier replay reads
+# Parking any of them is artifact_store.park(); nothing is renamed beside the media.
+STORE_SIDECAR_KINDS = ("conf", "qc", "words")
+# What still lives beside the media and is parked with a .stale rename: the deliverables.
+FILE_SIDECAR_SUFFIXES = (".eng.dubtitles.ass", ".eng.dubtitles.srt")
+# Kept as the name the file-parking code and its tests use. A words.json left behind by a
+# superseded pipeline WOULD otherwise be read by the cached text-tier path, which is why it
+# is parked with the rest -- in the store now.
+SIDECAR_SUFFIXES = FILE_SIDECAR_SUFFIXES
 
 
 def _words_decoder_identity(initial_prompt: str) -> dict:
@@ -532,7 +540,12 @@ def write_words(stem, words, segments, audio_duration, initial_prompt=""):
     The words are stored as generate holds them -- pre-reflow-transform. reflow's
     _normalize/_clamp_to_segments/_dejitter are pure and cost microseconds, and
     _card_word_probs() joins against this same untransformed list, so storing the
-    post-transform words would make the replay diverge from the original run for no gain."""
+    post-transform words would make the replay diverge from the original run for no gain.
+
+    P39: the document is a store row (kind ``words``) in the config-volume SQLite store, not
+    a file beside the video. ``common.read_words`` reads the same row. A store failure
+    propagates, exactly as the atomic file write did: a run that lost the words must not
+    report ok (see the caller's "episode stays GPU-only" log line)."""
     doc = {
         "schema_version": WORDS_SCHEMA_VERSION,
         "transcribe_version": TRANSCRIBE_VERSION,
@@ -541,7 +554,7 @@ def write_words(stem, words, segments, audio_duration, initial_prompt=""):
         "segments": segments,
         "words": words,
     }
-    _atomic_write(out_for(stem + WORDS_SUFFIX), lambda f: json.dump(doc, f))
+    artifact_store.put_json(stem, "words", doc)
 
 
 def park_stale_sidecars(stem):
@@ -572,15 +585,25 @@ def park_stale_sidecars(stem):
     resume pass, and since gen_loop.sh's stall detector counts .srt files, the deletions
     would read as "no progress" and abandon the show mid-regeneration.
 
-    (Raw paths, not out_for(): mux reads these same raw paths, so both already assume
-    OUTPUT_ROOT resolves into the same mergerfs pool view.)"""
+    The store rows use ``artifact_store.mtime`` (the row's updated_at, refreshed on every
+    write) as the same kind of evidence; the file deliverables keep their filesystem mtime.
+    """
     try:
         stamp_mtime = artifact_store.mtime(stem, "done")
     except Exception:  # noqa: BLE001 - an unreadable store must not abort the sweep
         stamp_mtime = None
     if stamp_mtime is None:
         return  # no stamp -> nothing is attributable to it
-    for suff in SIDECAR_SUFFIXES:
+    for kind in STORE_SIDECAR_KINDS:
+        try:
+            written = artifact_store.mtime(stem, kind)
+            if written is None or written > stamp_mtime:
+                continue  # absent, or newer than the stamp -> this run's work
+            if artifact_store.park(stem, kind):
+                log("  parked stale-version artifact", kind)
+        except Exception:  # noqa: BLE001 - parking is opportunistic; a store hiccup must not abort the sweep
+            pass
+    for suff in FILE_SIDECAR_SUFFIXES:
         p = stem + suff
         try:
             if os.path.getmtime(p) > stamp_mtime:
@@ -593,14 +616,21 @@ def park_stale_sidecars(stem):
 
 
 def parked_sidecars(stem):
-    """Basenames of this episode's parked previous output, sorted. Empty when there is none."""
-    return sorted(os.path.basename(stem + s + STALE_SUFFIX) for s in SIDECAR_SUFFIXES if os.path.exists(stem + s + STALE_SUFFIX))
+    """Names of this episode's parked previous output, sorted. Empty when there is none."""
+    names = [os.path.basename(stem + s + STALE_SUFFIX) for s in FILE_SIDECAR_SUFFIXES if os.path.exists(stem + s + STALE_SUFFIX)]
+    names += [f"{kind} (store)" for kind in STORE_SIDECAR_KINDS if artifact_store.has_parked(stem, kind)]
+    return sorted(names)
 
 
 def drop_parked_sidecars(stem):
-    """Called once this run has written its own srt and conf: the parked copies were
-    insurance against a failed replacement, and the replacement landed."""
-    for suff in SIDECAR_SUFFIXES:
+    """Called once this run has written its own srt, conf, qc and words: the parked copies
+    were insurance against a failed replacement, and the replacement landed."""
+    for kind in STORE_SIDECAR_KINDS:
+        try:
+            artifact_store.delete(stem, artifact_store.parked_kind(kind))
+        except Exception:  # noqa: BLE001 - an unreachable parked copy is harmless; cleanup must never fail the run
+            pass
+    for suff in FILE_SIDECAR_SUFFIXES:
         try:
             os.remove(stem + suff + STALE_SUFFIX)
         except OSError:
@@ -765,23 +795,18 @@ _atomic_write = atomic_write
 
 
 def _write_qc(rec, stem):
-    """Build and write the sidecar. Observability only: a write failure is logged, never
-    fatal (see qc.write's docstring), so this is safe on the failure path too."""
+    """Build and write the qc artifact. Observability only: a write failure is logged, never
+    fatal (see qc.write's docstring), so this is safe on the failure path too.
+
+    P39: the document is a store row (kind ``qc``), the same shape qc.write emitted."""
     show = os.environ.get("SHOW_NAME", "") or GLOSS.get("show", "") or "unknown_show"
     doc = rec.build(
         show=show, episode=os.path.basename(stem), stem=stem, glossary_sha=_glossary_version(), pipeline_version=_model_version()
     )
-    qcp = out_for(stem + QC_SUFFIX)
-    if not qc.write(qcp, doc):
-        log(f"  qc sidecar write failed for {qcp}")
-        return
-    # Match every other sidecar's ownership. This one exists to be read library-wide
-    # later; root-owned it is unreadable over the share by whoever aggregates it.
     try:
-        os.chown(qcp, UID, GID)
-    except OSError:
-        # Ownership is cosmetic: a sidecar this process cannot chown is still usable by it, so a failure must not kill the run.
-        pass
+        artifact_store.put_json(stem, "qc", doc)
+    except Exception as e:  # noqa: BLE001 - a store failure must not fail an episode that generated correctly
+        log(f"  qc artifact write failed for {os.path.basename(stem)}: {e}")
 
 
 MAX_CASCADE_EVENTS = 25  # per episode: the worst displacements, not one per moved card
@@ -971,19 +996,19 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
             row["word_probs"] = c["word_probs"]  # optional/backward-compat (V2 A6/A7)
         conf.append(row)
     srt = out_for(stem + SUFFIX)
-    confp = out_for(stem + ".dubtitles.conf.json")
 
     def _render_srt(f):
         for i, (a, b, t) in enumerate(rows, 1):
             f.write(f"{i}\n{ts_srt(a)} --> {ts_srt(b)}\n{t}\n\n")
 
     _atomic_write(srt, _render_srt)  # both atomic: the in-flight marker is
-    _atomic_write(confp, lambda f: json.dump(conf, f))  # already gone by here (see helper)
-    for p in (srt, confp):  # the qc sidecar is chowned in _write_qc, after it
-        try:
-            os.chown(p, UID, GID)  # exists
-        except OSError as e:
-            log(f"chown failed for {p}: {e}")
+    # P39: the conf card list is a store row, not a file. Store writes are transactional, so
+    # the crash-atomicity the old temp-file write provided comes from sqlite itself.
+    artifact_store.put_json(stem, "conf", conf)  # already gone by here (see helper)
+    try:
+        os.chown(srt, UID, GID)
+    except OSError as e:
+        log(f"chown failed for {srt}: {e}")
     # QC sidecar: observability only -- a write failure is logged, never fatal, since the
     # episode already generated correctly (see qc.write's docstring).
     _record_qc(rec, collapsed)
@@ -1191,15 +1216,17 @@ def _request_since():
 def _rebuilt_since(stem, since):
     """True when this episode's transcript record was written at or after ``since``.
 
-    Both tiers write <stem>.dubtitles.conf.json on success and nothing else does, so its
-    mtime is the on-disk evidence that THIS request rebuilt the episode -- across resume
-    passes, and whatever the in-process counters of any one pass say."""
+    Both tiers write the ``conf`` store row on success and nothing else does, so the row's
+    ``updated_at`` (``artifact_store.mtime``) is the evidence that THIS request rebuilt the
+    episode -- across resume passes, and whatever the in-process counters of any one pass say.
+    """
     if since is None:
         return False
     try:
-        return os.path.getmtime(out_for(stem + ".dubtitles.conf.json")) >= since
-    except OSError:
+        written = artifact_store.mtime(stem, "conf")
+    except Exception:  # noqa: BLE001 - an unreadable store reads as "not rebuilt by this request"
         return False
+    return written is not None and written >= since
 
 
 def scope_report(files, since, statuses):
@@ -1302,17 +1329,24 @@ def force_park_sidecars(stem, keep_words=False):
     """FORCE_REDO: park an episode's delivered and intermediate sidecars so this run
     rebuilds them.
 
-    The same ``.stale`` rename park_stale_sidecars uses, for the same reason: a failed
-    rebuild is one rename away from being undone, and drop_parked_sidecars() clears the
-    parked copy once the replacement is written. This is the scoped alternative to
-    bumping TEXT_VERSION -- regenerate one show from a request instead of re-running the
-    library, and without an operator moving files aside by hand.
+    The same parking park_stale_sidecars uses, for the same reason: a failed rebuild is one
+    unpark away from being undone, and drop_parked_sidecars() clears the parked copy once the
+    replacement is written. This is the scoped alternative to bumping TEXT_VERSION --
+    regenerate one show from a request instead of re-running the library, and without an
+    operator moving files aside by hand.
+
+    Store rows (conf/qc/words) park into the store; the .ass/.srt deliverables rename to
+    ``.stale`` beside the media because that is where a deliverable must be to be delivered.
     """
     prefix = os.environ.get("SIDECAR_SUFFIX", ".dub.en")
-    # keep_words: a text-tier replay READS words.json, so parking it would turn a cheap
+    # keep_words: a text-tier replay READS the words row, so parking it would turn a cheap
     # replay into a re-transcription -- the opposite of what force means (see
     # _forced_partition).
-    paths = [stem + s for s in SIDECAR_SUFFIXES if not (keep_words and s == WORDS_SUFFIX)]
+    for kind in STORE_SIDECAR_KINDS:
+        if keep_words and kind == "words":
+            continue
+        artifact_store.park(stem, kind)
+    paths = [stem + s for s in FILE_SIDECAR_SUFFIXES]
     paths += [stem + prefix + ext for ext in (".ass", ".srt")]
     # The delivery MARKERS matter more than the artefacts: process() decides "already-muxed"
     # from the stored `done` artifact and the merge pass decides from the stage record, so
@@ -1364,23 +1398,18 @@ def _snap_enabled():
 
 
 def scene_cuts(video):
-    """Shot-change timestamps for a video, cached beside it.
+    """Shot-change timestamps for a video, cached in the store.
 
     Decoding 1080p for scene detection costs ~80 s an episode whatever the scale
     (measured: 80.0 s full, 83.7 s at 320px -- the decode dominates), so the answer is
-    cached in <stem>.dubtitles.cuts.json and reused by every later text-tier run.
+    cached as the ``cuts`` artifact kind and reused by every later text-tier run.
     """
     if not video:
         return []
-    cache = os.path.splitext(video)[0] + ".dubtitles.cuts.json"
-    try:
-        with open(cache, encoding="utf-8") as fh:
-            doc = json.load(fh)
-        if doc.get("version") == CUTS_VERSION and float(doc.get("threshold", -1)) == SCENE_THRESHOLD:
-            return [float(x) for x in doc.get("cuts") or []]
-    except (OSError, ValueError):
-        # Any missing, unreadable or older-schema cache is a plain miss: the cuts are recomputed below.
-        pass
+    stem = os.path.splitext(video)[0]
+    doc = artifact_store.get_json(stem, "cuts")
+    if isinstance(doc, dict) and doc.get("version") == CUTS_VERSION and float(doc.get("threshold", -1)) == SCENE_THRESHOLD:
+        return [float(x) for x in doc.get("cuts") or []]
     try:
         r = subprocess.run(
             [
@@ -1408,14 +1437,8 @@ def scene_cuts(video):
         log(f"warning: scene detection failed for {os.path.basename(video)}: {exc}")
         return []
     try:
-        # json.dumps, not json.dump: the conf writer's atomicity test patches json.dump,
-        # and a cache write must not consume its simulated failure.
-        atomic_write(
-            cache,
-            lambda fh: fh.write(json.dumps({"version": CUTS_VERSION, "threshold": SCENE_THRESHOLD, "cuts": cuts})),
-        )
-    except OSError:
-        # The cache is an optimisation only: the cuts are already in hand, so a failed write does not change this run.
+        artifact_store.put_json(stem, "cuts", {"version": CUTS_VERSION, "threshold": SCENE_THRESHOLD, "cuts": cuts})
+    except Exception:  # noqa: BLE001 - the cache is an optimisation only: the cuts are already in hand, so a failed write does not change this run
         pass
     return cuts
 

@@ -29,8 +29,8 @@ import re
 
 import jellyfish
 
-from dubtitlerr.core import acquire_cache, adjudication_journal
-from dubtitlerr.core.common import MODE_KEEP, atomic_write, find_video, llm_chat, log, stop_requested
+from dubtitlerr.core import acquire_cache, adjudication_journal, artifact_store
+from dubtitlerr.core.common import MODE_KEEP, atomic_write, find_video, llm_chat, log, read_conf, stop_requested
 from dubtitlerr.glossary import glossary, glossary_verify, mine_glossary
 from dubtitlerr.pipeline import ordering
 
@@ -189,13 +189,10 @@ CONF_SUFFIX = ".dubtitles.conf.json"
 SRT_SUFFIX = ".eng.dubtitles.srt"
 
 
-def _conf_text(path: str) -> str:
-    """All dialogue text from one conf.json, newline-joined, or '' if unreadable."""
-    try:
-        rows = json.load(open(path, encoding="utf-8"))  # noqa: SIM115
-    except (OSError, ValueError):
-        return ""
-    if not isinstance(rows, list):
+def _conf_text(stem: str) -> str:
+    """All dialogue text from one stored conf, newline-joined, or '' if unreadable."""
+    rows = read_conf(stem)
+    if not rows:
         return ""
     return "\n".join(str(r.get("text", "")) for r in rows if isinstance(r, dict))
 
@@ -216,20 +213,29 @@ def _srt_text(path: str) -> str:
 
 
 def _iter_episode_texts(show_dir: str):
-    """(stem, text) for each episode, conf.json preferred over the SRT fallback.
+    """(stem, text) for each episode, the stored conf preferred over the SRT fallback.
 
-    One source per episode stem, never both: sorted(fs) puts '.dubtitles.conf.json'
-    before '.eng.dubtitles.srt' for a shared stem because 'd' < 'e'."""
+    One source per episode stem, never both. The conf is a store row now (P39), so the
+    episodes that have one come from ``artifact_store.stems``; the SRTs are still files
+    beside the media and are walked as before. A stem whose conf is empty is not claimed,
+    so its SRT still serves it -- the pre-P39 fallback rule, unchanged.
+    """
     stems_done = set()
+    for stem in artifact_store.stems(show_dir, kind="conf"):
+        text = _conf_text(stem)
+        if not text:
+            continue
+        stems_done.add(stem)
+        yield stem, text
     for dp, _dns, fs in os.walk(show_dir):
         for fn in sorted(fs):
-            if fn.endswith(CONF_SUFFIX):
-                stem, text = os.path.join(dp, fn[: -len(CONF_SUFFIX)]), _conf_text(os.path.join(dp, fn))
-            elif fn.endswith(SRT_SUFFIX):
-                stem, text = os.path.join(dp, fn[: -len(SRT_SUFFIX)]), _srt_text(os.path.join(dp, fn))
-            else:
+            if not fn.endswith(SRT_SUFFIX):
                 continue
-            if stem in stems_done or not text:
+            stem = os.path.join(dp, fn[: -len(SRT_SUFFIX)])
+            if stem in stems_done:
+                continue
+            text = _srt_text(os.path.join(dp, fn))
+            if not text:
                 continue
             stems_done.add(stem)
             yield stem, text

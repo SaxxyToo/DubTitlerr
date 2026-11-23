@@ -30,14 +30,26 @@ def _video(path, payload):
 
 
 def _orphan(tmp_path, stem_name, payload, *, mtime=None, extra=(".dubtitles.conf.json",)):
-    """A stamp (plus sidecars) describing a video that no longer exists under that stem."""
+    """A stamp (plus artifacts) describing a video that no longer exists under that stem.
+
+    P39: conf/qc/words are store rows now, so ``extra`` names either a store kind (by its old
+    suffix) or a real marker file -- both are seeded, and reclaim only carries the store rows
+    and the deliverables that still live beside the media."""
     stem = str(tmp_path / stem_name)
     doc = {"size": len(payload), "mtime": mtime if mtime is not None else 1000.0, "muxed": True, "version": 4}
     artifact_store.put_json(stem, "done", doc)
     for suff in extra:
-        with open(stem + suff, "w") as f:
-            f.write("[]")
+        kind = _KIND_FOR.get(suff)
+        if kind is not None:
+            artifact_store.put_text(stem, kind, "[]" if kind == "conf" else "{}")
+        else:
+            with open(stem + suff, "w") as f:
+                f.write("[]")
     return stem
+
+
+# The old beside-media suffix of each artifact kind P39 moved into the store.
+_KIND_FOR = {".dubtitles.conf.json": "conf", ".dubtitles.qc.json": "qc", common.WORDS_SUFFIX: "words"}
 
 
 def test_a_renamed_identical_video_is_reclaimed(tmp_path):
@@ -146,9 +158,9 @@ def test_apply_rekeys_the_whole_sidecar_set(tmp_path):
     new_stem = str(tmp_path / "renamed")
     assert artifact_store.exists(new_stem, "done"), "done not re-keyed"
     assert not artifact_store.exists(stem, "done"), "done left behind at the old stem"
-    for suff in (".dubtitles.conf.json", ".dubtitles.qc.json", common.WORDS_SUFFIX):
-        assert os.path.exists(new_stem + suff), f"{suff} not re-keyed"
-        assert not os.path.exists(stem + suff), f"{suff} left behind at the old stem"
+    for kind in ("conf", "qc", "words"):
+        assert artifact_store.exists(new_stem, kind), f"{kind} not re-keyed"
+        assert not artifact_store.exists(stem, kind), f"{kind} left behind at the old stem"
 
 
 def test_apply_never_moves_the_markers(tmp_path):

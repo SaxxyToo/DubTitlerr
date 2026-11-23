@@ -57,19 +57,21 @@ ASS_SUFFIX = ".eng.dubtitles.ass"
 
 
 def find_confs(target: str) -> list[str]:
-    """A conf.json path, or every conf.json under a directory, sorted."""
+    """A legacy conf.json path or episode stem, or every stored conf under a directory.
+
+    Returns STEMS -- the conf lives in the store now (P39), so there is no file to name.
+    """
     if os.path.isfile(target):
+        return [target[: -len(CONF_SUFFIX)] if target.endswith(CONF_SUFFIX) else target]
+    if artifact_store.exists(target, "conf"):
         return [target]
-    out = []
-    for dp, _, fns in os.walk(target):
-        out += [os.path.join(dp, f) for f in fns if f.endswith(CONF_SUFFIX)]
-    return sorted(out)
+    return sorted(artifact_store.stems(target, kind="conf"))
 
 
-def process(conf_path: str, apply: bool) -> dict:
+def process(target: str, apply: bool) -> dict:
     """Re-open one episode. `skip` names why nothing was done, so a run that changes
     nothing says which reason applied rather than reporting a silent success."""
-    stem = conf_path[: -len(CONF_SUFFIX)]
+    stem = target[: -len(CONF_SUFFIX)] if target.endswith(CONF_SUFFIX) else target
     res = {"stem": stem, "skip": None, "stale_ass": False}
     if not artifact_store.exists(stem, "done"):
         # Already open: it is in the merge queue (or mid-run) and will pick the fix up on
@@ -85,8 +87,8 @@ def process(conf_path: str, apply: bool) -> dict:
         return res
 
     srt = stem + SRT_SUFFIX
-    if recreate_srt.recreate(conf_path) is None and not os.path.exists(srt):
-        res["skip"] = "conf.json produced no srt"
+    if recreate_srt.recreate(stem) is None and not os.path.exists(srt):
+        res["skip"] = "stored conf produced no srt"
         return res
     try:
         os.chown(srt, MEDIA_UID, MEDIA_GID)
@@ -102,13 +104,13 @@ def process(conf_path: str, apply: bool) -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
-    ap.add_argument("targets", nargs="+", help="conf.json paths or directories to walk")
+    ap.add_argument("targets", nargs="+", help="episode stems, or directories to sweep")
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
     a = ap.parse_args(argv)
 
     confs = [c for t in a.targets for c in find_confs(t)]
     if not confs:
-        log("reopen_for_signs: no conf.json found under any target -- nothing to do")
+        log("reopen_for_signs: no stored conf found under any target -- nothing to do")
         return 1
 
     results = [process(c, a.apply) for c in confs]

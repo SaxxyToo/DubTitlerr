@@ -101,6 +101,13 @@ KIND_SUFFIXES = {
 }
 SUFFIX_KINDS = {suffix: kind for kind, suffix in KIND_SUFFIXES.items()}
 
+# A parked artifact is the previous payload of a live kind, kept in the store under
+# ``<kind>.parked`` while a rebuild is in flight. Parking exists for the reason the old
+# ``<name>.stale`` rename did: a replacement that fails must leave the previous generation
+# one step away from being served again. The live row is deleted so nothing reads the
+# superseded payload while the rebuild runs, and unpark() restores it verbatim.
+PARK_SUFFIX = ".parked"
+
 # Artifact classes the sweep removes outright. ``stale``/``bak`` are parked copies from a
 # superseded run (a replacement was written, or the operator moved them aside); ``mux.log``
 # is a one-line post-mux note whose content mux's log already carries; ``mux-recovery`` is a
@@ -193,11 +200,36 @@ def _decode_text(raw: bytes):
 # --- writes -----------------------------------------------------------------------
 
 
+def _base_kind(kind: str):
+    """The live kind behind ``kind``, or None.
+
+    Accepts every kind in ``KIND_SUFFIXES`` and its ``<kind>.parked`` form. Parked kinds are
+    store-only: they have no filename suffix, so import/export/sweep never see them.
+    """
+    if kind in KIND_SUFFIXES:
+        return kind
+    if kind.endswith(PARK_SUFFIX):
+        base = kind[: -len(PARK_SUFFIX)]
+        if base in KIND_SUFFIXES:
+            return base
+    return None
+
+
+def _require_kind(kind: str) -> None:
+    if _base_kind(kind) is None:
+        raise ValueError(f"unknown artifact kind {kind!r}")
+
+
+def parked_kind(kind: str) -> str:
+    """The store kind holding ``kind``'s parked payload."""
+    _require_kind(kind)
+    return kind + PARK_SUFFIX
+
+
 def put(stem: str, kind: str, data, meta: dict | None = None, path: str | None = None) -> None:
     """Insert or replace one artifact. ``meta`` keys are MERGED into the stored document, so
     a writer can refresh payload and provenance without dropping what import recorded."""
-    if kind not in KIND_SUFFIXES:
-        raise ValueError(f"unknown artifact kind {kind!r}")
+    _require_kind(kind)
     conn = _connect(path)
     key = _norm(stem)
     doc = dict(meta or {})
@@ -277,6 +309,40 @@ def delete_kind(kind: str, path: str | None = None) -> int:
     with conn:
         cur = conn.execute("DELETE FROM artifacts WHERE kind=?", (kind,))
     return cur.rowcount
+
+
+def park(stem: str, kind: str, path: str | None = None) -> bool:
+    """Move the live payload of ``kind`` aside as ``<kind>.parked``. False when absent.
+
+    This is the store form of the old ``<name>.stale`` rename: the live row goes away so no
+    reader serves the superseded generation while a rebuild runs, and the payload survives
+    one call away. A failed rebuild therefore still leaves the previous artifact recoverable
+    with ``unpark`` (and, unlike a file rename, nothing lands beside the media).
+    """
+    raw = get(stem, kind, path=path)
+    if raw is None:
+        return False
+    previous = meta(stem, kind, path=path)
+    put(stem, parked_kind(kind), raw, meta={**previous, "parked_from": kind, "parked_at": time.time()}, path=path)
+    delete(stem, kind, path=path)
+    return True
+
+
+def unpark(stem: str, kind: str, path: str | None = None) -> bool:
+    """Restore ``<kind>.parked`` as the live ``kind``. False when nothing was parked."""
+    raw = get(stem, parked_kind(kind), path=path)
+    if raw is None:
+        return False
+    previous = meta(stem, parked_kind(kind), path=path)
+    for key in ("parked_from", "parked_at"):
+        previous.pop(key, None)
+    put(stem, kind, raw, meta=previous, path=path)
+    delete(stem, parked_kind(kind), path=path)
+    return True
+
+
+def has_parked(stem: str, kind: str, path: str | None = None) -> bool:
+    return exists(stem, parked_kind(kind), path=path)
 
 
 # --- reads ------------------------------------------------------------------------
@@ -542,6 +608,10 @@ def export_tree(root: str | None = None, apply: bool = False, path: str | None =
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY stem, kind"
     for stem, row_kind, payload, meta_raw in conn.execute(sql, args):
+        if row_kind not in KIND_SUFFIXES:
+            # Parked rows (``<kind>.parked``) are store-only bookkeeping; there is no filename
+            # to reconstruct, so export leaves them in place.
+            continue
         suffix = suffix_for_kind(row_kind)
         target = stem + suffix
         rows.append({"path": target, "kind": row_kind, "bytes": len(payload)})

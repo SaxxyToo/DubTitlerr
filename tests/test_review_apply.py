@@ -16,6 +16,8 @@ not to reproduce repair's output."""
 import json
 import os
 
+import store_seed
+
 from dubtitlerr.core import artifact_store, common, decisions
 from dubtitlerr.review import review_apply
 
@@ -32,8 +34,7 @@ def _has_stamp(stem):
 def _muxed(tmp_path, name, rows, ass=False):
     """An episode as mux.py leaves it: conf.json and a `done` artifact, NO sidecar."""
     stem = str(tmp_path / name)
-    with open(stem + CONF, "w") as f:
-        json.dump(rows, f)
+    store_seed.conf(stem + CONF, rows)
     artifact_store.put_json(stem, "done", {"muxed": True, "version": 7})
     if ass:  # a signs-bearing episode caught between merge and mux
         with open(stem + ASS, "w") as f:
