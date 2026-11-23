@@ -186,7 +186,7 @@ print(len(seen))
 # True if this stem has a delivery stamp in the store. Fails closed (no stamp on error):
 # the caller only uses it to skip adoption of an already-delivered episode.
 stamp_has() {
-	python3 -m dubtitlerr.core.artifact_store has --stem "$1" --kind done </dev/null >/dev/null 2>&1
+	python3 -m dubtitlerr.core.artifact_store has --stem "$1" --kind "done" </dev/null >/dev/null 2>&1
 }
 
 before=$(done_count "$@")
