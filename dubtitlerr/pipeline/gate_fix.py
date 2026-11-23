@@ -64,7 +64,9 @@ Fault classes it can repair, all under the gate's own budget
     ASR emitted as ONE run of one letter, with at most two stray characters (the shipped
     57-character ``'A' + 'H'*56`` scream, a long laugh) has no boundary at all: it gets an
     even line break instead, which changes no character -- and still refuses if the card's
-    TOTAL is over ``MAX_CHARS``. An alternating run (``Kekekekeke...``) is not a run and
+    TOTAL is over ``MAX_CHARS``. A token that carries a word in front of a long run
+    (``'DOWN' + 'N'*48``, Demon Slayer S01E19 #34) breaks inside the run, so the word stays
+    whole on the first line. An alternating run (``Kekekekeke...``) is not a run and
     stays refused.
   * ``N card(s) over 7.5s`` -- split the card, recursively, until each piece is inside
     the duration budget (a 16.9 s card needs three pieces, not two). A card whose own
@@ -166,7 +168,14 @@ MAX_AUDIT_ATTEMPTS = 20
 #     over 19.1 s, Toradora S01E24 #0 'Ryu!' over the 27.5 s OP) is clamped to the gate's
 #     own 7.5 s display budget. Every episode parked at an earlier epoch is re-examined
 #     once under this behaviour.
-GATE_FIX_EPOCH = 6
+#   7 (2026-11-22): the prefix+run scream. The run test counted a token's characters, so a
+#     token that carries a WORD in front of a long run -- Demon Slayer S01E19 #34 ships
+#     'DOWN' + 'N'*48, 52 chars, four distinct letters -- was never read as a run and was
+#     handed back as "single unbroken token ... no word boundary", parking the episode.
+#     Any token holding a run of RUN_MIN_LEN identical characters now wraps, and a
+#     prefix+run token breaks inside its run (that card's 49-N run splits 27 / 25 chars),
+#     changing no character. DS S01E19 heals on its first pass under this epoch.
+GATE_FIX_EPOCH = 7
 
 # Outcomes that are PARKED: a deterministic give-up on this exact artifact. `cannot-evaluate`
 # is deliberately absent -- an unreadable artifact can be transient, so it keeps retrying.
@@ -186,6 +195,14 @@ GATE_MAX_DUR = publish_gate.MAX_DUR
 # the run (see `_run_letters`), so one repeated letter with a few stray letters and any
 # amount of punctuation around it is still a run.
 RUN_STRAYS = 2
+
+# The shortest internal run of one repeated character that makes a token wrap-able, even
+# when the token also carries a word in front of it. Demon Slayer S01E19 #34 ships
+# ``'DOWN' + 'N' * 48``: 52 chars, four distinct letters, and the derived dominance test
+# above sees a word rather than a shout, so the card was handed back as "single unbroken
+# token ... no word boundary" and the episode parked forever. A run this long is a scream
+# whatever rides on it; a line break through it changes no character, so it is pure layout.
+RUN_MIN_LEN = 20
 
 # How far before its own start a card may claim an ASR word. The assembler puts the card
 # boundary at the segment boundary and a word at its own onset, so the two disagree by a
@@ -297,6 +314,26 @@ def _run_letters(text):
     return Counter(c.casefold() for c in text if c.isalnum())
 
 
+def _run_span(text):
+    """(start, stop) of the longest adjacent run of one case-folded character, or None.
+
+    Adjacency is what separates a shout from a word. ``'DOWN' + 'N' * 48`` is one token of
+    four distinct letters -- the counter in :func:`_is_run` sees no dominant letter -- but
+    the 48 N's in a row are unmistakably a held scream. Returns the span only when it is at
+    least ``RUN_MIN_LEN`` long, so an ordinary word never qualifies.
+    """
+    best = (0, 0)
+    i = 0
+    while i < len(text):
+        j = i + 1
+        while j < len(text) and text[j].casefold() == text[i].casefold():
+            j += 1
+        if j - i > best[1] - best[0]:
+            best = (i, j)
+        i = j
+    return best if best[1] - best[0] >= RUN_MIN_LEN else None
+
+
 def _is_run(text):
     """One repeated character, with at most ``RUN_STRAYS`` stray letters elsewhere.
 
@@ -304,7 +341,13 @@ def _is_run(text):
     ``'A' + 'H' * 57 + '!'`` (Berserk S01E16) is the same run with punctuation attached.
     ``'Kekekekeke...'`` is not -- it alternates, so its minority is half the token and
     belongs to the word-repair path, not a layout break.
+
+    A token that carries a word in front of a long run counts too: ``'DOWN' + 'N' * 48``
+    (Demon Slayer S01E19 #34) has four distinct letters and no dominant one, but its run is
+    48 characters long (:func:`_run_span`), and a break inside a run changes no character.
     """
+    if _run_span(text) is not None:
+        return True
     letters = _run_letters(text)
     if not letters:
         # No letter or digit at all: a pure punctuation run is a run when it is one symbol.
@@ -313,13 +356,37 @@ def _is_run(text):
     return strays <= RUN_STRAYS
 
 
+def _run_cut(text, max_line):
+    """Where to break a two-line prefix+run token, or None to keep the even split.
+
+    Only a token with something BESIDES the run -- a word or sign in front of it -- takes
+    this path; a pure run (or a run with punctuation trailing it) is already handled evenly
+    by :func:`_wrap_run`. The break lands inside the run, nearest the run's own middle, so
+    the shout reads as two halves: ``'DOWN' + 'N' * 48`` is 52 characters whose run is 49
+    N's (the 'N' of DOWN is the first), so it breaks at 27 -> 27 / 25 characters, the word
+    whole on the first line and every character still there. The cut is clamped so both
+    lines stay inside the budget; when no such cut exists the caller falls back to the even
+    split, which always fits.
+    """
+    span = _run_span(text)
+    if span is None or span[0] == 0:
+        return None
+    start, stop = span
+    lo = max(start + 1, len(text) - max_line)  # both lines inside the budget
+    hi = min(stop - 1, max_line)
+    if lo > hi:
+        return None
+    return min(max((start + stop) // 2, lo), hi)
+
+
 def _wrap_run(text, max_line=GATE_MAX_LINE):
     """Break a single run of one repeated character into equal lines, or None.
 
     Only for the case no word-boundary wrap can reach: ONE token (no whitespace) that is a
     run (:func:`_is_run`) and longer than the line budget. The split is even (the two lines
     differ by at most one character), so a scream reads as two balanced lines rather than a
-    full line and a stub.
+    full line and a stub. A prefix+run token breaks inside the run instead, so the word it
+    carries stays whole on the first line (:func:`_run_cut`).
 
     It deliberately does not consider the card's total length: a 446-character run is
     wrap-able by this function and STILL refused by the gate on ``MAX_CHARS``, so making
@@ -331,6 +398,9 @@ def _wrap_run(text, max_line=GATE_MAX_LINE):
     if not _is_run(text):
         return None
     parts = -(-len(text) // max_line)  # ceil: how many lines the run needs
+    cut = _run_cut(text, max_line) if parts == 2 else None
+    if cut is not None:
+        return text[:cut] + "\n" + text[cut:]
     size = -(-len(text) // parts)  # ceil: even lines, every one inside the budget
     return "\n".join(text[i : i + size] for i in range(0, len(text), size))
 
