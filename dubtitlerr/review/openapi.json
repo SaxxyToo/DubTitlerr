@@ -262,7 +262,7 @@
     "/api/v1/command": {
       "post": {
         "summary": "Run a command",
-        "description": "arr-style command endpoint. run.request mirrors POST /api/requests (same validation and status codes; params are show, season, episode_re, require_eng, webhook, force). system.restart writes the soft-stop flag and returns 202. system.start, system.pause and system.stop persist the processing state (start clears a stale soft-stop flag; stop also writes it) and return 202. notification.test sends one test event to a saved provider (params: {\"name\": ...}).",
+        "description": "arr-style command endpoint. run.request mirrors POST /api/requests (same validation and status codes; params are show, season, episode_re, require_eng, webhook, force; force=true means start over: every in-scope episode is rebuilt from its cached ASR words, overriding the freshness stamps, and the run summary reports forced=1 rebuilt=N, while a forced run that rebuilds nothing is filed as failed). system.restart writes the soft-stop flag and returns 202. system.start, system.pause and system.stop persist the processing state (start clears a stale soft-stop flag; stop also writes it) and return 202. notification.test sends one test event to a saved provider (params: {\"name\": ...}).",
         "operationId": "runCommand",
         "tags": [
           "commands"

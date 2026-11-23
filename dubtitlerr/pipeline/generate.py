@@ -1249,7 +1249,42 @@ def _write_run_report(rep):
         log("  run report write failed:", e)
 
 
-def force_park_sidecars(stem):
+def _log_scope(rep):
+    """One log line carrying the evidence the run report holds: what force asked for and
+    what the disk shows. `forced=1 rebuilt=N` is how an operator tells a real rebuild from
+    the 2026-11-22 no-op, which looked like a clean run in the old summary."""
+    not_done = sum((rep.get("not_done") or {}).values())
+    line = (
+        f"scope: forced={int(bool(rep.get('forced')))} rebuilt={rep.get('rebuilt', 0)} "
+        f"delivered={rep.get('delivered', 0)} awaiting_merge={rep.get('awaiting_merge', 0)}"
+    )
+    if not_done:
+        line += f" not_done={not_done}"
+    log(line)
+
+
+def _forced_partition(todo):
+    """Split a forced rebuild by what the disk can serve: ``(transcribe_todo, text_todo)``.
+
+    force means "start over", not "re-transcribe". The stored word list IS the decoder's
+    output, and every stage a rebuild exists to re-run (reflow, glossary correction, the
+    hallucination gates, layout re-validation, the srt/conf write) sits below it. So an
+    episode with a usable words.json replays through the text tier and costs CPU minutes;
+    only one without usable words goes back through the decoder. That is the same saving
+    partition_todo makes for a version bump, and a forced request has no reason to pay
+    GPU-days for audio it has already decoded.
+    """
+    transcribe_todo, text_todo = [], []
+    for v in todo:
+        stem = os.path.splitext(v)[0]
+        if read_words(stem, expect=decoder_identity()) is not None:
+            text_todo.append(v)
+        else:
+            transcribe_todo.append(v)
+    return transcribe_todo, text_todo
+
+
+def force_park_sidecars(stem, keep_words=False):
     """FORCE_REDO: park an episode's delivered and intermediate sidecars so this run
     rebuilds them.
 
@@ -1260,7 +1295,10 @@ def force_park_sidecars(stem):
     library, and without an operator moving files aside by hand.
     """
     prefix = os.environ.get("SIDECAR_SUFFIX", ".dub.en")
-    paths = [stem + s for s in SIDECAR_SUFFIXES]
+    # keep_words: a text-tier replay READS words.json, so parking it would turn a cheap
+    # replay into a re-transcription -- the opposite of what force means (see
+    # _forced_partition).
+    paths = [stem + s for s in SIDECAR_SUFFIXES if not (keep_words and s == WORDS_SUFFIX)]
     paths += [stem + prefix + ext for ext in (".ass", ".srt")]
     # The delivery MARKERS matter more than the artefacts: process() decides "already-muxed"
     # from the .dubtitles.done stamp and the merge pass decides from the stage record, so
@@ -1932,9 +1970,11 @@ def main():
     # Split what needs doing by TIER. needs_work() stays the gate (it also honours the
     # pending-sidecar and poison-marker skips); this only decides which queue the
     # survivors land in.
-    # Forced: a full rebuild. partition_todo would drop a delivered episode (its stamp is current
-    # in both tiers until force_park_sidecars moves it aside, just before process()).
-    transcribe_todo, text_todo = (list(todo), []) if forced else partition_todo(todo)
+    # Forced: a full rebuild of everything in scope. partition_todo would drop a delivered
+    # episode (its stamp is current in both tiers until force_park_sidecars moves it aside),
+    # so the split comes from what the disk can serve: a usable words.json replays in the
+    # text tier, anything else needs the decoder.
+    transcribe_todo, text_todo = _forced_partition(todo) if forced else partition_todo(todo)
     statuses = {}
     # Counted over EVERY file, not just todo: the question this answers is "how far
     # behind is the part of the library I am not watching", and that is invisible if it
@@ -1948,7 +1988,9 @@ def main():
     )
     if not todo:
         log("nothing to transcribe (all done) — skipping model load")
-        _write_run_report(scope_report(files, since, statuses))
+        empty_report = scope_report(files, since, statuses)
+        _write_run_report(empty_report)
+        _log_scope(empty_report)
         return
     # The model is loaded ONLY when something actually needs the decoder. A text-only
     # sweep otherwise paid a ~40s GPU model load to perform zero transcription, which
@@ -1980,6 +2022,10 @@ def main():
             break
         log("→", os.path.basename(v), "(text)")
         no_glossary += _no_glossary_warning(show, os.path.basename(v))
+        if _force_redo():
+            # Park the delivered output and its markers so this replay's srt/conf replace
+            # them and the merge pass re-muxes. keep_words: the replay needs words.json.
+            force_park_sidecars(os.path.splitext(v)[0], keep_words=True)
         try:
             statuses[v] = process_text(v)
             log("  ", statuses[v])
@@ -2066,6 +2112,7 @@ def main():
     )
     report = scope_report(files, since, statuses)
     _write_run_report(report)
+    _log_scope(report)
     if no_glossary:
         log(
             f"generated without glossary: {no_glossary} episode(s) — no name protection "

@@ -1198,11 +1198,20 @@ def main() -> None:
                 if req_eng is not None and (isinstance(req_eng, bool) or req_eng not in (0, 1, "0", "1")):
                     raise ValueError("invalid require_eng")
 
+                # force is the request's "start over" switch: unpack exports it as FORCE_REDO
+                # and generate rebuilds every in-scope episode from the cached ASR words. It
+                # has to be carried here or it never leaves the request file -- measured
+                # 2026-11-22: force=true requests ran, printed `todo=0`, and no-op'd.
+                force = data.get("force", False)
+                if not isinstance(force, bool):
+                    raise ValueError("invalid force")
+
                 out_doc = {
                     "path": p,
                     "show": show,
                     "generate_only_re": gen_re or "",
                     "require_eng": "" if req_eng is None else str(req_eng),
+                    "force": force,
                 }
                 print(json.dumps(out_doc))
                 break
@@ -1218,7 +1227,7 @@ def main() -> None:
         print(f"SHOW={data.get('show', '')}")
         print(f"GENERATE_ONLY_RE={data.get('generate_only_re', '')}")
         print(f"REQUIRE_ENG={data.get('require_eng', '')}")
-        print(f"FORCE_REDO={'1' if data.get('force') else ''}")
+        print(f"FORCE_REDO={'1' if data.get('force') is True else ''}")
 
     elif cmd == "start":
         if len(args) < 2:
