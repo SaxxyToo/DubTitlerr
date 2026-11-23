@@ -2,11 +2,10 @@
 
 Synthetic names; no network."""
 
-import json
-
 import pytest
 import repair_ref_stub
 
+from dubtitlerr.core import artifact_store
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import repair
 
@@ -128,7 +127,7 @@ def test_the_summary_counts_the_name_part_rejection_under_its_own_key(tmp_path, 
     recorded = []
     monkeypatch.setattr(repair.unresolved, "record", lambda stem, *a, **k: recorded.append(a))
     repair.process(conf_path)
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = artifact_store.get_json(stem, "repair-summary")
     assert summary["rejected_name_part"] == 1 and summary["rejected_guard"] == 1 and summary["repaired"] == 0
     assert ("repair", "rejected_name_part") == recorded[0][:2]
 
@@ -148,7 +147,7 @@ def test_without_the_flag_the_summary_key_is_zero(tmp_path, monkeypatch):
     monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 6.0, "Momonosuke is going to Wano.")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: "Kouzuki Momonosuke is going to Wano.")
     repair.process(conf_path)
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = artifact_store.get_json(stem, "repair-summary")
     assert summary["rejected_name_part"] == 0 and summary["repaired"] == 1
 
 

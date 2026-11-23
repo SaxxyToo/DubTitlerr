@@ -374,9 +374,7 @@ def _stamp_failure_setup(tmp_path, monkeypatch, name):
     monkeypatch.setattr(mux, "identify", lambda p: {"tracks": [aud(0, "eng")]})
     monkeypatch.setattr(mux, "verify", lambda orig, out: "ok")
     monkeypatch.setattr(mux.os, "chown", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        mux.subprocess, "run", lambda cmd, **kw: open(cmd[cmd.index("-o") + 1], "wb").write(b"muxed")
-    )
+    monkeypatch.setattr(mux.subprocess, "run", lambda cmd, **kw: open(cmd[cmd.index("-o") + 1], "wb").write(b"muxed"))
 
     def boom(path, video, **_kw):
         raise OSError("read-only file system")
@@ -444,9 +442,7 @@ def _real_stamp_setup(tmp_path, monkeypatch, payload=b"muxed-complete-payload", 
     monkeypatch.setattr(mux, "identify", lambda p: {"tracks": [aud(0, "eng")]})
     monkeypatch.setattr(mux, "verify", lambda orig, out: "ok")
     monkeypatch.setattr(mux.os, "chown", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        mux.subprocess, "run", lambda cmd, **kw: open(cmd[cmd.index("-o") + 1], "wb").write(payload)
-    )
+    monkeypatch.setattr(mux.subprocess, "run", lambda cmd, **kw: open(cmd[cmd.index("-o") + 1], "wb").write(payload))
     return v, str(tmp_path / "ep")
 
 
@@ -550,9 +546,7 @@ def _heal_and_remux_differently(monkeypatch):
     re-mux of the damaged episode is detectable."""
     monkeypatch.setattr(mux.os, "replace", _REAL_REPLACE)
     monkeypatch.setattr(mux.shutil, "move", _REAL_MOVE)
-    monkeypatch.setattr(
-        mux.subprocess, "run", lambda cmd, **kw: open(cmd[cmd.index("-o") + 1], "wb").write(b"SECOND-RUN")
-    )
+    monkeypatch.setattr(mux.subprocess, "run", lambda cmd, **kw: open(cmd[cmd.index("-o") + 1], "wb").write(b"SECOND-RUN"))
 
 
 def test_failed_finalize_rename_fails_marker_blocks_next_sweep(tmp_path, monkeypatch):
@@ -956,11 +950,12 @@ def test_delete_broken_hardlinks_is_not_a_silent_noop():
 # --- stage-execution record (2026-08-22) ----------------------------------------------
 
 
-def test_stages_ran_reads_the_sidecars_still_on_disk(tmp_path):
-    """mux stamps AFTER the other stages, while their sidecars are still present. That is
-    the one moment the pipeline can say what actually ran."""
+def test_stages_ran_reads_the_store_and_the_sidecars_still_on_disk(tmp_path):
+    """mux stamps AFTER the other stages, while their evidence is still present. That is
+    the one moment the pipeline can say what actually ran. The repair summary and the qc
+    counters both live in the artifact store (P39)."""
     stem = str(tmp_path / "ep")
-    open(stem + ".dubtitles.repair-summary.json", "w").write("{}")
+    artifact_store.put(stem, "repair-summary", "{}")
     store_seed.qc(stem + ".dubtitles.qc.json", {"counters": {"restore_runs_sent": 12}})
     got = mux._stages_ran(stem, stem + ".eng.dubtitles.ass")
     assert got["repair"] is True
@@ -977,6 +972,25 @@ def test_stages_ran_omits_what_it_cannot_determine(tmp_path):
     assert got["repair"] is False  # summary absent: repair demonstrably did not run
     assert got["signs_merge"] is False  # muxed from .srt
     assert "punctuation" not in got  # unknowable -> omitted
+
+
+def test_process_stamps_repair_true_from_the_store(tmp_path, monkeypatch):
+    """The done stamp's `repair` flag comes from the store's repair-summary row."""
+    from dubtitlerr.core import common
+
+    v, stem = _real_stamp_setup(tmp_path, monkeypatch)
+    artifact_store.put(stem, "repair-summary", "{}")
+    assert mux.process(str(v), apply=True) == "muxed"
+    assert common.read_stamp(stem + mux.STAMP_SUFFIX)["stages"]["repair"] is True
+
+
+def test_process_stamps_repair_false_when_the_store_has_no_summary(tmp_path, monkeypatch):
+    """A store with no repair-summary row stamps repair=False, never a guessed True."""
+    from dubtitlerr.core import common
+
+    v, stem = _real_stamp_setup(tmp_path, monkeypatch)
+    assert mux.process(str(v), apply=True) == "muxed"
+    assert common.read_stamp(stem + mux.STAMP_SUFFIX)["stages"]["repair"] is False
 
 
 # --- [S-6] the pre-mux review gate -------------------------------------------

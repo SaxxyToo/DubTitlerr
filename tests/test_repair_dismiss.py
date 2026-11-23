@@ -3,12 +3,10 @@ Part B: which guard rejects a punctuation/case-only proposal, the 'guard' key, a
 
 Synthetic lines only; the one word-count rule is unresolved.word_changes."""
 
-import json
-
 import pytest
 import repair_ref_stub
 
-from dubtitlerr.core import unresolved
+from dubtitlerr.core import artifact_store, unresolved
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import punctuation, repair
 
@@ -129,7 +127,7 @@ def _episode(tmp_path, monkeypatch, original, proposal, gloss=None):
     monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 6.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: proposal)
     repair.process(conf)
-    return stem, json.load(open(stem + ".dubtitles.repair-summary.json"))
+    return stem, artifact_store.get_json(stem, "repair-summary")
 
 
 BIG = "the old line has few words"  # 6 words
@@ -286,7 +284,7 @@ def test_the_summary_counts_the_newly_accepted_proposals_only_when_the_flag_is_o
         monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 1.5, "the official sub")]))
         monkeypatch.setattr(repair, "llm", lambda prompt, model=None: DENSE + ".")
         repair.process(conf)
-        return json.load(open(stem + ".dubtitles.repair-summary.json"))
+        return artifact_store.get_json(stem, "repair-summary")
 
     monkeypatch.delenv("REPAIR_ACCEPT_PUNCT_CASE_ONLY", raising=False)
     off = run("off")
@@ -309,5 +307,5 @@ def test_a_punctuation_only_repair_the_guards_would_have_admitted_anyway_is_not_
     monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, 6.0, "the official sub")]))
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: DENSE + ".")
     repair.process(conf)
-    summary = json.load(open(stem + ".dubtitles.repair-summary.json"))
+    summary = artifact_store.get_json(stem, "repair-summary")
     assert summary["repaired"] == 1 and summary["accepted_punct_case_only"] == 0

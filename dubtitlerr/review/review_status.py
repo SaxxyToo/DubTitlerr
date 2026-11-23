@@ -6,12 +6,11 @@ Sidecar inspection is bounded to at most 5 small sidecar reads per stem, only fo
 page slice.
 """
 
-import json
 import math
 import os
 import time
 
-from dubtitlerr.core import common, decisions, unresolved
+from dubtitlerr.core import artifact_store, common, decisions, unresolved
 
 STAGES = ("transcribed", "repaired", "muxed", "failed", "stale", "pending-review")
 DEFAULT_LIMIT = 50
@@ -67,17 +66,15 @@ def _stem_metadata(stem: str) -> tuple[str, str, str]:
 
 
 def _read_repair_summary(stem: str) -> str | None:
-    """Open .dubtitles.repair-summary.json directly without duplicate exists() calls."""
-    path = stem + ".dubtitles.repair-summary.json"
+    """Read the stored repair summary (kind ``repair-summary``) without an exists() probe."""
     try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, dict):
-                model = data.get("model")
-                return str(model) if model is not None else None
-    except (OSError, ValueError, TypeError):
-        # No status file, or an unreadable one: the caller reports 'unknown'.
-        pass
+        data = artifact_store.get_json(stem, "repair-summary")
+    except Exception:
+        # No status row, or an unreadable one: the caller reports 'unknown'.
+        return None
+    if isinstance(data, dict):
+        model = data.get("model")
+        return str(model) if model is not None else None
     return None
 
 
@@ -150,7 +147,7 @@ def _inspect_episode(stem: str, open_entries, stores: dict) -> dict:
         else {}
     )
 
-    # 4. Repair summary (.dubtitles.repair-summary.json) - open directly
+    # 4. Repair summary (store kind repair-summary) - read directly
     repair_model = _read_repair_summary(stem)
 
     # 5. Pending review count via open_entries (no disk queue read)

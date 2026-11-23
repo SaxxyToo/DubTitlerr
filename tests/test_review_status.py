@@ -126,10 +126,9 @@ def test_status_stages(tmp_path, monkeypatch):
     )
     artifact_store.put_json(s_muxed, "stages", {"mux": {"outcome": "ok", "at": 200.0}})
 
-    # 6. Repaired via repair-summary.json
+    # 6. Repaired via the store's repair-summary kind
     s_repaired = _create_episode(tmp_path, "One Pace", "S01", "E06")
-    with open(s_repaired + ".dubtitles.repair-summary.json", "w") as f:
-        json.dump({"model": "qwen3-4b-instruct", "repaired_lines": 5}, f)
+    artifact_store.put_json(s_repaired, "repair-summary", {"model": "qwen3-4b-instruct", "repaired_lines": 5})
 
     # 7. Transcribed (only conf.json exists)
     s_transcribed = _create_episode(tmp_path, "One Pace", "S01", "E07")
@@ -193,8 +192,7 @@ def test_status_cost_bound(tmp_path, monkeypatch):
             s, "done", {"muxed": True, "text_version": common.TEXT_VERSION, "transcribe_version": common.TRANSCRIBE_VERSION}
         )
         artifact_store.put_json(s, "stages", {"mux": {"outcome": "ok"}})
-        with open(s + ".dubtitles.repair-summary.json", "w") as f:
-            json.dump({"model": "test-m"}, f)
+        artifact_store.put_json(s, "repair-summary", {"model": "test-m"})
 
     orig_open = builtins.open
     orig_exists = os.path.exists
@@ -254,7 +252,7 @@ def test_status_malformed_sidecars(tmp_path):
     artifact_store.put(stem, "done", "{broken json")
     # Wrong shapes in the stages record: non-dict values and NaN
     artifact_store.put_json(stem, "stages", {"repair": "ok", "extra": None, "list": [1], "mux": {"outcome": "ok", "at": "NaN"}})
-    (tmp_path / "ShowA" / "Season 1" / f"{os.path.basename(stem)}.dubtitles.repair-summary.json").write_text("[1, 2, 3]")
+    artifact_store.put(stem, "repair-summary", "[1, 2, 3]")
 
     stems_cache = (100.0, [stem], 50.0)
     status, payload = review_status.handle("GET", "/api/status", {}, stems_cache=stems_cache, open_entries=lambda s: [], now=60.0)
