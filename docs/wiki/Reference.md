@@ -927,6 +927,8 @@ Every environment variable the pipeline reads has a row under **Settings** in th
 
 **Connect** carries more than rows. Besides `PLEX_URL`, `PLEX_TOKEN`, `PLEX_SECTION`, `WATCHSTATE_URL`, `WATCHSTATE_API_KEY`, `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER`, `PLEX_PATH` and the webhook access rows, it holds the **Notifications** panel. Notification providers are a user-defined list stored beside Connections and have no environment variable; see [Notifications](#notifications).
 
+**Transcription** carries the endpoint model picker. **Fetch endpoint models** posts `{"endpoint": "transcription"}` to `POST /api/settings/models`, probes the saved `ASR_URL` (with `/audio/transcriptions` stripped, at its `/v1/models`), and fills `ASR_MODEL` — only on **Save Changes**. The row also states the hard requirement: the endpoint model must return word timestamps (the `timestamp_granularities[]` parameter). `openai/whisper-1` is the only hosted model that does, it retires on **2027-02-26**, and no hosted replacement returns them; [Choosing an ASR model](Choosing-an-ASR-Model.md#hosted-endpoints-and-a-date-worth-knowing) compares the options. `WHISPER_MODEL` is a local model file rather than a server listing, so it keeps its free-text field.
+
 The first-wave rows are editable. Every other row shows its value and why it cannot be changed here: "Set in the container environment" for the values the container fixes, "Set through a Connection", "Retired: no longer read", or "edit in a later release". For a signed-in user who is not an admin, the rows that would be editable are read-only and say "Only an admin can change settings". **Show Advanced** in the toolbar reveals the rows that rarely change. The bootstrap values always list, under General.
 
 Where a value comes from, in order: what you saved in the UI (**Set here**), else the container's environment (**From the container**), else the built-in default (**Default**). A saved value that hides an environment value reads "Overrides the container value". Resetting a row removes your saved value, so the container value or the default applies again.
@@ -951,6 +953,9 @@ Rules a saved Connection obeys:
 - Changing a URL or a kind clears the stored key unless you enter the key in the same save.
 - The decision stage accepts only the hosts the decision client calls: openrouter.ai, api.commandcode.ai, or loopback.
 - **Test** asks the server to probe a saved Connection with its own timeouts.
+- **Fetch models** asks the server what it offers and fills the Model field from the answer. The probe is one admin-only `POST /api/settings/models` with `{"connection": "<name>"}`; the server reads the stored key, never returns it, and never follows a redirect. An OpenAI-compatible or llama.cpp Connection is asked at its base `/v1/models`, Ollama at `/api/tags`, and the two operations are stripped from the stored URL first (`/chat/completions`, `/audio/transcriptions`, `/api/generate`). A server that needs no key (a llama-swap on loopback) answers fine; a server that does not answer at all leaves the free-text field as the fallback. Picking an id only fills the field: nothing is saved until **Save Changes**, like every other edit.
+
+Model choice, in short (the pages linked below argue it): repair tolerates a small 3–4B instruct model, restore runs the same family as repair, and verify, decision and acquire reason over names and need a capable model. The Connections page carries these hints under each stage picker and links [Choosing a repair model](Choosing-a-repair-model.md).
 
 Secrets (the Plex token, the WatchState and Jellyfin keys, the webhook token, Connection keys and notification credentials) are entered only by a signed-in admin. Until login is enabled the page shows "available after login is enabled" and a plain set or not set.
 
@@ -1293,6 +1298,7 @@ Access is controlled by `ROUTE_ROLES`. Every route requires a specific role: `pu
 | PUT    | `/api/settings`           | `admin`   | Save setting values, connections, and stage assignments                  |
 | POST   | `/api/settings/reset`     | `admin`   | Reset settings to environment or built-in defaults                       |
 | POST   | `/api/settings/test`      | `admin`   | Test an LLM connection endpoint                                          |
+| POST   | `/api/settings/models`    | `admin`   | List the models a saved Connection or the transcription endpoint offers  |
 | POST   | `/api/system/restart`     | `admin`   | Trigger a soft stop and restart of the builder container                 |
 | GET    | `/api/system/processing`  | `user`    | Read the persisted processing state, who changed it and when            |
 | POST   | `/api/system/start`       | `admin`   | Start processing: persist `running` and clear a stale stop flag          |

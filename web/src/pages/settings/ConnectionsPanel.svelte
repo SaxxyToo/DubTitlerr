@@ -6,6 +6,7 @@
     parseExtraBody,
     stageChoices,
   } from '../../lib/settingsModel.js';
+  import ModelFetch from './ModelFetch.svelte';
 
   type Connection = { name: string; kind: string; [field: string]: any };
   let {
@@ -43,6 +44,15 @@
     llamacpp: 'llama.cpp',
     ollama: 'Ollama',
     openai: 'OpenAI-compatible',
+  };
+  const REPAIR_MODEL_DOC =
+    'https://github.com/SaxxyToo/DubTitlerr/blob/main/docs/wiki/Choosing-a-repair-model.md';
+  const STAGE_HINTS: Record<string, string> = {
+    repair: 'Tolerates a small 3–4B instruct model; names decide the choice.',
+    restore: 'Runs the same model family as repair.',
+    verify: 'Reasons over names: use a capable model, not the smallest.',
+    decision: 'Reasons over names: use a capable model, not the smallest.',
+    acquire: 'Reasons over names: use a capable model, not the smallest.',
   };
   let results = $state<Record<string, { ok: boolean; text: string }>>({});
   let testing = $state<Record<string, boolean>>({});
@@ -171,6 +181,15 @@
           spellcheck="false"
           oninput={(e) => update(i, { model: e.currentTarget.value })}
         />
+        <ModelFetch
+          {api}
+          {canEdit}
+          target={{ connection: c.name }}
+          label={`Fetch models for ${c.name || 'this connection'}`}
+          disabled={!testable(c)}
+          hint={testable(c) ? '' : 'Save this connection first.'}
+          onpick={(model) => update(i, { model })}
+        />
         {#if fieldError(c, i, 'model')}<p class="field-error" role="alert">
             {fieldError(c, i, 'model')}
           </p>{/if}
@@ -195,6 +214,10 @@
               >
             {/if}
             {#if c.key === CLEAR}<span class="hint">The key is cleared when you save.</span>{/if}
+            <p class="hint">
+              A key travels over https, or to a loopback host only. It is sent to the server, never shown
+              back.
+            </p>
           {:else}
             <p class="field-label">API key: {c.api_key?.set ? 'Set' : 'Not set'}</p>
             {#if !secretsWritable}<p class="hint">available after login is enabled</p>{/if}
@@ -311,6 +334,12 @@
         {#if errors[`stages.${stage}`]}<p class="field-error" role="alert">
             {errors[`stages.${stage}`]}
           </p>{/if}
+        {#if STAGE_HINTS[stage]}
+          <p class="hint">
+            {STAGE_HINTS[stage]}
+            <a href={REPAIR_MODEL_DOC} target="_blank" rel="noreferrer">Choosing a repair model</a>
+          </p>
+        {/if}
       </div>
     {/each}
   </div>
@@ -357,6 +386,9 @@
   .hint {
     margin: 0;
     color: var(--muted);
+  }
+  .hint a {
+    text-decoration: underline;
   }
   .field-error {
     margin: 0;

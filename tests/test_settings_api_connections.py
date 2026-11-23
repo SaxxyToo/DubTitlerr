@@ -12,6 +12,7 @@ import urllib.error
 import pytest
 
 from dubtitlerr.settings import settings_api as api
+from dubtitlerr.settings import settings_connections as conns
 from dubtitlerr.settings import settings_store as store
 
 KEY = "sk-conn-key-0123456789abcdef"  # gitleaks:allow -- test fixture, not a real credential
@@ -198,6 +199,146 @@ def test_testing_a_connection_that_does_not_exist_is_400_and_a_keyless_openai_on
 
 def test_the_test_action_is_an_admin_route():
     assert api.ROLE_ENTRIES[("POST", "/api/settings/test")] == "admin"
+
+
+# --- S2: Fetch models -----------------------------------------------------------------------------------------------------
+
+
+def test_the_model_list_address_strips_the_operation_the_url_names():
+    assert conns.models_probe_url("openai", "https://h/v1/chat/completions") == "https://h/v1/models"
+    assert conns.models_probe_url("llamacpp", "http://h:8090") == "http://h:8090/v1/models"
+    assert conns.models_probe_url("openai", "http://h:9000/v1/audio/transcriptions") == "http://h:9000/v1/models"
+    assert conns.models_probe_url("llamacpp", "http://h:8090/v1/") == "http://h:8090/v1/models"
+    assert conns.models_probe_url("ollama", "http://h:11434/api/generate") == "http://h:11434/api/tags"
+    assert conns.models_probe_url("ollama", "http://h:11434") == "http://h:11434/api/tags"
+
+
+def test_a_model_list_keeps_the_names_a_connection_can_store():
+    assert conns.model_ids("openai", {"data": [{"id": "qwen3-4b-instruct"}, {"id": "gpt-x"}, {"id": "bad name"}]}) == [
+        "qwen3-4b-instruct",
+        "gpt-x",
+    ]
+    assert conns.model_ids("ollama", {"models": [{"name": "llama3.2:3b"}, {"model": "qwen3:4b"}]}) == [
+        "llama3.2:3b",
+        "qwen3:4b",
+    ]
+    assert conns.model_ids("openai", {"data": "nope"}) == []
+    assert conns.model_ids("openai", {"data": [{"id": "x"}, {"id": "x"}]}) == ["x"]
+
+
+class ModelServer:
+    """A local stand-in for llama-swap or Ollama: answers one path with one JSON body and records every request."""
+
+    def __init__(self, path, body, status=200):
+        seen = self.seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append((self.path, self.headers.get("Authorization")))
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body if status < 400 else b"{}")
+
+            def log_message(self, format, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.path = path
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_fetch_models_asks_a_keyless_openai_server_and_returns_its_ids(env):
+    server = ModelServer("/v1/models", b'{"object":"list","data":[{"id":"qwen3-4b-instruct"},{"id":"qwen3-8b"}]}')
+    try:
+        put(env, connections=[{"name": "swap", "kind": "llamacpp", "url": server.url + "/v1/chat/completions"}])
+        status, payload = api.handle("POST", "/api/settings/models", {"connection": "swap"}, environ=env)
+    finally:
+        server.close()
+    assert status == 200 and payload["ok"] is True
+    assert payload["models"] == ["qwen3-4b-instruct", "qwen3-8b"]
+    assert server.seen == [("/v1/models", None)], "a keyless llama-swap probe carries no Authorization header"
+
+
+def test_fetch_models_reads_ollama_api_tags(env):
+    server = ModelServer("/api/tags", b'{"models":[{"name":"llama3.2:3b","model":"llama3.2:3b"}]}')
+    try:
+        put(env, connections=[{"name": "oll", "kind": "ollama", "url": server.url + "/api/generate"}])
+        status, payload = api.handle("POST", "/api/settings/models", {"connection": "oll"}, environ=env)
+    finally:
+        server.close()
+    assert status == 200 and payload["ok"] is True and payload["models"] == ["llama3.2:3b"]
+    assert server.seen == [("/api/tags", None)]
+
+
+def test_fetch_models_sends_a_stored_key_but_never_returns_it(env):
+    server = ModelServer("/v1/models", b'{"data":[{"id":"gpt-x"}]}')
+    try:
+        put(env, connections=[{**CLOUD, "url": server.url + "/v1/chat/completions"}])
+        status, payload = api.handle("POST", "/api/settings/models", {"connection": "cloud"}, environ=env)
+    finally:
+        server.close()
+    # The key travels over plain http only because the host is loopback, the same rule key_problem applies.
+    assert server.seen == [("/v1/models", f"Bearer {KEY}")]
+    assert status == 200 and payload["ok"] is True and payload["models"] == ["gpt-x"]
+    assert KEY not in json.dumps(payload)
+
+
+def test_fetch_models_on_a_bad_target_is_a_clear_error_not_a_crash(env):
+    assert api.handle("POST", "/api/settings/models", {"connection": "ghost"}, environ=env)[0] == 400
+    server = ModelServer("/v1/models", b"{}", status=404)
+    try:
+        put(env, connections=[{"name": "gone", "kind": "llamacpp", "url": server.url + "/v1/chat/completions"}])
+        status, payload = api.handle("POST", "/api/settings/models", {"connection": "gone"}, environ=env)
+    finally:
+        server.close()
+    assert status == 200 and payload["ok"] is False and payload["error"] == "HTTP 404"
+    other = ModelServer("/v1/models", b"not json")
+    try:
+        put(env, connections=[{"name": "junk", "kind": "llamacpp", "url": other.url + "/v1/chat/completions"}])
+        status, payload = api.handle("POST", "/api/settings/models", {"connection": "junk"}, environ=env)
+    finally:
+        other.close()
+    assert status == 200 and payload["ok"] is False and "JSON" in payload["error"]
+
+
+def test_fetch_models_refuses_a_target_that_resolves_to_link_local(env, monkeypatch):
+    put(env, connections=[{"name": "meta", "kind": "llamacpp", "url": "http://some-host.test:8090/v1/chat/completions"}])
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda host, port, *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", port))],
+    )
+    status, payload = api.handle("POST", "/api/settings/models", {"connection": "meta"}, environ=env)
+    assert status == 200 and payload["ok"] is False and "link-local" in payload["error"]
+
+
+def test_fetch_models_probes_the_transcription_endpoint_with_its_key_variable(env, tmp_path):
+    server = ModelServer("/v1/models", b'{"data":[{"id":"openai/whisper-1"},{"id":"whisper-large-v3-turbo"}]}')
+    secret = "sk-or-test-fixture-key"  # gitleaks:allow -- test fixture, not a real credential
+    try:
+        put(env, values={"ASR_URL": server.url + "/v1/audio/transcriptions"}, revision=store.load(env).rev)
+        env["OPENROUTER_API_KEY"] = secret
+        status, payload = api.handle("POST", "/api/settings/models", {"endpoint": "transcription"}, environ=env)
+    finally:
+        server.close()
+        env.pop("OPENROUTER_API_KEY", None)
+    assert status == 200 and payload["ok"] is True
+    assert payload["models"] == ["openai/whisper-1", "whisper-large-v3-turbo"]
+    # The key travels only because the host is loopback, and the answer never carries it.
+    assert server.seen == [("/v1/models", f"Bearer {secret}")]
+    assert secret not in json.dumps(payload)
+    assert not (tmp_path / "settings.json").read_text().count(secret)
+
+
+def test_the_fetch_models_action_is_an_admin_route():
+    assert api.ROLE_ENTRIES[("POST", "/api/settings/models")] == "admin"
 
 
 def test_the_test_action_refuses_when_resolved_address_is_link_local(env, monkeypatch):

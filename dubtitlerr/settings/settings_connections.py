@@ -351,6 +351,55 @@ def models_url(url):
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path + "/models", "", ""))
 
 
+OPERATION_TAILS = ("/chat/completions", "/completions", "/audio/transcriptions")
+VERSION_SEGMENT = re.compile(r"/v\d+$")
+MODEL_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
+MODELS_MAX = 500
+
+
+def _endpoint_root(path):
+    """A Connection URL with the operation it names stripped: /v1/chat/completions -> /v1, /api/generate -> /api."""
+    path = path.rstrip("/")
+    for tail in OPERATION_TAILS + ("/api/generate",):
+        if path.endswith(tail):
+            return path[: -len(tail)]
+    return path
+
+
+def models_probe_url(kind, url):
+    """The address that lists what a server offers: {root}/v1/models for an OpenAI-compatible endpoint (or {root}/models
+    when the root already ends in a version segment), and {root}/api/tags for Ollama. The Fetch models button asks this;
+    Test keeps asking models_url(), which only knows the chat route."""
+    parts = urllib.parse.urlsplit(url)
+    root = _endpoint_root(parts.path)
+    if kind == "ollama":
+        path = root + "/tags" if root.endswith("/api") else root + "/api/tags"
+    else:
+        path = root + "/models" if VERSION_SEGMENT.search(root) else root + "/v1/models"
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def model_ids(kind, payload):
+    """The model names a /v1/models or /api/tags answer lists, in order and without duplicates. An entry that does not
+    name a model in the form a Connection stores (qwen3-4b-instruct, llama3.2:3b, openai/whisper-1) is dropped, so the
+    picker can never offer a value the save would refuse."""
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("models") if kind == "ollama" else payload.get("data")
+    if not isinstance(items, list):
+        return []
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        value = (item.get("name") or item.get("model")) if kind == "ollama" else item.get("id")
+        if isinstance(value, str) and MODEL_ID_RE.fullmatch(value) and value not in out:
+            out.append(value)
+        if len(out) >= MODELS_MAX:
+            break
+    return out
+
+
 def rules():
     """What the page needs to build the stage pickers without copying these rules: the kinds, and which kinds each stage
     accepts."""

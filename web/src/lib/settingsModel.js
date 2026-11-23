@@ -409,6 +409,24 @@ export function describeTestResult(result) {
   return err;
 }
 
+/**
+ * One plain sentence for a model-list fetch. A carried HTTP status is mapped, never shown raw.
+ * @param {{ ok?: unknown, models?: unknown, error?: unknown }} result
+ * @returns {string}
+ */
+export function describeModelsResult(result) {
+  if (result?.ok === true) {
+    const n = Array.isArray(result.models) ? result.models.length : 0;
+    if (n === 0) return 'The server lists no models. Type the model name instead.';
+    return `Found ${n} model${n === 1 ? '' : 's'}.`;
+  }
+  const err =
+    typeof result?.error === 'string' && result.error.trim() !== ''
+      ? result.error.trim()
+      : 'Could not fetch the model list.';
+  return err.endsWith('.') ? err : `${err}.`;
+}
+
 // --- Notifications (Connect) -------------------------------------------------------------------------------------------------
 
 /** The triggers a brand-new provider turns on: everything except the per-episode one, which the design leaves off (verbose). */

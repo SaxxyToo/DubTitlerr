@@ -78,6 +78,8 @@ def main():
         os.environ["SCHEDULE_FILE"] = str(base / "schedule.json")
         os.environ["REPAIR_LLAMACPP_URL"] = "http://127.0.0.1:18842/healthz"  # this very server: the probe succeeds
         os.environ["VERIFY_LLAMACPP_URL"] = "http://127.0.0.1:9/"  # nothing listens here: the probe fails
+        # The Transcription page's endpoint, so Fetch endpoint models answers from this fixture too.
+        os.environ["ASR_URL"] = "http://127.0.0.1:18842/v1/audio/transcriptions"
         # Settings writes (settings.json, secrets.json) land in this directory.
         (base / "config").mkdir()
         os.environ["CONFIG_DIR"] = str(base / "config")
@@ -215,6 +217,21 @@ def main():
             )
 
         class FixtureHandler(rs.Handler):
+            def do_GET(self):
+                # Model listings for the Fetch models button. Only the fixture serves these unauthenticated: a real
+                # deployment asks the LLM server, not the review server.
+                if self.path == "/v1/models":
+                    return self._send(
+                        200,
+                        {
+                            "object": "list",
+                            "data": [{"id": "qwen3-4b-instruct"}, {"id": "qwen3-8b"}, {"id": "whisper-large-v3-turbo"}],
+                        },
+                    )
+                if self.path == "/api/tags":
+                    return self._send(200, {"models": [{"name": "llama3.2:3b", "model": "llama3.2:3b"}]})
+                return super().do_GET()
+
             def do_POST(self):
                 if self.path == "/__test/reset" and self.headers.get("X-Api-Key") == "browser-fixture-token":
                     for file in ddir.glob("*.json"):
