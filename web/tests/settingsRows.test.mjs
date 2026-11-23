@@ -49,7 +49,7 @@ const SCHEMA = {
       key: 'VERIFY_TIMEOUT',
       category: 'glossary',
       type: 'int',
-      editable: false,
+      editable: true,
       advanced: true,
       applies: 'next_show',
     },
@@ -69,6 +69,15 @@ const SCHEMA = {
       editable: true,
       advanced: false,
       applies: 'restart',
+    },
+    {
+      key: 'HEARTBEAT_PATH',
+      category: 'general',
+      type: 'string',
+      editable: false,
+      advanced: true,
+      read_only_reason: 'Not editable: the web server reads it at startup',
+      applies: 'next_show',
     },
     {
       key: 'PLEX_TOKEN',
@@ -116,16 +125,24 @@ test('bootstrap values always list, in their own section, only in their category
     general.rows.map((r) => r.key),
     ['REVIEW_PORT'],
   );
+  const generalAll = categoryRows(SCHEMA, 'general', true);
+  assert.deepEqual(
+    generalAll.rows.map((r) => r.key),
+    ['REVIEW_PORT', 'HEARTBEAT_PATH'],
+  );
+  assert.deepEqual(generalAll.rows.filter((r) => !r.editable).map((r) => r.key), ['HEARTBEAT_PATH']);
   assert.deepEqual(categoryRows(SCHEMA, 'library', true).bootstrap, []);
 });
 
 test('a row is read-only for the spec reasons, and editable otherwise', () => {
   const by = Object.fromEntries(SCHEMA.settings.map((s) => [s.key, s]));
-  assert.equal(readOnlyReason(by.VERIFY_TIMEOUT, {}), 'edit in a later release');
+  assert.equal(readOnlyReason(by.HEARTBEAT_PATH, {}), 'Not editable: the web server reads it at startup');
+  assert.equal(readOnlyReason({ editable: false }, {}), 'edit in a later release');
   assert.equal(readOnlyReason(by.CONFIG_DIR, {}), 'Set in the container environment');
   assert.equal(readOnlyReason({ managed_by: 'connections' }, {}), 'Set through a Connection');
   assert.equal(readOnlyReason(by.PLEX_TOKEN, { secretsWritable: false }), 'available after login is enabled');
   assert.equal(readOnlyReason(by.PLEX_TOKEN, { secretsWritable: true }), '');
+  assert.equal(readOnlyReason(by.VERIFY_TIMEOUT, {}), '');
   assert.equal(readOnlyReason(by.REQUIRE_ENG, {}), '');
 });
 
@@ -185,11 +202,11 @@ test('a role that cannot edit sees every row read-only, with the reason', () => 
   assert.equal(readOnlyReason(entry, { canEdit: true }), '');
   assert.equal(readOnlyReason(entry, {}), '');
   assert.equal(describeRow(entry, { value: 7, source: 'default' }, { canEdit: false }).editable, false);
-  const later = SCHEMA.settings.find((s) => s.key === 'VERIFY_TIMEOUT');
+  const later = SCHEMA.settings.find((s) => s.key === 'HEARTBEAT_PATH');
   assert.equal(
     readOnlyReason(later, { canEdit: false }),
-    'edit in a later release',
-    'the first-wave rule comes first',
+    'Not editable: the web server reads it at startup',
+    'the registry reason comes before the admin rule',
   );
 });
 
