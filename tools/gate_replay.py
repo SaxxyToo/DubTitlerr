@@ -33,11 +33,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dubtitlerr.core import (
-    artifact_store,  # noqa: E402
-    common,  # noqa: E402
-    decisions,  # noqa: E402
-)
+from dubtitlerr.core import artifact_store, common, decisions  # noqa: E402
 from dubtitlerr.pipeline import repair  # noqa: E402
 
 JUDGED_REASONS = ("rejected_guard", "rejected_name_invented", "rejected_name_part")

@@ -67,9 +67,7 @@ QUEUE_MAX = queue_policy.QUEUE_MAX
 EXPIRY_DAYS = queue_policy.EXPIRY_DAYS
 # A reason a HUMAN owes stays in the log whatever its class volume: it is the reviewer's own
 # verdict coming back refused, and sampling it away would hide exactly the loss it records.
-ALWAYS_EVIDENCE = frozenset(
-    {("repair", "decision_unfittable"), ("repair", "verdict_unfittable"), ("repair", "verdict_owed")}
-)
+ALWAYS_EVIDENCE = frozenset({("repair", "decision_unfittable"), ("repair", "verdict_unfittable"), ("repair", "verdict_owed")})
 
 # Reasons, per stage. Kept as a module constant so the --review CLI and the call sites cannot
 # drift apart, and so a typo'd reason is visible rather than silently creating a new bucket.
