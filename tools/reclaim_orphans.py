@@ -70,14 +70,16 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dubtitlerr.core import common  # noqa: E402
+from dubtitlerr.core import (
+    artifact_store,  # noqa: E402
+    common,  # noqa: E402
+)
 
 VIDEO_EXTS = (".mkv", ".mp4", ".m4v")
 
 # Everything that belongs to an episode and should follow its rename. Deliberately
 # explicit: a glob would sweep up the markers below.
 REKEY_SUFFIXES = (
-    common.STAMP_SUFFIX,
     common.WORDS_SUFFIX,
     ".dubtitles.conf.json",
     ".dubtitles.qc.json",
@@ -151,27 +153,27 @@ def _edge_digest(path: str) -> str | None:
 
 
 def find_matches(root: str) -> list[Match]:
-    """Every orphaned stamp under `root`, with a verdict. Reads only; never writes."""
+    """Every orphaned stamp under `root`, with a verdict. Reads only; never writes.
+
+    Stamps live in the central artifact store (kind ``done``) since P39, so the orphan
+    population is "store stems whose video no longer exists under that name"."""
     videos: dict[int, list[str]] = collections.defaultdict(list)
-    stamps: list[str] = []
     for dp, _, fns in os.walk(root):
         for fn in fns:
+            if not fn.endswith(VIDEO_EXTS):
+                continue
             p = os.path.join(dp, fn)
-            if fn.endswith(VIDEO_EXTS):
-                try:
-                    videos[os.path.getsize(p)].append(p)
-                except OSError:
-                    # A file that vanished between the walk and the stat is not an orphan candidate.
-                    pass
-            elif fn.endswith(common.STAMP_SUFFIX):
-                stamps.append(p)
+            try:
+                videos[os.path.getsize(p)].append(p)
+            except OSError:
+                # A file that vanished between the walk and the stat is not an orphan candidate.
+                pass
 
     orphans: list[tuple[str, dict]] = []
-    for s in stamps:
-        stem = s[: -len(common.STAMP_SUFFIX)]
+    for stem in artifact_store.stems(root=root, kind="done"):
         if any(os.path.exists(stem + e) for e in VIDEO_EXTS):
             continue  # its video is still there under this name
-        doc = common.read_stamp(s)
+        doc = common.read_stamp(stem)
         if doc:
             orphans.append((stem, doc))
 
@@ -201,6 +203,21 @@ def find_matches(root: str) -> list[Match]:
     return out
 
 
+def _rekey_store_rows(old_stem: str, new_stem: str) -> None:
+    """Move the episode's store artifacts onto the renamed video's stem.
+
+    Never overwrites a live row: a stem that already holds that kind keeps its own.
+    """
+    for kind in ("done", "stages"):
+        if artifact_store.exists(new_stem, kind):
+            continue  # never overwrite live output
+        payload = artifact_store.get(old_stem, kind)
+        if payload is None:
+            continue
+        artifact_store.put(new_stem, kind, payload, meta=artifact_store.meta(old_stem, kind))
+        artifact_store.delete(old_stem, kind)
+
+
 def reclaim(root: str, apply: bool = False, include_probable: bool = False) -> list[Match]:
     matches = find_matches(root)
     if apply and pipeline_is_live():
@@ -212,6 +229,7 @@ def reclaim(root: str, apply: bool = False, include_probable: bool = False) -> l
         if not apply or m.verdict not in allowed or not m.video:
             continue
         new_stem = os.path.splitext(m.video)[0]
+        _rekey_store_rows(m.stem, new_stem)
         for suff in REKEY_SUFFIXES:
             src = m.stem + suff
             if not os.path.exists(src) or any(n in suff for n in NEVER_REKEY):

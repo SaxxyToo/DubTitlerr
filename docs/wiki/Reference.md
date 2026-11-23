@@ -98,7 +98,7 @@ annotated (`vX.Y.Z`) and points at the merge commit on `main`.
 
 ## Staleness
 
-An episode is **done** only when its `.dubtitles.done` stamp matches the file on disk (size and
+An episode is **done** only when its stored `done` artifact matches the file on disk (size and
 mtime), is current in both output tiers, and was produced by the decoder running today. Everything
 else is stale and is regenerated the next time the pipeline reaches it.
 
@@ -207,9 +207,7 @@ change. The merged `.ass` keeps the same `...eng.dubtitles.*` name, so it still 
 | `.eng.dubtitles.ass`             | `dub_signs_merge.py`, `review_apply.py`                      | `mux.py`                                     | Dialogue plus signs, songs and credits                                                                              |
 | `.dubtitles.conf.json`           | `generate.py`, `repair.py`                                   | `repair.py`, `glossary_acquire.py`, `mux.py` | Per-cue `avg_logprob` and `no_speech_prob`                                                                          |
 | `.dubtitles.words.json`          | `generate.py`                                                | `generate.py`                                | Per-word confidences and audio duration, plus the decoder identity (`backend`, `model`) it was produced under; lets a text-tier re-run skip the GPU |
-| `.dubtitles.done`                | `common.py`, `mux.py`                                        | `generate.py`, `mux.py`                      | Completion stamp: muxed size, mtime, tier versions, decoder identity (`asr_backend`, `asr_model`)                    |
 | `.dubtitles.fail`                | `generate.py`                                                | `generate.py`, `review_requests.py`          | Poison marker while an episode is in flight / after a hard crash. Generate refuses the episode and a request containing it fails; see [Crash-marked episodes](#crash-marked-episodes) |
-| `.dubtitles.stages.json`         | `repair.py`, `dub_signs_merge.py`, `mux.py`, `merge_pass.sh` | `merge_pass.sh`, `mux.py`                    | One outcome per stage (repair, signs, mux). See [Stage outcomes](#stage-outcomes)                                   |
 | `.dubtitles.mux-recovery`        | `mux.py`                                                     | `mux.py`, the `deploy/` close unit           | Written when a failed cross-device copy may have damaged the episode. While it exists, mux refuses that episode     |
 | `.muxtmp.mkv.recovered`          | `mux.py`                                                     | you                                          | The complete muxed file that failed copy kept. The marker names its path                                            |
 | `.dubtitles.crash.json`          | `generate.py`                                                | `review_requests.py`                         | Exception type, message and time from that crash; read by the `crash-marked` listing          |
@@ -236,6 +234,18 @@ Why: the media tree used to carry 11–13 artifacts per episode (~8,477 files, 3
 2026-11-22). It is NFS-backed, so each entry also costs scan, sweep and backup metadata
 traffic. The store keeps the same information with one file in an already-persisted volume.
 
+Two kinds that used to sit beside the video now live only here:
+
+| Kind     | Old suffix             | Written by                                                   | Read by                                               | Contents                                                                                          |
+| -------- | ---------------------- | ------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `done`   | `.dubtitles.done`      | `common.write_stamp` (`mux.py`, migration tools)              | `generate.py`, `mux.py`, `review_*`, `tools/*`        | Completion stamp: muxed size, mtime, tier versions, decoder identity (`asr_backend`, `asr_model`)  |
+| `stages` | `.dubtitles.stages.json` | `repair.py`, `dub_signs_merge.py`, `mux.py`, `merge_pass.sh` | `merge_pass.sh`, `mux.py`, `review_status.py`         | One outcome per stage (repair, signs, mux). See [Stage outcomes](#stage-outcomes)                  |
+
+The `done` payload is byte-identical to the old file, so `stamp_valid` decides exactly as it
+did: a size or mtime mismatch, an older tier, or another decoder reads stale. No code reads
+the old beside-media file any more; `import --apply` is the only route from an existing file
+into the store, and `export --apply` writes it back out.
+
 One CLI, `python3 -m dubtitlerr.core.artifact_store`, owns storage and migration. Every
 mutating subcommand is a **dry run unless `--apply` is passed**:
 
@@ -252,7 +262,7 @@ mutating subcommand is a **dry run unless `--apply` is passed**:
 `sweep` before `import`, so junk is deleted rather than migrated.
 
 A `.stale` suffix is appended to prior-version output during a version upgrade, e.g.
-`.eng.dubtitles.srt.stale`. The `.dubtitles.done` stamp is the only already-done signal: an embedded Dubtitles track alone does not count, so episodes muxed before stamps existed regenerate on the first sweep. Run `scripts/migrate_write_v1_stamps.py` first (dry run by default, `--apply` to write); it writes sidecar stamps only, never touches media, and never overwrites an existing stamp.
+`.eng.dubtitles.srt.stale`. The stored `done` artifact is the only already-done signal: an embedded Dubtitles track alone does not count, so episodes muxed before stamps existed regenerate on the first sweep. Run `scripts/migrate_write_v1_stamps.py` first (dry run by default, `--apply` to write); it writes `done` rows into the store, never touches media, and never overwrites an existing stamp.
 
 Per **show** rather than per episode: `.lastrun.json` and the glossary's
 `.acquire-cache.json`.
@@ -314,7 +324,7 @@ show it. A stored human verdict is looked up before any guard runs, so dismissin
 
 ## Stage outcomes
 
-`<stem>.dubtitles.stages.json` holds one record per stage (`repair`, `signs`, `mux`). Each
+The episode's `stages` artifact holds one record per stage (`repair`, `signs`, `mux`). Each
 record has an `outcome` and a `detail`. For example, an episode that mux refused because of a
 recovery marker has this mux record (the other stages are left out):
 

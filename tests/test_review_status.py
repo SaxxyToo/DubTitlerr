@@ -5,7 +5,7 @@ import os
 import threading
 import time
 
-from dubtitlerr.core import common, decisions
+from dubtitlerr.core import artifact_store, common, decisions
 from dubtitlerr.review import review_server, review_status
 
 
@@ -63,70 +63,68 @@ def test_status_stages(tmp_path, monkeypatch):
     s_failed = _create_episode(tmp_path, "One Pace", "S01", "E01")
     (tmp_path / "One Pace" / "S01" / "One Pace - E01.dubtitles.fail").write_text("crash")
 
-    # 2. Failed via stages.json
+    # 2. Failed via stages record
     s_failed_stage = _create_episode(tmp_path, "One Pace", "S01", "E02")
-    with open(s_failed_stage + ".dubtitles.stages.json", "w") as f:
-        json.dump({"repair": {"outcome": "backend-unreachable", "at": 100.0}}, f)
+    artifact_store.put_json(s_failed_stage, "stages", {"repair": {"outcome": "backend-unreachable", "at": 100.0}})
 
     # 3a. Stale via both tiers behind
     s_stale_both = _create_episode(tmp_path, "One Pace", "S01", "E03a")
-    with open(s_stale_both + ".dubtitles.done", "w") as f:
-        json.dump(
-            {
-                "size": 1000,
-                "mtime": 100.0,
-                "muxed": True,
-                "version": 1,
-                "text_version": 1,
-                "transcribe_version": 1,
-            },
-            f,
-        )
+    artifact_store.put_json(
+        s_stale_both,
+        "done",
+        {
+            "size": 1000,
+            "mtime": 100.0,
+            "muxed": True,
+            "version": 1,
+            "text_version": 1,
+            "transcribe_version": 1,
+        },
+    )
 
     # 3b. Stale via transcribe_version behind only (M3/T5)
     s_stale_transcribe = _create_episode(tmp_path, "One Pace", "S01", "E03b")
-    with open(s_stale_transcribe + ".dubtitles.done", "w") as f:
-        json.dump(
-            {
-                "size": 1000,
-                "mtime": 100.0,
-                "muxed": True,
-                "text_version": common.TEXT_VERSION,
-                "transcribe_version": 1,
-            },
-            f,
-        )
+    artifact_store.put_json(
+        s_stale_transcribe,
+        "done",
+        {
+            "size": 1000,
+            "mtime": 100.0,
+            "muxed": True,
+            "text_version": common.TEXT_VERSION,
+            "transcribe_version": 1,
+        },
+    )
 
     # 3c. Stale via no version keys (M3/T5 grandfather version)
     s_stale_no_version = _create_episode(tmp_path, "One Pace", "S01", "E03c")
-    with open(s_stale_no_version + ".dubtitles.done", "w") as f:
-        json.dump(
-            {
-                "size": 1000,
-                "mtime": 100.0,
-                "muxed": True,
-            },
-            f,
-        )
+    artifact_store.put_json(
+        s_stale_no_version,
+        "done",
+        {
+            "size": 1000,
+            "mtime": 100.0,
+            "muxed": True,
+        },
+    )
 
     # 4. Pending review via open_entries
     s_pending = _create_episode(tmp_path, "One Pace", "S01", "E04")
 
     # 5. Muxed via current version in both tiers and muxed=True
     s_muxed = _create_episode(tmp_path, "One Pace", "S01", "E05")
-    with open(s_muxed + ".dubtitles.done", "w") as f:
-        json.dump(
-            {
-                "size": 2000,
-                "mtime": 200.0,
-                "muxed": True,
-                "text_version": common.TEXT_VERSION,
-                "transcribe_version": common.TRANSCRIBE_VERSION,
-            },
-            f,
-        )
-    with open(s_muxed + ".dubtitles.stages.json", "w") as f:
-        json.dump({"mux": {"outcome": "ok", "at": 200.0}}, f)
+    artifact_store.put_json(
+        s_muxed,
+        "done",
+        {
+            "size": 2000,
+            "mtime": 200.0,
+            "muxed": True,
+            "text_version": common.TEXT_VERSION,
+            "transcribe_version": common.TRANSCRIBE_VERSION,
+        },
+    )
+    artifact_store.put_json(s_muxed, "stages", {"mux": {"outcome": "ok", "at": 200.0}})
 
     # 6. Repaired via repair-summary.json
     s_repaired = _create_episode(tmp_path, "One Pace", "S01", "E06")
@@ -191,10 +189,10 @@ def test_status_cost_bound(tmp_path, monkeypatch):
     """T1/H3: File reads per stem <= 5, and only slice stems are touched."""
     stems = [_create_episode(tmp_path, "ShowA", "S01", f"E{i:02d}") for i in range(10)]
     for s in stems:
-        with open(s + ".dubtitles.done", "w") as f:
-            json.dump({"muxed": True, "text_version": common.TEXT_VERSION, "transcribe_version": common.TRANSCRIBE_VERSION}, f)
-        with open(s + ".dubtitles.stages.json", "w") as f:
-            json.dump({"mux": {"outcome": "ok"}}, f)
+        artifact_store.put_json(
+            s, "done", {"muxed": True, "text_version": common.TEXT_VERSION, "transcribe_version": common.TRANSCRIBE_VERSION}
+        )
+        artifact_store.put_json(s, "stages", {"mux": {"outcome": "ok"}})
         with open(s + ".dubtitles.repair-summary.json", "w") as f:
             json.dump({"model": "test-m"}, f)
 
@@ -253,10 +251,9 @@ def test_status_cost_bound(tmp_path, monkeypatch):
 def test_status_malformed_sidecars(tmp_path):
     """T4/H2/M4: Corrupt shapes, nulls, and NaNs fall back safely and produce valid JSON."""
     stem = _create_episode(tmp_path)
-    (tmp_path / "ShowA" / "Season 1" / f"{os.path.basename(stem)}.dubtitles.done").write_text("{broken json")
-    # Wrong shapes in stages.json: non-dict values and NaN
-    with open(tmp_path / "ShowA" / "Season 1" / f"{os.path.basename(stem)}.dubtitles.stages.json", "w") as f:
-        json.dump({"repair": "ok", "extra": None, "list": [1], "mux": {"outcome": "ok", "at": "NaN"}}, f)
+    artifact_store.put(stem, "done", "{broken json")
+    # Wrong shapes in the stages record: non-dict values and NaN
+    artifact_store.put_json(stem, "stages", {"repair": "ok", "extra": None, "list": [1], "mux": {"outcome": "ok", "at": "NaN"}})
     (tmp_path / "ShowA" / "Season 1" / f"{os.path.basename(stem)}.dubtitles.repair-summary.json").write_text("[1, 2, 3]")
 
     stems_cache = (100.0, [stem], 50.0)
@@ -419,11 +416,10 @@ def test_status_decisions_show_for(tmp_path, monkeypatch):
 
 
 def test_status_stages_file_with_a_non_dict_stage_value_is_just_an_unknown_stage(tmp_path):
-    """A stages file {"repair": "ok"} (a string, not a stage record) must not raise: the episode reads as a plain
+    """A stages record {"repair": "ok"} (a string, not a stage record) must not raise: the episode reads as a plain
     transcribed one whose outcome is unknown, never failed, and the response is still strict JSON."""
     stem = _create_episode(tmp_path)
-    with open(stem + ".dubtitles.stages.json", "w") as f:
-        json.dump({"repair": "ok"}, f)
+    artifact_store.put_json(stem, "stages", {"repair": "ok"})
 
     status, payload = review_status.handle(
         "GET", "/api/status", {}, stems_cache=(100.0, [stem], 50.0), open_entries=lambda s: [], now=60.0

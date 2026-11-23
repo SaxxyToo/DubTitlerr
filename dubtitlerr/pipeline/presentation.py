@@ -1177,14 +1177,18 @@ def apply_episode(stem: str, dry_run: bool = False, force: bool = False) -> dict
 
 def sweep(roots: list[str], dry_run: bool = False, limit: int | None = None) -> dict:
     """Rebuild every delivered episode under ``roots`` whose epoch stamp is stale."""
-    from dubtitlerr.core import common
+    from dubtitlerr.core import artifact_store, common
 
     stems = set()
     for root in roots:
-        for dirpath, _dirs, files in os.walk(root):
-            for name in files:
-                if name.endswith(".dubtitles.done"):
-                    stems.add(common.out_for(os.path.join(dirpath, name[: -len(".dubtitles.done")])))
+        # The `done` artifact is keyed by the logical media stem (the video path without
+        # its extension), so the store answers this directly. No out_for(): the stamp is
+        # not a write that moves to OUTPUT_ROOT, and mapping the stem here would look up a
+        # key nothing writes.
+        stems.update(artifact_store.stems(root=root, kind="done"))
+        mapped = common.out_for(root)
+        if mapped != root:
+            stems.update(artifact_store.stems(root=mapped, kind="done"))
     ordered = sorted(stems)
     if limit:
         ordered = ordered[:limit]

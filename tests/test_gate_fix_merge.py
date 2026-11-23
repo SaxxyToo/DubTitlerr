@@ -28,11 +28,11 @@ sys.exit(0)
 _STAGE_STUB = """\
 import os, sys
 sys.path.insert(0, {repo!r})
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 common.OUTPUT_ROOT = ""
 name = {name!r}
 if "--delivered" in sys.argv:
-    sys.exit(0 if os.path.exists(sys.argv[sys.argv.index("--delivered") + 1] + ".dubtitles.done") else 1)
+    sys.exit(0 if artifact_store.exists(sys.argv[sys.argv.index("--delivered") + 1], "done") else 1)
 arg = sys.argv[-1]
 stem = arg
 for suffix in (".dubtitles.conf.json", ".eng.dubtitles.srt", ".mkv", ".mp4"):
@@ -43,7 +43,7 @@ with open(os.environ["CALLLOG"], "a") as f:
     f.write(name + " " + os.path.basename(stem) + "\\n")
 common.write_stage(stem, name, "ok")
 if name == "mux":
-    open(stem + ".dubtitles.done", "w").close()
+    artifact_store.put_json(stem, "done", {{}})
 """
 
 ASS_HEAD = (
@@ -115,6 +115,7 @@ def _fake_bin(tmp_path):
 
 def _run(tmp_path, cues, words=None, **extra_env):
     app = _app(tmp_path)
+    _STORE["path"] = str(tmp_path / "config" / "artifacts.db")
     library = tmp_path / "library"
     stem = library / "Show" / "ep01"
     stem.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +128,8 @@ def _run(tmp_path, cues, words=None, **extra_env):
     env = dict(os.environ)
     env["PATH"] = str(_fake_bin(tmp_path)) + os.pathsep + env["PATH"]
     env.update(MERGE_ROOTS=str(library), APP_DIR=str(app), PYTHONPATH=str(app),
-               CONFIG_DIR=str(tmp_path / "config"), PUBLISH_GATE="1",
+               CONFIG_DIR=str(tmp_path / "config"),
+               ARTIFACT_STORE=str(tmp_path / "config" / "artifacts.db"), PUBLISH_GATE="1",
                # These tests supply deliberately unpresentable text and drive gate_fix:
                # P31's restoration would repair the same defects first, so isolate it.
                RESTORATION_REPASS="0",
@@ -148,11 +150,20 @@ def _refusals(sent):
     return [s for s in sent if s[1:3] == ["--event", "episode.refused"]]
 
 
+_STORE = {"path": None}
+
+
 def _stages(stem):
-    try:
-        return json.load(open(stem + ".dubtitles.stages.json"))
-    except (OSError, ValueError):
-        return {}
+    """Stage records from the child's store (its CONFIG_DIR artifacts.db)."""
+    from dubtitlerr.core import artifact_store
+
+    return artifact_store.get_json(stem, "stages", path=_STORE["path"]) or {}
+
+
+def _has_done(stem):
+    from dubtitlerr.core import artifact_store
+
+    return artifact_store.exists(stem, "done", path=_STORE["path"])
 
 
 def test_a_fixable_refusal_is_normalized_and_delivered(tmp_path):
@@ -160,7 +171,7 @@ def test_a_fixable_refusal_is_normalized_and_delivered(tmp_path):
     output = res.stdout + res.stderr
     assert "gate: fail -> gate_fix normalized" in output, output
     assert calls == ["mux ep01"], (calls, output)
-    assert (Path(stem).parent / "ep01.dubtitles.done").exists()
+    assert _has_done(stem)
     assert _stages(stem)["gate_fix"]["outcome"] == "ok", _stages(stem)
     assert _refusals(sent) == [], "a fixed episode is not a refusal"
 
@@ -171,7 +182,7 @@ def test_the_fixed_file_is_what_got_muxed(tmp_path):
                               NOTIFY_SUBSCRIBED="1")
     text = open(stem + ".eng.dubtitles.ass", encoding="utf-8-sig").read()
     assert "0:01:43" in text or "0:01:42" in text, "the 16.94 s card was ended near its speech"
-    assert (Path(stem).parent / "ep01.dubtitles.done").exists(), res.stdout
+    assert _has_done(stem), res.stdout
 
 
 def _park(stem):

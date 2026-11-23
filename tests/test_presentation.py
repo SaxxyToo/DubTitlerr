@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 
+from dubtitlerr.core import artifact_store
 from dubtitlerr.pipeline import presentation, publish_gate
 
 ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "artifacts")
@@ -337,7 +338,7 @@ def test_epoch_stamp_makes_the_repass_exactly_once(tmp_path):
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(TORA_ASS, stem + ".dub.en.ass")
     shutil.copy(TORA_WORDS, stem + ".dubtitles.words.json")
-    open(stem + ".dubtitles.done", "w").write("{}")
+    artifact_store.put_json(stem, "done", {})
 
     assert presentation.is_stale(stem) is True
     first = presentation.apply_episode(stem)

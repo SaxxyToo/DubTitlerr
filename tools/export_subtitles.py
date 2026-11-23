@@ -53,25 +53,24 @@ def show_for(stem: str) -> str:
     return os.path.basename(os.path.dirname(os.path.dirname(stem)))
 
 
-def completed_episodes(show: str, media_root: str) -> list:
-    """Every stem in `show` whose muxed video currently matches a valid `.dubtitles.done`
-    stamp. ONE `os.walk` of media_root -- review_server measures this walk at 297s for 989
-    episodes over a network mount, so a second pass would double a five-minute operation to
-    produce nothing new (same reasoning as export_reviewed.py's own single-walk test)."""
+def completed_episodes(show: str, media_root: str) -> list[str]:
+    """Every stem in `show` whose muxed video currently matches a valid `done` artifact.
+
+    ONE store query for the whole tree: review_server measured the old `os.walk` of
+    media_root at 297s for 989 episodes over a network mount, so this asks the store for
+    the delivered stems under that root and filters by show in memory."""
+    from dubtitlerr.core import artifact_store
+
     stems = []
-    for root, _dirs, files in os.walk(media_root):
-        for filename in files:
-            if not filename.endswith(STAMP_SUFFIX):
-                continue
-            stem = os.path.join(root, filename[: -len(STAMP_SUFFIX)])
-            if show_for(stem) != show:
-                continue
-            video = find_video(stem)
-            if video is None:
-                continue
-            if not stamp_valid(read_stamp(stem + STAMP_SUFFIX), video):
-                continue
-            stems.append(stem)
+    for stem in artifact_store.stems(root=media_root, kind="done"):
+        if show_for(stem) != show:
+            continue
+        video = find_video(stem)
+        if video is None:
+            continue
+        if not stamp_valid(read_stamp(stem + STAMP_SUFFIX), video):
+            continue
+        stems.append(stem)
     stems.sort()
     return stems
 

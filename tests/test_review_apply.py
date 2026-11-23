@@ -16,22 +16,25 @@ not to reproduce repair's output."""
 import json
 import os
 
-from dubtitlerr.core import common, decisions
+from dubtitlerr.core import artifact_store, common, decisions
 from dubtitlerr.review import review_apply
 
 CONF = ".dubtitles.conf.json"
 SRT = ".eng.dubtitles.srt"
 ASS = ".eng.dubtitles.ass"
-STAMP = ".dubtitles.done"
+
+
+def _has_stamp(stem):
+    """The delivery marker lives in the artifact store (P39), not beside the media."""
+    return artifact_store.exists(stem, "done")
 
 
 def _muxed(tmp_path, name, rows, ass=False):
-    """An episode as mux.py leaves it: conf.json and a stamp, NO sidecar."""
+    """An episode as mux.py leaves it: conf.json and a `done` artifact, NO sidecar."""
     stem = str(tmp_path / name)
     with open(stem + CONF, "w") as f:
         json.dump(rows, f)
-    with open(stem + STAMP, "w") as f:
-        json.dump({"muxed": True, "version": 7}, f)
+    artifact_store.put_json(stem, "done", {"muxed": True, "version": 7})
     if ass:  # a signs-bearing episode caught between merge and mux
         with open(stem + ASS, "w") as f:
             f.write("[Events]\nDialogue: 0,0:00:00.00,0:00:02.00,Dubtitles,,0,0,0,,I saw Spandam\n")
@@ -72,7 +75,7 @@ def test_an_already_muxed_episode_gets_a_sidecar_and_loses_its_stamp(tmp_path, m
     assert os.path.exists(stem + SRT), "a sidecar is what re-opens the episode for merge_pass"
     assert [t for _, t in _cues(stem + SRT)] == ["I saw spondum", "the ship sailed"]
     assert res["changed"] == 1, "one conf row matches a stored decision"
-    assert not os.path.exists(stem + STAMP), "the stamp must drop so mux re-runs"
+    assert not _has_stamp(stem), "the stamp must drop so mux re-runs"
 
 
 def test_a_stale_ass_is_removed_so_the_rebuilt_srt_is_not_ignored(tmp_path):
@@ -101,7 +104,7 @@ def test_an_episode_no_decision_matches_is_left_completely_alone(tmp_path):
     res = review_apply.apply_episode(stem, store, apply=True)
 
     assert res["changed"] == 0
-    assert os.path.exists(stem + STAMP), "an unaffected episode keeps its stamp"
+    assert _has_stamp(stem), "an unaffected episode keeps its stamp"
     assert not os.path.exists(stem + SRT), "and gains no sidecar"
 
 
@@ -114,7 +117,7 @@ def test_dry_run_writes_nothing_and_reports_the_plan(tmp_path):
     res = review_apply.apply_episode(stem, store)
 
     assert res["changed"] == 1, "the plan still reports what WOULD change"
-    assert not os.path.exists(stem + SRT) and os.path.exists(stem + STAMP), "dry run writes nothing"
+    assert not os.path.exists(stem + SRT) and _has_stamp(stem), "dry run writes nothing"
 
 
 def test_a_missing_conf_json_is_refused_by_name_and_leaves_the_stamp(tmp_path):
@@ -122,14 +125,13 @@ def test_a_missing_conf_json_is_refused_by_name_and_leaves_the_stamp(tmp_path):
     nothing to rebuild from. tools/recover_dub_srt.py is the tool for that case, and it
     reads the muxed track. A half-applied episode is the failure to avoid."""
     stem = str(tmp_path / "ep_noconf")
-    with open(stem + STAMP, "w") as f:
-        json.dump({"muxed": True}, f)
+    artifact_store.put_json(stem, "done", {"muxed": True})
 
     res = review_apply.apply_episode(stem, {"decisions": []}, apply=True)
 
     assert res["error"] == "no conf.json"
     assert res["stem"] == stem, "refused BY NAME -- a silent skip is what this guards against"
-    assert os.path.exists(stem + STAMP), "an episode we cannot rebuild keeps its stamp"
+    assert _has_stamp(stem), "an episode we cannot rebuild keeps its stamp"
 
 
 def test_a_correct_verdict_supplies_the_humans_text_and_still_obeys_fits_card(tmp_path):
@@ -182,8 +184,8 @@ def test_a_show_sweep_invalidates_only_the_episodes_that_change(tmp_path):
     for stem in (hit, miss1, miss2):
         review_apply.apply_episode(stem, store, apply=True)
 
-    assert not os.path.exists(hit + STAMP), "the episode that changed is re-opened"
-    assert os.path.exists(miss1 + STAMP) and os.path.exists(miss2 + STAMP), "untouched episodes keep their stamps"
+    assert not _has_stamp(hit), "the episode that changed is re-opened"
+    assert _has_stamp(miss1) and _has_stamp(miss2), "untouched episodes keep their stamps"
 
 
 def test_the_rebuilt_srt_wraps_long_cards_the_way_the_pipeline_does(tmp_path):
@@ -225,8 +227,8 @@ def test_a_sweep_resolves_the_store_per_show_not_once(tmp_path, monkeypatch, cap
     monkeypatch.setattr(decisions, "decisions_for", fake_decisions_for)
     review_apply.main([str(tmp_path), "--apply"])
 
-    assert not os.path.exists(ep_a + STAMP), "Show A's verdict must apply to Show A"
-    assert not os.path.exists(ep_b + STAMP), "Show B's verdict must apply to Show B"
+    assert not _has_stamp(ep_a), "Show A's verdict must apply to Show A"
+    assert not _has_stamp(ep_b), "Show B's verdict must apply to Show B"
 
 
 def test_a_show_that_cannot_be_resolved_is_reported_not_silently_empty(tmp_path, monkeypatch, capsys):
@@ -239,7 +241,7 @@ def test_a_show_that_cannot_be_resolved_is_reported_not_silently_empty(tmp_path,
     review_apply.main([str(tmp_path)])
 
     assert "no decision store" in capsys.readouterr().out.lower(), "silence here reads as success"
-    assert os.path.exists(ep + STAMP)
+    assert _has_stamp(ep)
 
 
 # --- [F-3] the write-back against a signs merge that fails -------------------
@@ -274,7 +276,7 @@ def test_a_write_back_leaves_a_muxable_sidecar_when_signs_cannot_be_merged(tmp_p
 
     assert os.path.exists(stem + SRT), "an srt is what mux falls back to when there is no ass"
     assert not os.path.exists(stem + ASS), "and the stale ass is gone, or it would win and ship the old text"
-    assert not os.path.exists(stem + STAMP), "the episode is re-opened either way"
+    assert not _has_stamp(stem), "the episode is re-opened either way"
 
 
 def test_the_write_back_is_idempotent_across_a_failed_signs_pass(tmp_path):
@@ -303,7 +305,7 @@ def test_an_episode_that_never_had_signs_is_handled_the_same_way(tmp_path):
     res = review_apply.apply_episode(stem, store, apply=True)
 
     assert res["changed"] == 1 and res.get("ass_dropped") is None
-    assert os.path.exists(stem + SRT) and not os.path.exists(stem + STAMP)
+    assert os.path.exists(stem + SRT) and not _has_stamp(stem)
 
 
 def test_removing_a_stale_ass_is_recorded_so_a_lost_signs_pass_is_noticeable(tmp_path):
@@ -352,7 +354,7 @@ def test_an_untimed_word_in_the_card_falls_back_instead_of_raising(tmp_path):
     assert not res.get("error"), res
     cues = _cues(stem + SRT)
     assert len(cues) == 2, "the untimed word must degrade to proportional, not abort the split"
-    assert not os.path.exists(stem + STAMP)
+    assert not _has_stamp(stem)
 
 
 def test_the_newest_dated_correction_wins_not_the_first_one_written(tmp_path):
@@ -395,5 +397,5 @@ def test_a_rejection_reopens_because_it_reverts_a_repair_that_already_shipped(tm
     res = review_apply.apply_episode(stem, store, apply=True)
 
     assert res["changed"] == 1, "a rejection must still reopen -- it reverts what shipped"
-    assert not os.path.exists(stem + STAMP)
+    assert not _has_stamp(stem)
     assert "I saw spondum" in open(stem + SRT).read(), "and the rebuilt srt carries the ASR text"

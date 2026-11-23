@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from dubtitlerr.core import artifact_store
 from dubtitlerr.pipeline import mux
 
 
@@ -427,8 +428,7 @@ def test_stamp_written_from_the_temp_file_matches_the_final_file(tmp_path, monke
 
     assert mux.process(str(v), apply=True) == "muxed"
     assert v.read_bytes() == b"muxed-bigger-payload"
-    stamp_path = str(tmp_path / ("ep" + mux.STAMP_SUFFIX))
-    assert common.stamp_valid(common.read_stamp(stamp_path), str(v)) is True
+    assert common.stamp_valid(common.read_stamp(str(tmp_path / "ep") + mux.STAMP_SUFFIX), str(v)) is True
 
 
 def _real_stamp_setup(tmp_path, monkeypatch, payload=b"muxed-complete-payload", name="ep.mkv"):
@@ -478,7 +478,7 @@ def test_failed_cross_device_copy_keeps_temp_output_and_drops_stamp(tmp_path, mo
     assert len(recovered_files) == 1
     recovered = recovered_files[0]
     assert recovered.exists() and recovered.read_bytes() == b"muxed-complete-payload"
-    assert not (tmp_path / ("ep" + mux.STAMP_SUFFIX)).exists()
+    assert not artifact_store.exists(stem, "done")
     assert common.read_stages(stem)["mux"]["outcome"] == "crashed"
 
 
@@ -493,7 +493,7 @@ def test_finalize_failure_removes_the_stamp_written_this_run(tmp_path, monkeypat
     monkeypatch.setattr(mux, "_finalize", boom)
 
     assert mux.process(str(v), apply=True) == "error"
-    assert not (tmp_path / ("ep" + mux.STAMP_SUFFIX)).exists()
+    assert not artifact_store.exists(stem, "done")
     assert v.read_bytes() == b"original-bytes"
 
 
@@ -513,9 +513,8 @@ def test_failure_after_a_completed_rename_keeps_the_valid_stamp(tmp_path, monkey
     monkeypatch.setattr(mux, "write_stage", flaky_write_stage)
 
     assert mux.process(str(v), apply=True) == "error"
-    stamp_path = str(tmp_path / ("ep" + mux.STAMP_SUFFIX))
-    assert os.path.exists(stamp_path)
-    assert common.stamp_valid(common.read_stamp(stamp_path), str(v)) is True
+    assert artifact_store.exists(stem, "done")
+    assert common.stamp_valid(common.read_stamp(stem + mux.STAMP_SUFFIX), str(v)) is True
     assert common.read_stages(stem)["mux"]["outcome"] == "crashed"
 
 
@@ -571,7 +570,7 @@ def test_failed_finalize_rename_fails_marker_blocks_next_sweep(tmp_path, monkeyp
     fallback_files = list(tmp_path.glob("ep*.muxtmp.mkv"))
     assert len(fallback_files) == 1
     assert fallback_files[0].read_bytes() == b"muxed-complete-payload"
-    assert not (tmp_path / ("ep" + mux.STAMP_SUFFIX)).exists()
+    assert not artifact_store.exists(stem, "done")
     rec = common.read_stages(stem)["mux"]
     assert rec["outcome"] == "crashed" and rec["detail"] == "recovery-pending"
 
@@ -590,7 +589,7 @@ def test_failed_finalize_rename_succeeds_marker_blocks_next_sweep(tmp_path, monk
     assert len(recovered_files) == 1
     assert recovered_files[0].read_bytes() == b"muxed-complete-payload"
     assert not list(tmp_path.glob("ep*.muxtmp.mkv"))
-    assert not (tmp_path / ("ep" + mux.STAMP_SUFFIX)).exists()
+    assert not artifact_store.exists(stem, "done")
     assert common.read_stages(stem)["mux"]["detail"] == "recovery-pending"
 
 
@@ -632,7 +631,7 @@ def test_plain_rename_failure_takes_no_recovery_path_and_retries(tmp_path, monke
     assert not (tmp_path / ("ep" + mux.RECOVERY_SUFFIX)).exists()
     assert not list(tmp_path.glob("ep*.muxtmp.mkv.recovered"))
     assert not list(tmp_path.glob("ep*.muxtmp.mkv"))
-    assert not (tmp_path / ("ep" + mux.STAMP_SUFFIX)).exists()
+    assert not artifact_store.exists(stem, "done")
     assert v.read_bytes() == b"original-bytes"
     assert common.read_stages(stem)["mux"]["outcome"] == "crashed"
 
@@ -1410,7 +1409,7 @@ def test_source_changed_mid_mux_is_not_overwritten(tmp_path, monkeypatch, capsys
     assert mux.process(str(v), apply=True) == "refused"
     assert v.read_bytes() == modified_bytes
     assert not list(tmp_path.glob("*.muxtmp.mkv"))
-    assert not (tmp_path / ("ep" + mux.STAMP_SUFFIX)).exists()
+    assert not artifact_store.exists(stem, "done")
     out = capsys.readouterr().out
     assert "changed during mux" in out or "changed" in out
 
@@ -1501,9 +1500,8 @@ def test_race_interleaving_second_check_keeps_winner_stamp(tmp_path, monkeypatch
 
     outcome_b = mux.process(str(v), apply=True)
     assert outcome_b == "already-muxed"
-    stamp_path = stem + mux.STAMP_SUFFIX
-    assert os.path.exists(stamp_path)
-    assert mux.stamp_valid(mux.read_stamp(stamp_path), str(v))
+    assert artifact_store.exists(stem, "done")
+    assert mux.stamp_valid(mux.read_stamp(stem + mux.STAMP_SUFFIX), str(v))
     assert common.read_stages(stem)["mux"]["outcome"] == "ok"
 
 

@@ -15,7 +15,7 @@ import time
 import pytest
 
 import dubtitlerr
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 from dubtitlerr.review import review_api_v1, review_auth, review_requests
 from dubtitlerr.review import review_server as rs
 from dubtitlerr.settings import settings_api, settings_store
@@ -64,9 +64,9 @@ def episode(env, show, season, name, stages=None, stamp=None):
     stem = env / "media" / show / season / name
     stem.parent.mkdir(parents=True, exist_ok=True)
     if stages is not None:
-        (stem.parent / (name + common.STAGES_SUFFIX)).write_text(json.dumps(stages))
+        artifact_store.put_json(str(stem), "stages", stages)
     if stamp is not None:
-        (stem.parent / (name + common.STAMP_SUFFIX)).write_text(json.dumps(stamp))
+        artifact_store.put_json(str(stem), "done", stamp)
     return str(stem)
 
 

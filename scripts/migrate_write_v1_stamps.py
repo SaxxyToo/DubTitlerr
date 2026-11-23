@@ -44,6 +44,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dubtitlerr.core import artifact_store  # noqa: E402
 from dubtitlerr.core.common import (  # noqa: E402
     EXTRA_DIRS,
     GRANDFATHER_VERSION,
@@ -87,10 +88,14 @@ def has_dubtitles_track(video: str) -> bool | None:
 
 def write_v1_stamp(path: str, video: str) -> None:
     """Like common.write_stamp, but pinned to GRANDFATHER_VERSION — this file was produced
-    by the pre-versioning pipeline, so that is the version to record."""
+    by the pre-versioning pipeline, so that is the version to record. The stamp lives in
+    the central artifact store (kind ``done``), not beside the media."""
     st = os.stat(video)
-    with open(path, "w") as f:
-        json.dump({"size": st.st_size, "mtime": st.st_mtime, "muxed": True, "version": GRANDFATHER_VERSION}, f)
+    artifact_store.put_json(
+        path[: -len(STAMP_SUFFIX)],
+        "done",
+        {"size": st.st_size, "mtime": st.st_mtime, "muxed": True, "version": GRANDFATHER_VERSION},
+    )
 
 
 def process(video: str, apply: bool) -> str:

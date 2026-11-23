@@ -23,7 +23,7 @@ import types
 
 import pytest
 
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import qc, reflow
 
@@ -68,11 +68,11 @@ def test_needs_work_matrix(tmp_path, monkeypatch):
     v = tmp_path / "ep.mkv"
     v.write_bytes(b"x" * 1000)
 
-    # 1. muxed .dubtitles.done stamp present and valid (size/mtime match) -> no work needed
-    stamp = tmp_path / ("ep" + generate.STAMP_SUFFIX)
-    common.write_stamp(str(stamp), str(v))
+    # 1. muxed `done` artifact present and valid (size/mtime match) -> no work needed
+    stem = str(tmp_path / "ep")
+    common.write_stamp(stem + generate.STAMP_SUFFIX, str(v))
     assert needs_work(str(v)) is False
-    stamp.unlink()
+    artifact_store.delete(stem, "done")
 
     # 2. .ass sidecar present -> already assembled -> no work needed
     ass = tmp_path / "ep.eng.dubtitles.ass"
@@ -97,7 +97,7 @@ def test_needs_work_matrix(tmp_path, monkeypatch):
     assert needs_work(str(v)) is True
 
     # 6. stamp present but STALE (video replaced -> size mismatch) -> needs re-work
-    common.write_stamp(str(stamp), str(v))
+    common.write_stamp(stem + generate.STAMP_SUFFIX, str(v))
     v.write_bytes(b"y" * 5000)  # "replaced" download, different size
     assert needs_work(str(v)) is True
 
@@ -721,9 +721,9 @@ def _stale_stamped(tmp_path, monkeypatch, leftovers=(), fresh=()):
     regeneration's own work, written after the stamp)."""
     v = tmp_path / "ep.mkv"
     v.write_bytes(b"x" * 1000)
-    stamp = tmp_path / ("ep" + generate.STAMP_SUFFIX)
-    common.write_stamp(str(stamp), str(v))
-    stamp_mtime = stamp.stat().st_mtime
+    common.write_stamp(str(tmp_path / ("ep" + generate.STAMP_SUFFIX)), str(v))
+    stamp_mtime = artifact_store.mtime(str(tmp_path / "ep"), "done")
+    assert stamp_mtime is not None
     for name in leftovers:
         p = tmp_path / name
         p.write_text("output from the previous pipeline version")
@@ -1799,8 +1799,7 @@ def _stamped(tmp_path, name, **stamp_extra):
     if stamp_extra:
         doc = {"size": st.st_size, "mtime": st.st_mtime, "muxed": True, **common.decoder_stamp_identity()}
         doc.update(stamp_extra)
-        with open(str(v.with_suffix("")) + common.STAMP_SUFFIX, "w") as f:
-            json.dump(doc, f)
+        artifact_store.put_json(str(v.with_suffix("")), "done", doc)
     return str(v)
 
 
@@ -2709,16 +2708,19 @@ def test_force_redo_is_off_by_default(monkeypatch):
 
 def test_force_redo_parks_the_delivery_markers_not_just_the_files(tmp_path, monkeypatch):
     """Measured 2026-11-18: a forced season request finished "done" in nine minutes having
-    produced nothing, because the .dubtitles.done stamp still said already-muxed and the
-    stage record still said mux ok. Parking the artefacts alone is not un-delivering."""
-    stem = tmp_path / "ep"
-    for name in ("ep.dub.en.ass", "ep.dubtitles.done", "ep.dubtitles.stages.json"):
-        (tmp_path / name).write_text("{}", encoding="utf-8")
+    produced nothing, because the `done` artifact still said already-muxed and the stage
+    record still said mux ok. Un-delivering means removing those rows, not parking them:
+    a stamp is derived state the next mux rewrites."""
+    stem = str(tmp_path / "ep")
+    (tmp_path / "ep.dub.en.ass").write_text("{}", encoding="utf-8")
+    artifact_store.put_json(stem, "done", {"muxed": True})
+    artifact_store.put_json(stem, "stages", {"mux": {"outcome": "ok"}})
     monkeypatch.setenv("SIDECAR_SUFFIX", ".dub.en")
-    generate.force_park_sidecars(str(stem))
-    for name in ("ep.dub.en.ass", "ep.dubtitles.done", "ep.dubtitles.stages.json"):
-        assert not (tmp_path / name).exists(), f"{name} still marks the episode delivered"
-        assert (tmp_path / (name + ".stale")).exists()
+    generate.force_park_sidecars(stem)
+    assert not (tmp_path / "ep.dub.en.ass").exists()
+    assert (tmp_path / "ep.dub.en.ass.stale").exists()
+    assert not artifact_store.exists(stem, "done"), "stamp still marks the episode delivered"
+    assert not artifact_store.exists(stem, "stages"), "stage record still marks the episode delivered"
 
 
 # --- a long file cut into pieces: one silent piece must not fail the episode ------------------

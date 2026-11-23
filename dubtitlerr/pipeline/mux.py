@@ -55,7 +55,7 @@ import subprocess
 import sys
 import time
 
-from dubtitlerr.core import unresolved
+from dubtitlerr.core import artifact_store, unresolved
 from dubtitlerr.core.common import (
     MEDIA_GID,
     MEDIA_UID,
@@ -811,11 +811,7 @@ def process(orig, apply):
             return "stamp-write-failed"
         if not _source_unchanged(orig, st):
             if stamped and not stamp_valid(read_stamp(stamp), orig):
-                try:
-                    os.remove(stamp)
-                except OSError:
-                    # The stamp is already invalid: leaving it behind costs only one extra re-mux.
-                    pass
+                artifact_store.delete(stem, "done")
             if os.path.exists(out):
                 try:
                     os.remove(out)
@@ -856,11 +852,7 @@ def process(orig, apply):
     except Exception as e:
         if stamped:
             # written by THIS run for a rename that did not complete: not "done"
-            try:
-                os.remove(stamp)
-            except OSError:
-                # The stamp is not 'done' for a tree this run failed on: a stale stamp only costs one retry.
-                pass
+            artifact_store.delete(stem, "done")
         if isinstance(e, FinalizeCopyError) and os.path.exists(out):
             # a failed cross-device copy overwrites final (== orig for an .mkv) in place,
             # so `out` may now be the only complete copy: keep it

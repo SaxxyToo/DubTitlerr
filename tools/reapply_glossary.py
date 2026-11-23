@@ -54,7 +54,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, atomic_write, read_words, ts_srt  # noqa: E402
+from dubtitlerr.core import artifact_store  # noqa: E402
+from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, atomic_write, read_words, ts_srt  # noqa: E402
 from dubtitlerr.glossary import glossary  # noqa: E402
 
 CONF_SUFFIX = ".dubtitles.conf.json"
@@ -153,9 +154,7 @@ def process(conf_path: str, apply: bool, samples: list) -> dict:
     # Drop the stamp LAST, and only once the sidecar is on disk. mux.py treats a valid
     # stamp as its only skip guard, so this is what re-opens the episode for merge_pass;
     # doing it earlier would leave a window where neither a stamp nor a sidecar exists.
-    stamp = stem + STAMP_SUFFIX
-    if os.path.exists(stamp):
-        os.remove(stamp)
+    if artifact_store.delete(stem, "done"):
         res["stamp_dropped"] = True
     return res
 

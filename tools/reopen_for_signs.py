@@ -47,7 +47,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, log  # noqa: E402
+from dubtitlerr.core import artifact_store  # noqa: E402
+from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, log  # noqa: E402
 from dubtitlerr.pipeline import recreate_srt  # noqa: E402
 
 CONF_SUFFIX = ".dubtitles.conf.json"
@@ -70,8 +71,7 @@ def process(conf_path: str, apply: bool) -> dict:
     nothing says which reason applied rather than reporting a silent success."""
     stem = conf_path[: -len(CONF_SUFFIX)]
     res = {"stem": stem, "skip": None, "stale_ass": False}
-    stamp = stem + STAMP_SUFFIX
-    if not os.path.exists(stamp):
+    if not artifact_store.exists(stem, "done"):
         # Already open: it is in the merge queue (or mid-run) and will pick the fix up on
         # its own. Rebuilding the srt under a live pass would race that pass's own writer.
         res["skip"] = "no stamp -- already open"
@@ -96,7 +96,7 @@ def process(conf_path: str, apply: bool) -> dict:
     if res["stale_ass"]:
         os.remove(ass)
 
-    os.remove(stamp)  # LAST -- see the module docstring
+    artifact_store.delete(stem, "done")  # LAST -- see the module docstring
     return res
 
 

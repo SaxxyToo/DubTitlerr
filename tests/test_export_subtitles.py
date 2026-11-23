@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 
 EP_SUFFIX = ".dubtitles.conf.json"
 
@@ -82,10 +82,11 @@ def test_completed_episodes_excludes_a_different_show(tmp_path):
     assert es.completed_episodes("One Pace", str(tmp_path)) == []
 
 
-def test_completed_episodes_walks_the_media_root_exactly_once(tmp_path, monkeypatch):
-    """review_server measures this walk at 297s for 989 episodes over a network mount --
-    a stat costs what a read costs there, so a second walk doubles a five-minute operation
-    to produce nothing new. Breaks if any code path walks the media root more than once."""
+def test_completed_episodes_queries_the_store_instead_of_walking_the_media_root(tmp_path, monkeypatch):
+    """review_server measured the old ``os.walk`` of media_root at 297s for 989 episodes
+    over a network mount. Since P39 the `done` stamp is a store row, so the selection is
+    one SQLite query keyed by the media root -- the media tree is not walked at all.
+    """
     import tools.export_subtitles as es
 
     ep = _stem(tmp_path, "One Pace", "Season 31", "One Pace - S31E01")
@@ -99,9 +100,8 @@ def test_completed_episodes_walks_the_media_root_exactly_once(tmp_path, monkeypa
         return real_walk(top, *a, **kw)
 
     monkeypatch.setattr(es.os, "walk", counting_walk)
-    es.completed_episodes("One Pace", str(tmp_path))
-
-    assert len(walks) == 1, f"media root walked {len(walks)} times; it must be walked once"
+    assert es.completed_episodes("One Pace", str(tmp_path)) == [ep]
+    assert walks == [], f"the media root must not be walked (walked {walks})"
 
 
 def test_dialogue_srt_builds_a_correctly_numbered_timestamped_srt(tmp_path):
@@ -400,8 +400,11 @@ def test_an_unchanged_episode_is_skipped_without_touching_ffmpeg(tmp_path):
     ep = _stem(tmp_path, "One Pace", "Season 31", "One Pace - S31E01")
     _conf(ep, [{"start": 0.0, "end": 2.0, "text": "hi"}])
     video = ep + ".mkv"
-    with open(ep + ".dubtitles.done", "w") as f:
-        json.dump({"size": os.path.getsize(video), "mtime": os.path.getmtime(video), "muxed": True}, f)
+    artifact_store.put_json(
+        ep,
+        "done",
+        {"size": os.path.getsize(video), "mtime": os.path.getmtime(video), "muxed": True},
+    )
     prior = {
         "show": "One Pace",
         "season": "Season 31",

@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from dubtitlerr import __version__
-from dubtitlerr.core import common, processing_state
+from dubtitlerr.core import artifact_store, common, processing_state
 from dubtitlerr.review import review_auth, review_requests
 from dubtitlerr.settings import settings_api, settings_notifications, settings_store
 
@@ -284,12 +284,10 @@ def _episode_events(stem):
         )
     stamp = common.read_stamp(stem + common.STAMP_SUFFIX)
     if isinstance(stamp, dict):
-        # The STAMP FILE's mtime is when delivery was recorded. The video's own mtime (what the
-        # stamp carries) is unchanged by a sidecar delivery, so it would date half the library wrong.
-        try:
-            delivered_at = os.path.getmtime(stem + common.STAMP_SUFFIX)
-        except OSError:
-            delivered_at = _num(stamp.get("mtime"))
+        # The artifact row's updated_at is when delivery was recorded. The video's own mtime
+        # (what the stamp carries) is unchanged by a sidecar delivery, so it would date half
+        # the library wrong.
+        delivered_at = artifact_store.mtime(stem, "done")
         at = _num(delivered_at)
         out.append(
             {

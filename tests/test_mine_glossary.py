@@ -19,7 +19,7 @@ import types
 import pysubs2
 import pytest
 
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 from dubtitlerr.glossary import mine_glossary
 
 
@@ -730,7 +730,7 @@ def _show_tree(tmp_path, monkeypatch):
 
 def test_a_delivered_episode_is_not_mined_again(tmp_path, monkeypatch):
     show, read = _show_tree(tmp_path, monkeypatch)
-    (show / "Season 02" / "Some Show - S02E01.dubtitles.done").write_text("{}")  # delivered (stamp)
+    artifact_store.put_json(str(show / "Season 02" / "Some Show - S02E01"), "done", {})  # delivered
     monkeypatch.delenv("GENERATE_ONLY_RE", raising=False)
     mine_glossary.main()
     assert "Some Show - S02E01.mkv" not in read
@@ -769,7 +769,7 @@ def _bootstrap_tree(tmp_path, monkeypatch, episodes=3, delivered=True, glossary=
     for i in range(1, episodes + 1):
         (show / f"Some Show - S01E{i:02d}.mkv").write_text("")
         if delivered:
-            (show / f"Some Show - S01E{i:02d}.dubtitles.done").write_text("{}")
+            artifact_store.put_json(str(show / f"Some Show - S01E{i:02d}"), "done", {})
             (show / f"Some Show - S01E{i:02d}.eng.dubtitles.ass").write_text("")
     gloss = tmp_path / "gloss"
     gloss.mkdir()

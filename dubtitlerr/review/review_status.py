@@ -142,13 +142,8 @@ def _inspect_episode(stem: str, open_entries, stores: dict) -> dict:
         mtime = _num(stamp.get("mtime"))
         is_muxed = bool(stamp.get("muxed"))
 
-    # 3. Stages sidecar (.dubtitles.stages.json) - read ONCE, normalised (H2)
-    stages_path = stem + common.STAGES_SUFFIX
-    try:
-        with open(stages_path, encoding="utf-8") as f:
-            stages_raw = json.load(f)
-    except (OSError, ValueError):
-        stages_raw = {}
+    # 3. Stages records (store kind "stages") - read ONCE, normalised (H2)
+    stages_raw = common.read_stages(stem)
     stages = (
         {k: v for k, v in stages_raw.items() if isinstance(v, dict)}
         if isinstance(stages_raw, dict)

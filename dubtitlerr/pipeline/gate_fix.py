@@ -81,7 +81,7 @@ Fault classes it can repair, all under the gate's own budget
 
 Audit trail: every attempt is appended to ``<stem>.dubtitles.gate-fix.json`` with the
 cards it touched, their before/after duration and length, and the attempt outcome, plus a
-one-line ``summary``. The stage record ``gate_fix`` in ``.dubtitles.stages.json`` carries
+one-line ``summary``. The stage record ``gate_fix`` in the episode's ``stages`` artifact carries
 the outcome the merge pass' census reads (``ok`` or ``refused``).
 
 CLI:

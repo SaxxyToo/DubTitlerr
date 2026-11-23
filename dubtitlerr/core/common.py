@@ -23,6 +23,7 @@ import pysubs2
 
 # The heartbeat document (readers here, writers in the shell loops) is stdlib-only for the same
 # reason atomic_file is: the loops' CLI must import it from an app dir with no pysubs2.
+from dubtitlerr.core import artifact_store as _store
 from dubtitlerr.core import heartbeat as _heartbeat
 
 # The atomic-write primitive and the file-mode constants live in atomic_file.py, which has no
@@ -440,8 +441,19 @@ def decoder_stamp_identity() -> dict:
     return {"asr_backend": backend, "asr_model": model}
 
 
+def _stamp_stem(path: str) -> str:
+    """The store key for a stamp path: the caller's path minus ``STAMP_SUFFIX``.
+
+    Every caller passes ``<stem><STAMP_SUFFIX>`` and keeps doing so, so this function is
+    the single place that knows the stamp is no longer a file beside the media. A bare
+    stem is accepted unchanged, which keeps ``read_stamp`` usable from tools that already
+    hold one.
+    """
+    return path[: -len(STAMP_SUFFIX)] if path.endswith(STAMP_SUFFIX) else path
+
+
 def write_stamp(path: str, video: str, stages: dict | None = None, mode: str | None = None) -> None:
-    """Write the .dubtitles.done idempotency stamp recording the delivered file's size+mtime
+    """Write the ``done`` artifact recording the delivered file's size+mtime
     and the tier versions that produced it (stamp_valid rejects a stamp behind either
     tier, so a version bump marks every prior-version file stale).
 
@@ -490,14 +502,19 @@ def write_stamp(path: str, video: str, stages: dict | None = None, mode: str | N
         doc["mode"] = mode
     if stages:
         doc["stages"] = stages
-    atomic_write(path, lambda f: json.dump(doc, f))
+    # The idempotency stamp is an internal artifact, not a delivery file: the media tree
+    # carries the video and its subtitles only. `stamp_valid` still answers "does this
+    # describe THIS file?" from the recorded size+mtime.
+    _store.put_json(_stamp_stem(path), "done", doc)
 
 
 def read_stamp(path: str) -> dict | None:
+    """The stored ``done`` artifact for a stamp path, or None when absent/corrupt."""
     try:
-        with open(path) as f:
-            return json.load(f)
-    except (OSError, ValueError):
+        return _store.get_json(_stamp_stem(path), "done")
+    except Exception:
+        # Same fail-open contract as the old file reader: an unreadable stamp is a
+        # missing stamp, so callers treat the episode as not-done rather than crashing.
         return None
 
 
@@ -580,10 +597,10 @@ def stamp_mode(stamp: dict | None) -> str:
     return ((stamp or {}).get("mode") or "mux").strip().lower()
 
 
-# Stage-status sidecar protocol --------------------------------------------------
+# Stage-status records ------------------------------------------------------------
 #
-# Every pipeline stage writes its outcome to a single JSON sidecar per episode:
-#   <stem>.dubtitles.stages.json
+# Every pipeline stage writes its outcome to one ``stages`` artifact per episode in the
+# central store (P39; it used to be a ``.dubtitles.stages.json`` sidecar beside the media):
 #   {"repair": {"outcome": "ok", "detail": "..."}, "signs": {...}, "mux": {...}}
 # Outcomes are restricted to STAGE_OUTCOMES so downstream consumers can branch
 # deterministically. A stage writes its record immediately on return (success or
@@ -622,55 +639,52 @@ STAGE_OUTCOMES = (
 _PASSED_OUTCOMES = {"ok", "no-reference", "no-video"}
 
 
-def _stages_path(stem: str) -> str:
-    """Path to the stage-status sidecar for a given stem."""
-    return out_for(stem + STAGES_SUFFIX)
+def _read_stages_doc(stem: str) -> dict:
+    # Fail open exactly like the old file reader: a store that cannot be read (or a
+    # payload that is not an object) is "no records", never an exception at a call site
+    # that is only asking whether a stage ran.
+    try:
+        data = _store.get_json(stem, "stages")
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def write_stage(stem: str, stage: str, outcome: str, detail: str = "") -> None:
-    """Write/replace one stage's record in the sidecar.
+    """Write/replace one stage's record in the episode's ``stages`` artifact.
 
-    Uses atomic write (temp + os.replace) so a reader never sees a partial file.
-    The sidecar is created if it doesn't exist; existing stages are preserved so
-    the full history of the episode is always available."""
+    Existing stages are preserved so the full history of the episode is always available;
+    the store's read-modify-write is one transaction, so a reader never sees a partial doc.
+    """
     if outcome not in STAGE_OUTCOMES:
         raise ValueError(f"unknown outcome {outcome!r} for stage {stage!r}")
-    path = _stages_path(stem)
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        data = {}
+    data = _read_stages_doc(stem)
     data[stage] = {"outcome": outcome, "at": time.time()}
     if detail:
         data[stage]["detail"] = detail
-    atomic_write(path, lambda f: json.dump(data, f))
+    _store.put_json(stem, "stages", data)
 
 
 def read_stages(stem: str) -> dict:
-    """Read the stage-status sidecar, returning {} if missing or unreadable."""
-    try:
-        with open(_stages_path(stem)) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
+    """Read the stage-status records, returning {} if missing or unreadable."""
+    return _read_stages_doc(stem)
 
 
 def clear_stage(stem: str, *stages: str) -> None:
-    """Remove these stages' records from the sidecar (atomic: temp + os.replace).
+    """Remove these stages' records from the episode's ``stages`` artifact.
 
-    A no-op when the sidecar or a key is missing; never creates a sidecar."""
-    path = _stages_path(stem)
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return
+    A no-op when the record or a key is missing; never creates one. The row is deleted
+    once its last stage is cleared, so an empty record cannot outlive its content.
+    """
+    data = _read_stages_doc(stem)
     if not any(st in data for st in stages):
         return
     for st in stages:
         data.pop(st, None)
-    atomic_write(path, lambda f: json.dump(data, f))
+    if data:
+        _store.put_json(stem, "stages", data)
+    else:
+        _store.delete(stem, "stages")
 
 
 def failed_stage(stem: str, only=None) -> str | None:

@@ -10,12 +10,11 @@ capability: what it must NOT move, when it must not run at all, and what it must
 alone when the evidence is ambiguous.
 """
 
-import json
 import os
 
 import pytest
 
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 from tools import reclaim_orphans as ro
 
 
@@ -34,8 +33,7 @@ def _orphan(tmp_path, stem_name, payload, *, mtime=None, extra=(".dubtitles.conf
     """A stamp (plus sidecars) describing a video that no longer exists under that stem."""
     stem = str(tmp_path / stem_name)
     doc = {"size": len(payload), "mtime": mtime if mtime is not None else 1000.0, "muxed": True, "version": 4}
-    with open(stem + common.STAMP_SUFFIX, "w") as f:
-        json.dump(doc, f)
+    artifact_store.put_json(stem, "done", doc)
     for suff in extra:
         with open(stem + suff, "w") as f:
             f.write("[]")
@@ -71,7 +69,7 @@ def test_a_size_only_match_is_probable_not_reclaimable(tmp_path):
     assert m.verdict == "probable"
 
     ro.reclaim(str(tmp_path), apply=True)
-    assert os.path.exists(stem + common.STAMP_SUFFIX), "a probable match must not move by default"
+    assert artifact_store.exists(stem, "done"), "a probable match must not move by default"
 
 
 def test_include_probable_opts_into_the_size_only_matches(tmp_path):
@@ -83,8 +81,8 @@ def test_include_probable_opts_into_the_size_only_matches(tmp_path):
 
     ro.reclaim(str(tmp_path), apply=True, include_probable=True)
 
-    assert not os.path.exists(stem + common.STAMP_SUFFIX)
-    assert os.path.exists(str(tmp_path / "copied") + common.STAMP_SUFFIX)
+    assert not artifact_store.exists(stem, "done")
+    assert artifact_store.exists(str(tmp_path / "copied"), "done")
 
 
 def test_a_video_of_a_different_size_is_unrecoverable(tmp_path):
@@ -129,7 +127,7 @@ def test_dry_run_changes_nothing(tmp_path):
     ro.reclaim(str(tmp_path), apply=False)
 
     assert sorted(os.listdir(tmp_path)) == before
-    assert os.path.exists(stem + common.STAMP_SUFFIX)
+    assert artifact_store.exists(stem, "done")
 
 
 def test_apply_rekeys_the_whole_sidecar_set(tmp_path):
@@ -146,7 +144,9 @@ def test_apply_rekeys_the_whole_sidecar_set(tmp_path):
     ro.reclaim(str(tmp_path), apply=True)
 
     new_stem = str(tmp_path / "renamed")
-    for suff in (common.STAMP_SUFFIX, ".dubtitles.conf.json", ".dubtitles.qc.json", common.WORDS_SUFFIX):
+    assert artifact_store.exists(new_stem, "done"), "done not re-keyed"
+    assert not artifact_store.exists(stem, "done"), "done left behind at the old stem"
+    for suff in (".dubtitles.conf.json", ".dubtitles.qc.json", common.WORDS_SUFFIX):
         assert os.path.exists(new_stem + suff), f"{suff} not re-keyed"
         assert not os.path.exists(stem + suff), f"{suff} left behind at the old stem"
 
@@ -174,7 +174,7 @@ def test_apply_never_deletes_anything(tmp_path):
 
     ro.reclaim(str(tmp_path), apply=True)
 
-    assert os.path.exists(stem + common.STAMP_SUFFIX)
+    assert artifact_store.exists(stem, "done")
 
 
 def test_apply_refuses_while_the_pipeline_is_live(tmp_path, monkeypatch, capsys):
@@ -189,7 +189,7 @@ def test_apply_refuses_while_the_pipeline_is_live(tmp_path, monkeypatch, capsys)
     ro.reclaim(str(tmp_path), apply=True)
 
     assert "REFUSING: a pipeline process is running" in capsys.readouterr().out
-    assert os.path.exists(stem + common.STAMP_SUFFIX), "re-keyed despite a live pipeline"
+    assert artifact_store.exists(stem, "done"), "re-keyed despite a live pipeline"
 
 
 def test_a_stamp_whose_video_still_exists_is_not_an_orphan(tmp_path):
