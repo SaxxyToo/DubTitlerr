@@ -1037,13 +1037,13 @@ def test_a_stale_hold_is_reported_loudly_and_is_still_not_released(tmp_path, mon
     logging half and fails the second assertion. That is the whole point of the story --
     releasing unreviewed repairs on a timer is the failure this spec exists to prevent, and
     an alert that quietly releases is worse than none because it reads as supervision."""
-    from dubtitlerr.core import unresolved
+    from dubtitlerr.core import artifact_store
 
     v, stem = _gated(tmp_path, monkeypatch)
     monkeypatch.setattr(mux, "REVIEW_GATE_SHOWS", ["Gated Show"])
     monkeypatch.setattr(mux, "REVIEW_GATE_STALE_DAYS", 7.0)
     old = time.time() - 30 * 86400
-    os.utime(unresolved.path_for(stem), (old, old))
+    artifact_store.touch(stem, "unresolved", old)
 
     verdict = mux.process(v, apply=False)
     out = capsys.readouterr().out

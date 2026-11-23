@@ -281,6 +281,25 @@ def audit_read(path: str, limit: int = 50) -> list:
     return out[: max(0, int(limit))]
 
 
+def audit_records_append(existing, records, max_records: int = AUDIT_MAX) -> list:
+    """The bounded ring as data: oldest-first ``existing`` plus ``records``, newest kept.
+
+    The store holds the queue audit as a payload rather than a file, so the ring rule
+    (AUDIT_MAX, oldest dropped) lives here and ``audit_append``'s file write below keeps its
+    own line-preserving copy. One cap, two payload shapes.
+    """
+    merged = [r for r in (existing or []) if isinstance(r, dict)]
+    merged += [r for r in (records or []) if isinstance(r, dict)]
+    return merged[-max_records:]
+
+
+def audit_records_read(records, limit: int = 50) -> list:
+    """Newest-first, at most ``limit`` records. The list counterpart of ``audit_read``."""
+    out = [r for r in (records or []) if isinstance(r, dict)]
+    out.reverse()
+    return out[: max(0, int(limit))]
+
+
 def audit_record(kind: str, **fields) -> dict:
     rec = {"at": time.time(), "at_iso": iso(time.time()), "kind": kind, "policy": POLICY_VERSION}
     rec.update(fields)

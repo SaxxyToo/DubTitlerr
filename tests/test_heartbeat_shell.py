@@ -43,7 +43,7 @@ def _skeleton(tmp_path, with_heartbeat=True):
     for pkg in ("", "core", "glossary", "pipeline", "review"):
         (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
         shutil.copy(os.path.join(REPO, "dubtitlerr", pkg, "__init__.py"), app / "dubtitlerr" / pkg / "__init__.py")
-    for mod in ("review/review_requests.py", "core/atomic_file.py", "core/notify.py"):
+    for mod in ("review/review_requests.py", "core/atomic_file.py", "core/artifact_store.py", "core/notify.py"):
         shutil.copy(os.path.join(REPO, "dubtitlerr", mod), app / "dubtitlerr" / mod)
     if with_heartbeat:
         shutil.copy(os.path.join(REPO, "dubtitlerr", "core", "heartbeat.py"), app / "dubtitlerr" / "core" / "heartbeat.py")

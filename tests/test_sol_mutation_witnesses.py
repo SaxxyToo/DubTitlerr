@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from dubtitlerr.core import common, unresolved
+from dubtitlerr.core import artifact_store, common, unresolved
 from dubtitlerr.glossary import glossary_acquire as ga
 from dubtitlerr.pipeline import mux, repair
 
@@ -74,10 +74,12 @@ def test_a_configured_openai_url_with_a_query_reaches_the_request_and_is_accepte
 
 def test_items_continues_past_a_malformed_line(tmp_path):
     stem = str(tmp_path / "ep")
-    Path(unresolved.path_for(stem)).write_text("not-json\n")
+    artifact_store.put_text(stem, "unresolved", "not-json\n")
     unresolved.record(stem, "repair_applied", "accepted", original_text="line", proposed_text="changed")
-    Path(unresolved.path_for(stem)).write_text(
-        Path(unresolved.path_for(stem)).read_text() + "{broken\n" + json.dumps({"stage": "repair", "reason": "llm_empty"}) + "\n"
+    artifact_store.put_text(
+        stem,
+        "unresolved",
+        artifact_store.get_text(stem, "unresolved") + "{broken\n" + json.dumps({"stage": "repair", "reason": "llm_empty"}) + "\n",
     )
     assert [e["reason"] for e in unresolved.items(stem)] == ["accepted", "llm_empty"]
 

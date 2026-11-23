@@ -12,8 +12,8 @@ What it does per queue:
 
   glossary  stamp a flag's first sighting; dismiss flags older than the window; cap the queue;
             write one P32-shaped audit record per dismissal to ``<glossary>.review-audit.jsonl``
-  episodes  expire/cap each ``<stem>.dubtitles.unresolved.jsonl`` through ``unresolved.enforce``
-            (which writes its own bounded audit and counters)
+  episodes  expire/cap each episode's ``unresolved`` artifact through ``unresolved.enforce``
+            (which writes its own bounded audit and counters) and finds stems through the store
 
 Output is a digest: exact counts per class, the self-report for any class over the alert
 threshold, and whether anything needs the owner. ``--json`` is what ``gen_loop.sh`` reads.
@@ -25,12 +25,11 @@ would leave every later queue unbounded, which is the failure it exists to preve
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 import sys
 
-from dubtitlerr.core import queue_policy, unresolved
+from dubtitlerr.core import artifact_store, queue_policy, unresolved
 from dubtitlerr.glossary import review_policy
 
 DEFAULT_GLOSSARY_DIR = "/config/glossaries"
@@ -96,9 +95,11 @@ def sweep_glossaries(directory: str, now, days: float, limit: int, dry_run: bool
 
 def sweep_episodes(root: str, now, days: float, limit: int, dry_run: bool) -> dict:
     out = {"files": 0, "expired": 0, "bounded": 0, "by_class": {}, "errors": []}
-    stems = []
-    for path in glob.iglob(os.path.join(root, "**", "*" + unresolved.SUFFIX), recursive=True):
-        stems.append(path[: -len(unresolved.SUFFIX)])
+    try:
+        stems = artifact_store.stems(root=root, kind=unresolved.KIND)
+    except Exception as e:  # noqa: BLE001 -- an unreadable store is one digest error, not a crash
+        out["errors"].append(f"store-unreadable: {e}")
+        return out
     for stem in sorted(stems):
         out["files"] += 1
         try:

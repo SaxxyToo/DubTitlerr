@@ -211,7 +211,6 @@ change. The merged `.ass` keeps the same `...eng.dubtitles.*` name, so it still 
 | `.dubtitles.crash.json`          | `generate.py`                                                | `review_requests.py`                         | Exception type, message and time from that crash; read by the `crash-marked` listing          |
 | `.dubtitles.repair.csv`          | `repair.py`                                                  | -                                            | Audit trail: original, repaired, reference, latency                                                                 |
 | `.dubtitles.repair-summary.json` | `repair.py`                                                  | `mux.py`                                     | Targets, repaired, skipped, latency, model, rules, and `anchor_mode`                                                |
-| `.dubtitles.unresolved.jsonl`    | `unresolved.py`                                              | `unresolved.py`, `review_server.py`          | Rejections awaiting human triage (the review queue)                                                                 |
 | `.dubtitles.mux.log`             | `mux.py`                                                     | -                                            | Tracks dropped, defaults set                                                                                        |
 
 ### Internal artifact store (P39)
@@ -231,6 +230,7 @@ Why: the media tree used to carry 11–13 artifacts per episode (~8,477 files, 3
 2026-11-22). It is NFS-backed, so each entry also costs scan, sweep and backup metadata
 traffic. The store keeps the same information with one file in an already-persisted volume.
 
+<<<<<<< HEAD
 Six kinds that used to sit beside the video now live only here:
 
 | Kind     | Old suffix             | Written by                                                   | Read by                                               | Contents                                                                                          |
@@ -246,6 +246,17 @@ A parked artifact is the previous generation of a live kind, kept under `<kind>.
 rebuild runs (`artifact_store.park`/`unpark`). The live row is deleted so nothing serves the
 superseded payload; a failed rebuild leaves the old payload one call from being restored, and no
 `.stale` file is written beside the media.
+=======
+Five kinds that used to sit beside the video now live only here:
+
+| Kind                  | Old suffix                               | Written by                                                   | Read by                                               | Contents                                                                                          |
+| --------------------- | ---------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `done`                | `.dubtitles.done`                        | `common.write_stamp` (`mux.py`, migration tools)              | `generate.py`, `mux.py`, `review_*`, `tools/*`        | Completion stamp: muxed size, mtime, tier versions, decoder identity (`asr_backend`, `asr_model`)  |
+| `stages`              | `.dubtitles.stages.json`                 | `repair.py`, `dub_signs_merge.py`, `mux.py`, `merge_pass.sh` | `merge_pass.sh`, `mux.py`, `review_status.py`         | One outcome per stage (repair, signs, mux). See [Stage outcomes](#stage-outcomes)                  |
+| `unresolved`          | `.dubtitles.unresolved.jsonl`            | `unresolved.record` (`repair.py`, `punctuation.py`, `restoration.py`) | `unresolved.py`, `review_server.py`, `review_requests.py`, `review_audit.py`, `queue_hygiene.py`, `tools/*` | Rejections awaiting human triage (the review queue), one JSON object per line |
+| `unresolved.counters` | `.dubtitles.unresolved.counters.json`    | `unresolved.record`                                          | `unresolved.metrics`, the queue hygiene digest        | P33 per-day/per-class counters and the sampling state                                             |
+| `unresolved.audit`    | `.dubtitles.unresolved.audit.jsonl`      | `unresolved.expire`/`enforce`/`undo_expire`                  | `review_audit.py` (`/api/audit`, undo)                | The bounded expiry/queue-bound/undo ring (P33)                                                    |
+>>>>>>> origin/main
 
 The `done` payload is byte-identical to the old file, so `stamp_valid` decides exactly as it
 did: a size or mtime mismatch, an older tier, or another decoder reads stale. No code reads
@@ -304,7 +315,7 @@ normally.
 
 ### Review queue entries
 
-`.dubtitles.unresolved.jsonl` holds one JSON object per line. Entries stay in the file after they
+The `unresolved` artifact holds one JSON object per line. Entries stay in the log after they
 are resolved; the review view filters them. Keys: `stage`, `reason`, `original_text`,
 `proposed_text`, `avg_logprob`, `resolved`, and since this release `guard` (the check that refused
 a repair) and, for dismissed entries, `dismissed` and `changes`. A repair entry whose card had an
@@ -536,7 +547,7 @@ a rollback switch, not a stored setting.
 
 | Where                                   | Fields                                                                                                                                  |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Queue entry (`.dubtitles.unresolved.jsonl`) | `ref_role`, `ref_provenance`, `ref_track_title` (absent or null when the card had no anchored reference); `reference` holds at most 300 characters |
+| Queue entry (`unresolved` artifact) | `ref_role`, `ref_provenance`, `ref_track_title` (absent or null when the card had no anchored reference); `reference` holds at most 300 characters |
 | `repair-summary.json`                   | `anchor_mode`: `native-dub`, `native-translation`, `mixed`, `none`, or `unclassified` (rollback path only)                              |
 | Review server entry                     | the three fields above plus a normalised `ref_class`: `dub`, `translation`, `unanchored`, `unclassified`                                |
 | Shared pairs (`/api/shared`)            | `ref_class` only when every episode in the pair agrees; otherwise `null`                                                                |
@@ -1171,10 +1182,10 @@ The sweep runs at the end of every generate pass. Notifications are batched: one
 event per sweep, and `review.pending` fires only for the exception classes (P32 tier 3 plus
 `decision_unfittable`/`verdict_owed`) — there are no per-item notifications.
 
-`.unresolved.jsonl` is now counters + sampled evidence, not an append-only log: every record bumps
-`<stem>.dubtitles.unresolved.counters.json` (per day and per class), while evidence lines are kept
+The `unresolved` artifact is now counters + sampled evidence, not an append-only log: every record bumps
+the `unresolved.counters` artifact (per day and per class), while evidence lines are kept
 only up to the daily sample cap. `unresolved.metrics(stem)` returns the per-day aggregates, and
-queue expiry/undo events go to `<stem>.dubtitles.unresolved.audit.jsonl`.
+queue expiry/undo events go to the `unresolved.audit` artifact.
 
 ### Bounded flag storage
 

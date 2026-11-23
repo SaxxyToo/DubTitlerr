@@ -296,6 +296,32 @@ def append_jsonl(stem: str, kind: str, obj, path: str | None = None) -> None:
         raise
 
 
+def write_jsonl(stem: str, kind: str, rows, path: str | None = None) -> None:
+    """Replace one artifact with ``rows`` as JSONL: one object per line, in order.
+
+    The whole-record rewrite pairs with :func:`append_jsonl` for the kinds whose payload is a
+    line-oriented log (the unresolved queue and its audit). Empty ``rows`` stores an empty
+    payload, exactly like the empty file the file-based writer left behind.
+    """
+    lines = [json.dumps(row, ensure_ascii=False) for row in rows or [] if isinstance(row, dict)]
+    put_text(stem, kind, "".join(line + "\n" for line in lines), path=path)
+
+
+def touch(stem: str, kind: str, when: float | None = None, path: str | None = None) -> bool:
+    """Set one artifact's ``updated_at`` (its mtime for readers that ask for age).
+
+    False when the row is absent. Used by the staleness tests and by any caller that must
+    age a record without rewriting its payload.
+    """
+    conn = _connect(path)
+    with conn:
+        cur = conn.execute(
+            "UPDATE artifacts SET updated_at=? WHERE stem=? AND kind=?",
+            (time.time() if when is None else float(when), _norm(stem), kind),
+        )
+    return cur.rowcount > 0
+
+
 def delete(stem: str, kind: str, path: str | None = None) -> bool:
     """Remove one artifact; False when it was not there."""
     conn = _connect(path)
