@@ -196,7 +196,7 @@ def load(environ=None):
                     _log(f"settings: {key} is not in this release's registry; ignored and kept in settings.json")
                 continue
             if not (entry["editable"] or entry.get("legacy_override")) or entry["secret"]:
-                state.notes.append(f"{key} is not editable in this release")
+                state.notes.append(f"{key} is not editable from the web UI")
                 continue
             try:
                 state.values[key] = reg.validate(key, value)
@@ -218,7 +218,7 @@ def load(environ=None):
                 if entry is None or not entry["secret"]:
                     continue
                 if not entry["editable"]:
-                    state.notes.append(f"{k} is not editable in this release")
+                    state.notes.append(f"{k} is not editable from the web UI")
                     continue
                 if _valid_secret(v):
                     state.secret_values[k] = v

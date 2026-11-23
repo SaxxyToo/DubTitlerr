@@ -620,6 +620,8 @@ carry — without it the archive is reported as unextractable rather than silent
 
 ## Environment variables
 
+Every variable in this section is editable from **Settings** under its category, at the boundary the Settings row shows. The exceptions are the bootstrap values, the Connection-managed keys and the short list of [rows that stay read-only](#rows-that-stay-read-only).
+
 ### Paths and roots
 
 | Var              | Default                     | Meaning                                            |
@@ -928,7 +930,7 @@ Every environment variable the pipeline reads has a row under **Settings** in th
 
 **Connect** carries more than rows. Besides `PLEX_URL`, `PLEX_TOKEN`, `PLEX_SECTION`, `WATCHSTATE_URL`, `WATCHSTATE_API_KEY`, `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER`, `PLEX_PATH` and the webhook access rows, it holds the **Notifications** panel. Notification providers are a user-defined list stored beside Connections and have no environment variable; see [Notifications](#notifications).
 
-The first-wave rows are editable, and so are the library roots, the two media ids and the Jimaku key (the rows this release moved out of the bootstrap tier). Every other row shows its value and why it cannot be changed here: "Set in the container environment" for the values the container fixes, "Set through a Connection", "Retired: no longer read", or "edit in a later release". For a signed-in user who is not an admin, the rows that would be editable are read-only and say "Only an admin can change settings". **Show Advanced** in the toolbar reveals the rows that rarely change. The bootstrap values always list, under General.
+Every row the pipeline reads is editable, with two exceptions that the page explains on the row itself. The bootstrap values ("Set in the container environment"), the keys derived from a Connection ("Set through a Connection") and the retired keys ("Retired: no longer read") stay read-only because another surface owns them. A short list of rows the running processes cannot honour also stays read-only, each carrying its own reason (see [Rows that stay read-only](#rows-that-stay-read-only)). For a signed-in user who is not an admin, the rows that would be editable are read-only and say "Only an admin can change settings". **Show Advanced** in the toolbar reveals the rows that rarely change — the tuning knobs are advanced rows, so turn it on to see most of the glossary, repair and transcription thresholds. The bootstrap values always list, under General.
 
 **What the container keeps.** Two values are not editable, and the read order is the reason:
 
@@ -942,11 +944,23 @@ Where a value comes from, in order: what you saved in the UI (**Set here**), els
 Saved values live in `$CONFIG_DIR/settings.json` (values, Connections and stage choices) and `$CONFIG_DIR/secrets.json` (the secrets, mode 0600). Each save keeps one `.prev` copy of each file and writes one log line that names the keys and never a secret value.
 
 | A row says       | The change applies                                                                                                                                                                                                                                                                        |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| nothing special  | at the next show, sweep or merge pass, never in the middle of an episode                                                                                                                                                                                                                  |
-| Restart required | after the builder restarts. The rows you can change that need one are the web port and address, the merge interval and window, the library roots (`ANIME_ROOT`, `MERGE_ROOTS`, `MUX_ROOTS`), the media ids (`MEDIA_UID`, `MEDIA_GID`), the webhook token and path mappings. The read-only rows carry the same badge, for example the sign-in values, the container paths and the tool thresholds. |
+| Restart required | after the builder restarts. The rows you can change that need one are the web port and address, the review server's concurrency and episode-list cache, the merge interval and window, the library roots (`ANIME_ROOT`, `MERGE_ROOTS`, `MUX_ROOTS`), the media ids (`MEDIA_UID`, `MEDIA_GID`), the webhook token and path mappings. The read-only rows carry the same badge, for example the sign-in values, the container paths and the timing-comparison tool thresholds. |
 
 After a save that changed a restart-only row the page offers **Restart Now** and **Restart Later**. Restart Now asks the builder to finish the episode in flight and stop. Restart Later leaves a "Restart pending" banner until the next start. The banner appears whenever a saved restart-only value is not running yet. The container comes back only with a restart policy of `unless-stopped` or `always`, and the supplied `compose.yaml` sets `unless-stopped`.
+
+#### Rows that stay read-only
+
+Eleven rows stay read-only because the running processes cannot honour an edit, and each row says why:
+
+| Row | Why it stays read-only |
+| --- | --- |
+| `ANIME_ORDER` | The watch queue rewrites this file as root, so a saved path could be overwritten by a show list. |
+| `DECISIONS_DIR`, `REQUESTS_DIR`, `SCHEDULE_FILE`, `HEARTBEAT_PATH`, `RESCAN_INTERVAL`, `GLOSSARY_LOCK_WAIT` | The web server is long-lived and reads these at startup, while the loops re-read them at every boundary. A saved value would reach the loops but not the server until the container restarts, so the two would disagree about where requests, verdicts, the schedule or the heartbeat live, or about how long a glossary lock waits. |
+| `WIKI_ALLOW_HTTP` | The web server checks a glossary's `wiki` URL against it in the running process, so a saved value would not reach that check until a restart. |
+| `WIKI_HOST_ALLOW` | No stage reads this value; it is listed for documentation only. |
+| `ACQUIRE_NO_CACHE`, `VERIFY_NO_JOURNAL` | These read presence, not truth: any exported value, including `0`, turns the cache or the journal off. A stored "off" could therefore never be turned back on from the page. |
+
+Everything else in this section's tables is editable from the Settings page. A value saved there takes effect at the boundary the row shows.
 
 **Connections** are named LLM servers: a kind (llama.cpp, Ollama or OpenAI-compatible), a URL, a model, a second model for repair, an extra request body and connect and read timeouts. Each stage (repair, restore, verify, decision, acquire) picks one. A stage with no Connection keeps the container's own settings. Only an admin can save them or run Test.
 

@@ -4,9 +4,11 @@
 One entry per setting the pipeline reads from the environment. An entry carries its category, label, help text, type, range,
 default, `advanced` flag, when a change `applies`, and its `scope`: the process that reads it (gen: gen_loop.sh and its children;
 merge: merge_pass.sh and its children; server: review_server.py; container: container_run.sh). A key read by two processes lists
-both scopes. `first_wave` entries are editable in v0.3.0, the `WAVE2_EDITABLE` keys below them since the bootstrap cleanup; the
-rest are listed read-only. `managed_by` names who owns a key that is not edited as a plain value: "connections" (derived from a
-Connection), "bootstrap" (the value must exist before the settings store can be read) or "retired" (the code stopped reading it).
+both scopes. `first_wave` marks the entries v0.3.0 shipped editable; wave 2 graduates the rest, so every entry the pipeline
+reads is editable except the `READ_ONLY_REASONS` ones (and the `managed_by` buckets). An entry held back carries its reason in
+`read_only_reason`, which the Settings row and a refused PUT both show. `managed_by` names who owns a key that is
+not edited as a plain value: "connections" (derived from a Connection), "bootstrap" (needed before the store can be read) or
+"retired" (the code stopped reading it).
 
 `managed_by: "bootstrap"` is a read-order claim, not a preference, so it is only correct where the value is needed before
 `settings.json` can be read — and the store read needs nothing but `CONFIG_DIR`. What stays bootstrap is that kind of key:
@@ -58,6 +60,29 @@ TYPES = ("bool", "int", "float", "enum", "string", "url", "path_list", "secret")
 BOOL_TRUE = ("1", "true", "yes", "on")
 BOOL_FALSE = ("0", "false", "no", "off", "dry-run")
 
+# Wave 2: the read-only tail graduates, so every entry the pipeline reads is editable except these. Each
+# reason is shown on the Settings row and returned by a refused PUT; none of them can be honoured by the
+# running processes, so listing them as editable would promise a change the pipeline never makes.
+READ_ONLY_REASONS = {
+    # The sweep's watch queue writes this path as root, so a stored path could be overwritten by a show list.
+    "ANIME_ORDER": "Not editable: the sweep writes this file as root, so a stored path could be overwritten",
+    # The review server is long-lived: container_run.sh exports its scope once at boot, so a saved value
+    # reaches the loops but not the server until the container restarts, and the two would disagree.
+    "DECISIONS_DIR": "Not editable: the web server reads this path at startup, so a saved value would not reach it",
+    "REQUESTS_DIR": "Not editable: the web server reads this folder at startup, so a saved value would not reach it",
+    "SCHEDULE_FILE": "Not editable: the web server reads this file at startup, so a saved value would not reach it",
+    "HEARTBEAT_PATH": "Not editable: the web server reads this path at startup, so a saved value would not reach it",
+    "RESCAN_INTERVAL": "Not editable: the web server reads this at startup, so the loops and the page would disagree",
+    "GLOSSARY_LOCK_WAIT": "Not editable: the web server reads this at startup, so a saved value would not reach it",
+    # The review server checks a glossary's wiki URL against it in the running process.
+    "WIKI_ALLOW_HTTP": "Not editable: the web server reads this when it checks a wiki URL, so a saved value would not reach it",
+    # No stage reads it; it is listed for documentation only.
+    "WIKI_HOST_ALLOW": "Not editable: no stage reads this value",
+    # The consumers test presence, not truth: any exported value, including "0", turns the feature off.
+    "ACQUIRE_NO_CACHE": "Not editable: any set value, including 0, turns the cache off",
+    "VERIFY_NO_JOURNAL": "Not editable: any set value, including 0, turns the journal off",
+}
+
 
 class Invalid(ValueError):
     """A value the registry refuses; the message is shown under the field."""
@@ -67,7 +92,20 @@ REGISTRY: dict = {}
 
 
 def _add(
-    key, category, label, help, type_, default, scope, applies, *, advanced=False, first_wave=False, managed_by=None, **rules
+    key,
+    category,
+    label,
+    help,
+    type_,
+    default,
+    scope,
+    applies,
+    *,
+    advanced=False,
+    first_wave=False,
+    managed_by=None,
+    read_only_reason=None,
+    **rules,
 ):
     scope = [scope] if isinstance(scope, str) else list(scope)
     # Explicit checks, not asserts: `python -O` strips asserts, and a duplicate or mis-scoped
@@ -79,6 +117,7 @@ def _add(
         raise ValueError(
             f"invalid definition for setting {key}: category={category!r} type={type_!r} applies={applies!r} scope={scope!r}"
         )
+    editable = first_wave or (managed_by is None and read_only_reason is None)
     REGISTRY[key] = {
         "key": key,
         "category": category,
@@ -90,7 +129,8 @@ def _add(
         "applies": applies,
         "scope": scope,
         "first_wave": first_wave,
-        "editable": first_wave,
+        "editable": editable,
+        "read_only_reason": None if editable else read_only_reason,
         "secret": type_ == "secret",
         "managed_by": managed_by,
         **rules,
@@ -163,11 +203,23 @@ _wave('JELLYFIN_URL', 'connect', 'Jellyfin URL', 'Address of your Jellyfin serve
 _wave('JELLYFIN_API_KEY', 'connect', 'Jellyfin API key', 'API key the builder uses to read Jellyfin watch history.', 'secret', None, 'gen', 'next_show')
 _wave('JELLYFIN_USER', 'connect', 'Jellyfin user', 'User whose watch history counts; empty aggregates every user.', 'string', '', 'gen', 'next_show')
 _wave('WEBHOOK_TOKEN', 'connect', 'Webhook token', 'Secret in the Sonarr and Radarr webhook URL.', 'secret', None, 'server', 'restart')
-# Read-only in v0.3.0 (not first wave per binding review fix)
-_add('ANIME_ORDER', 'schedule', 'Show order file', 'File listing the shows in the order the builder sweeps them.', 'string', '/config/anime_order.txt', 'gen', 'next_sweep', pattern=r"/[^\x00-\x1f]{0,500}", pattern_help='must be an absolute path')
+# Read-only: the sweep writes this file as root (see READ_ONLY_REASONS)
+_add(
+    'ANIME_ORDER',
+    'schedule',
+    'Show order file',
+    'File listing the shows in the order the builder sweeps them.',
+    'string',
+    '/config/anime_order.txt',
+    'gen',
+    'next_sweep',
+    pattern=r"/[^\x00-\x1f]{0,500}",
+    pattern_help='must be an absolute path',
+    read_only_reason=READ_ONLY_REASONS['ANIME_ORDER'],
+)
 # fmt: on
 
-# --- the rest: listed read-only until a later release ---------------------------------------------------------------------
+# --- the rest: every entry here is editable from wave 2 on (see READ_ONLY_REASONS for the exceptions) ----------------------
 # key|category|type|default (JSON)|scope(,)|applies|managed_by|label|help. Advanced unless bootstrap or connection-managed.
 _TAIL = r"""
 REVIEW_MAX_CONCURRENT^general^int^16^server^restart^-^Concurrent requests^Most requests the review server handles at once.
@@ -335,17 +387,26 @@ def _load_tail():
             applies,
             advanced=managed_by != "bootstrap",
             managed_by=managed_by,
+            read_only_reason=READ_ONLY_REASONS.get(key),
         )
 
 
 _load_tail()
 
+# A reason for a key the registry does not hold would silently hold nothing back, so refuse it at import.
+_missing = set(READ_ONLY_REASONS) - set(REGISTRY)
+if _missing:
+    raise ValueError(f"read-only reason for an unknown setting: {', '.join(sorted(_missing))}")
+
+#
 # --- wave 2: rows the operator can change without a container entry (bootstrap cleanup) ------------------------------------
 # Each of these was `managed_by: bootstrap` on the theory that the container needs it before settings.json can be read. The
 # read-order check in the module docstring says otherwise: `container_run.sh` exports the stored container scope into every
-# child before any of them starts, so a saved value reaches its readers exactly like the environment variable did. The three
-# library paths are shown without Show Advanced (an install that moves its library has to find them); the two ids and the
-# Jimaku key stay advanced, because they are set once and then left alone.
+# child before any of them starts, so a saved value reaches its readers exactly like the environment variable did. With the
+# wave-2 rule above, dropping `bootstrap` is what makes them editable; the tuple stays as the explicit record of which keys
+# this cleanup covered (and it carries the one-off shape changes below). The three library paths are shown without Show
+# Advanced (an install that moves its library has to find them); the two ids and the Jimaku key stay advanced, because they
+# are set once and then left alone.
 WAVE2_EDITABLE = (
     "ANIME_ROOT",
     "MERGE_ROOTS",

@@ -21,7 +21,8 @@ export function categoryRows(schema, category, showAdvanced) {
 }
 
 /**
- * Why a row cannot be edited, or '' when it can. The wording of the first-wave rule is the spec's.
+ * Why a row cannot be edited, or '' when it can. The wording of the first-wave rule is the spec's; a
+ * registry entry that wave 2 held back carries its own read-only reason.
  * @param {any} entry
  * @param {{ secretsWritable?: boolean, canEdit?: boolean } | null | undefined} ctx
  * @returns {string}
@@ -30,6 +31,7 @@ export function readOnlyReason(entry, ctx) {
   if (entry.managed_by === 'bootstrap') return 'Set in the container environment';
   if (entry.managed_by === 'connections') return 'Set through a Connection';
   if (entry.managed_by === 'retired') return 'Retired: no longer read';
+  if (entry.read_only_reason) return entry.read_only_reason;
   if (!entry.editable) return 'edit in a later release';
   if (ctx?.canEdit === false) return 'Only an admin can change settings';
   if (entry.secret && !ctx?.secretsWritable) return 'available after login is enabled';
