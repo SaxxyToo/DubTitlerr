@@ -6,10 +6,9 @@ the video's bytes/mtime never move, and the idempotency stamp records the delive
 switching back to mux re-muxes instead of reading the sidecar stamp as already done.
 """
 
-import json
 import os
 
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 from dubtitlerr.pipeline import mux
 
 SRT = "1\n00:00:01,000 --> 00:00:02,000\nHello\n"
@@ -89,7 +88,7 @@ def test_sidecar_refuses_a_dialogue_only_fallback_after_a_signs_failure(tmp_path
     common.write_stage(stem, "signs", "build-error", "boom")
 
     assert mux.process(v, apply=True) == "signs-regression-refused"
-    assert not os.path.exists(stem + mux.STAMP_SUFFIX)
+    assert not artifact_store.exists(stem, "done")
 
 
 def test_dry_run_plans_without_writing(tmp_path, monkeypatch):
@@ -104,7 +103,7 @@ def test_dry_run_plans_without_writing(tmp_path, monkeypatch):
     assert mux.process(v, apply=False) == "plan"
     assert os.path.exists(stem + mux.SRT_SUFFIX)
     assert not os.path.exists(stem + ".dub.en.srt")
-    assert not os.path.exists(stem + mux.STAMP_SUFFIX)
+    assert not artifact_store.exists(stem, "done")
 
 
 def test_keep_all_subs_keeps_a_mislabeled_english_track():
@@ -163,11 +162,10 @@ def test_sidecar_does_not_back_up_its_own_previous_output(tmp_path, monkeypatch)
     assert mux.process(v, apply=True) == "sidecar"
 
     # A version bump makes stamp_valid false but the stamp still describes this video.
-    stamp_path = stem + mux.STAMP_SUFFIX
-    stamp = common.read_stamp(stamp_path)
+    stamp = common.read_stamp(stem)
     assert stamp is not None
     stamp["text_version"] = 0
-    common.atomic_write(stamp_path, lambda f: json.dump(stamp, f))
+    artifact_store.put_json(stem, "done", stamp)
     with open(stem + mux.SRT_SUFFIX, "w", encoding="utf-8") as f:
         f.write("second run\n")
 

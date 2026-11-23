@@ -11,7 +11,7 @@ than crashing the sweep.
 import json
 import os
 
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 from tools import reapply_glossary as rg
 
 GLOSS = {"show": "Test", "names": ["Haki"], "hard_fixes": {"hockey": "Haki"}}
@@ -26,8 +26,7 @@ def _episode(tmp_path, cards, *, with_stamp=True):
     with open(stem + rg.CONF_SUFFIX, "w") as f:
         json.dump(cards, f)
     if with_stamp:
-        with open(stem + rg.STAMP_SUFFIX, "w") as f:
-            json.dump({"muxed": True, "version": 4}, f)
+        artifact_store.put_json(stem, "done", {"muxed": True, "version": 4})
     gdir = tmp_path / "glossaries"
     gdir.mkdir()
     with open(gdir / "Test.json", "w") as f:
@@ -47,7 +46,7 @@ def test_a_dry_run_changes_nothing_on_disk(tmp_path, monkeypatch):
     assert res["changed"] == 1, "fixture proves nothing if the correction did not fire"
     assert open(stem + rg.CONF_SUFFIX).read() == before
     assert not os.path.exists(stem + rg.SRT_SUFFIX)
-    assert os.path.exists(stem + rg.STAMP_SUFFIX), "dry run must not re-open the episode"
+    assert artifact_store.exists(stem, "done"), "dry run must not re-open the episode"
 
 
 def test_apply_writes_the_sidecar_before_dropping_the_stamp(tmp_path, monkeypatch):
@@ -59,7 +58,7 @@ def test_apply_writes_the_sidecar_before_dropping_the_stamp(tmp_path, monkeypatc
     res = rg.process(stem + rg.CONF_SUFFIX, apply=True, samples=[])
 
     assert res["stamp_dropped"] is True
-    assert not os.path.exists(stem + rg.STAMP_SUFFIX)
+    assert not artifact_store.exists(stem, "done")
     assert os.path.exists(stem + rg.SRT_SUFFIX), "stamp dropped without output to replace it"
     assert json.load(open(stem + rg.CONF_SUFFIX))[0]["text"] == "He used Haki"
 
@@ -73,7 +72,7 @@ def test_an_unchanged_episode_is_left_completely_alone(tmp_path, monkeypatch):
     res = rg.process(stem + rg.CONF_SUFFIX, apply=True, samples=[])
 
     assert res["changed"] == 0
-    assert os.path.exists(stem + rg.STAMP_SUFFIX)
+    assert artifact_store.exists(stem, "done")
     assert not os.path.exists(stem + rg.SRT_SUFFIX)
 
 
@@ -87,7 +86,7 @@ def test_an_unreadable_conf_is_reported_not_raised(tmp_path, monkeypatch):
     res = rg.process(stem + rg.CONF_SUFFIX, apply=True, samples=[])
 
     assert "error" in res
-    assert os.path.exists(stem + rg.STAMP_SUFFIX), "a crash path must not drop the stamp"
+    assert artifact_store.exists(stem, "done"), "a crash path must not drop the stamp"
 
 
 def test_render_srt_matches_the_shape_generate_writes(tmp_path):

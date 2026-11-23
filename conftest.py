@@ -31,6 +31,19 @@ def _isolated_wiki_cache(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_artifact_store(monkeypatch, tmp_path):
+    """Every test gets its own internal-artifact store (P39). Without this, stamps and stage
+    records written by one test would be visible to the next -- and the suite would write into
+    a real CONFIG_DIR. `reset_connections()` drops the cached sqlite handle between cases."""
+    from dubtitlerr.core import artifact_store
+
+    monkeypatch.setenv("ARTIFACT_STORE", str(tmp_path / "artifacts.db"))
+    artifact_store.reset_connections()
+    yield
+    artifact_store.reset_connections()
+
+
+@pytest.fixture(autouse=True)
 def _accounts_are_installed_by_default(request, monkeypatch, tmp_path_factory):
     """Suites that predate accounts assert 401 for a missing token, which is the behaviour of an instance that has accounts.
     First run (409 setup required) is exercised only by files marked real_accounts, which get the real functions."""

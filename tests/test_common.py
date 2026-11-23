@@ -89,6 +89,8 @@ def test_failed_stage_only_limits_the_stages_considered(tmp_path, monkeypatch):
 
 
 def test_clear_stage_removes_only_the_named_keys(tmp_path, monkeypatch):
+    from dubtitlerr.core import artifact_store
+
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     stem = str(tmp_path / "ep01")
     common.write_stage(stem, "repair", "crashed")
@@ -97,14 +99,17 @@ def test_clear_stage_removes_only_the_named_keys(tmp_path, monkeypatch):
     common.clear_stage(stem, "repair", "signs")
     assert set(common.read_stages(stem)) == {"mux"}
     assert common.failed_stage(stem) is None
-    assert not os.path.exists(common._stages_path(stem) + ".tmp"), "temp file left behind"
+    assert not os.path.exists(stem + common.STAGES_SUFFIX), "stages must not live beside the media"
+    assert artifact_store.exists(stem, "stages")
 
 
 def test_clear_stage_is_a_no_op_for_a_missing_sidecar_or_key(tmp_path, monkeypatch):
+    from dubtitlerr.core import artifact_store
+
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     stem = str(tmp_path / "ep01")
-    common.clear_stage(stem, "repair")  # no sidecar: no error, none created
-    assert not os.path.exists(common._stages_path(stem))
+    common.clear_stage(stem, "repair")  # nothing recorded: no error, no row created
+    assert not artifact_store.exists(stem, "stages")
     common.write_stage(stem, "mux", "ok")
     before = common.read_stages(stem)
     common.clear_stage(stem, "repair", "signs")  # keys absent
@@ -204,31 +209,101 @@ def test_atomic_write_quiet_still_raises_on_a_bug_in_the_renderer(tmp_path):
     assert sorted(os.listdir(tmp_path)) == []
 
 
-def test_write_stamp_render_failure_leaves_the_previous_stamp_byte_identical(tmp_path, monkeypatch):
+def test_write_stamp_failure_leaves_the_previous_stamp_identical(tmp_path, monkeypatch):
+    from dubtitlerr.core import artifact_store
+
     video = tmp_path / "ep.mkv"
     video.write_bytes(b"x" * 10)
-    stamp = tmp_path / "ep.dubtitles.done"
-    common.write_stamp(str(stamp), str(video))
-    before = stamp.read_bytes()
+    stamp = str(tmp_path / "ep") + common.STAMP_SUFFIX
+    common.write_stamp(stamp, str(video))
+    before = common.read_stamp(stamp)
 
     def boom(*a, **k):
         raise RuntimeError("died mid-dump")
 
-    monkeypatch.setattr(common.json, "dump", boom)
+    monkeypatch.setattr(artifact_store.json, "dumps", boom)
     try:
-        common.write_stamp(str(stamp), str(video), stages={"repair": True})
+        common.write_stamp(stamp, str(video), stages={"repair": True})
     except RuntimeError:
         pass
-    assert stamp.read_bytes() == before
-    assert sorted(os.listdir(tmp_path)) == ["ep.dubtitles.done", "ep.mkv"]
+    assert common.read_stamp(stamp) == before
+    assert not os.path.exists(stamp)
 
 
-def test_write_stamp_file_has_the_sidecar_mode(tmp_path):
+def test_write_stamp_writes_no_file_beside_the_media(tmp_path):
+    """The `done` stamp is a store row (P39). The media tree carries the video and its
+    subtitles only; a stamp file here would be the split-brain the cutover exists to stop."""
+    from dubtitlerr.core import artifact_store
+
     video = tmp_path / "ep.mkv"
     video.write_bytes(b"x")
-    stamp = tmp_path / "ep.dubtitles.done"
-    common.write_stamp(str(stamp), str(video))
-    assert os.stat(stamp).st_mode & 0o777 == common.SIDECAR_MODE
+    common.write_stamp(str(tmp_path / "ep") + common.STAMP_SUFFIX, str(video))
+    assert [n for n in os.listdir(tmp_path) if n.endswith(common.STAMP_SUFFIX)] == []
+    assert artifact_store.exists(str(tmp_path / "ep"), "done")
+    assert os.stat(artifact_store.store_path()).st_mode & 0o777 == 0o600
+
+
+def test_stamp_reader_parity_store_row_vs_the_old_file_bytes(tmp_path):
+    """The `done` decision must not change with the storage medium.
+
+    Before P39 the stamp was a JSON file beside the video and callers ran
+    ``stamp_valid`` on ``json.load`` of it. Now it is a store row and callers run the
+    same predicate on ``read_stamp``. This feeds both readers the same document and
+    asserts they decide identically for every state that matters: current, replaced
+    (size or mtime), behind a tier, and produced by another decoder. A drift here would
+    silently re-transcribe a library or skip a replaced episode.
+    """
+    from dubtitlerr.core import artifact_store
+
+    video = tmp_path / "ep.mkv"
+    video.write_bytes(b"x" * 100)
+    st = os.stat(video)
+    base = {
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "muxed": True,
+        "transcribe_version": common.TRANSCRIBE_VERSION,
+        "text_version": common.TEXT_VERSION,
+        **common.decoder_stamp_identity(),
+    }
+    cases = {
+        "current": base,
+        "size mismatch": {**base, "size": st.st_size + 1},
+        "mtime mismatch": {**base, "mtime": st.st_mtime - 10},
+        "older text tier": {**base, "text_version": common.TEXT_VERSION - 1},
+        "older transcribe tier": {**base, "transcribe_version": common.TRANSCRIBE_VERSION - 1},
+        "other decoder": {**base, "asr_backend": "parity-other-backend"},
+        "no decoder": {k: v for k, v in base.items() if k not in ("asr_backend", "asr_model")},
+        "not muxed": {**base, "muxed": False},
+    }
+    stem = str(tmp_path / "ep")
+    for name, doc in cases.items():
+        old_file = tmp_path / f"{name}.json"
+        old_file.write_text(json.dumps(doc))
+        old = json.loads(old_file.read_text())  # exactly what the file reader returned
+        artifact_store.put_json(stem, "done", doc)
+        new = common.read_stamp(stem + common.STAMP_SUFFIX)
+        assert common.stamp_valid(new, str(video)) == common.stamp_valid(old, str(video)), name
+        assert common.stale_tiers(new, str(video)) == common.stale_tiers(old, str(video)), name
+
+
+def test_stage_reader_parity_store_row_vs_the_old_file_bytes(tmp_path):
+    """Same contract as the stamp parity test, for the ``stages`` records: a store row
+    and the equivalent old ``.dubtitles.stages.json`` bytes yield the same
+    read_stages/failed_stage decision."""
+    from dubtitlerr.core import artifact_store
+
+    doc = {"repair": {"outcome": "ok", "at": 1.0}, "signs": {"outcome": "build-error", "at": 2.0}}
+    stem = str(tmp_path / "ep")
+    old_file = tmp_path / "ep.dubtitles.stages.json"
+    old_file.write_text(json.dumps(doc))
+    old = json.loads(old_file.read_text())
+    artifact_store.put_json(stem, "stages", doc)
+    new = common.read_stages(stem)
+    assert {k: {kk: vv for kk, vv in v.items() if kk != "at"} for k, v in new.items()} == {
+        k: {kk: vv for kk, vv in v.items() if kk != "at"} for k, v in old.items()
+    }
+    assert common.failed_stage(stem) == "signs"
 
 
 # --- is_dialogue_event() matrix ----------------------------------------------
@@ -843,7 +918,7 @@ def test_stamp_records_which_stages_ran(tmp_path):
     v.write_bytes(b"x" * 10)
     p = str(tmp_path / "ep.dubtitles.done")
     common.write_stamp(p, str(v), stages={"repair": False, "signs_merge": True, "punctuation": True})
-    d = json.load(open(p))
+    d = common.read_stamp(p)
     assert d["stages"]["repair"] is False
     assert d["stages"]["signs_merge"] is True
     assert d["version"] == common.TEXT_VERSION  # everything else unchanged
@@ -855,7 +930,7 @@ def test_stages_is_optional_and_omitted_when_absent(tmp_path):
     v.write_bytes(b"x" * 10)
     p = str(tmp_path / "ep.dubtitles.done")
     common.write_stamp(p, str(v))
-    d = json.load(open(p))
+    d = common.read_stamp(p)
     assert "stages" not in d
     assert common.stamp_valid(d, str(v)) is True
 

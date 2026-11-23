@@ -40,8 +40,8 @@ import argparse
 import json
 import os
 
-from dubtitlerr.core import decisions
-from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, STAMP_SUFFIX, atomic_write, log, read_words, ts_srt
+from dubtitlerr.core import artifact_store, decisions
+from dubtitlerr.core.common import MEDIA_GID, MEDIA_UID, atomic_write, log, read_words, ts_srt
 from dubtitlerr.pipeline import card_split, reflow
 
 # The SAME fits_card repair.py applies, imported rather than reimplemented. Two writers of
@@ -148,9 +148,7 @@ def apply_episode(stem: str, store: dict, apply: bool = False) -> dict:
     # Stamp LAST, and only once the sidecar is on disk. mux.py treats a valid stamp as its
     # only skip guard (mux.py:330), so this is what re-opens the episode; dropping it first
     # would leave a window with no stamp AND no sidecar, which merge_pass cannot even find.
-    stamp = stem + STAMP_SUFFIX
-    if os.path.exists(stamp):
-        os.remove(stamp)
+    if artifact_store.delete(stem, "done"):
         res["stamp_dropped"] = True
     return res
 

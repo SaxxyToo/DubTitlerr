@@ -30,7 +30,7 @@ def _stub_faster_whisper():
 
 
 _stub_faster_whisper()
-from dubtitlerr.core import common  # noqa: E402
+from dubtitlerr.core import artifact_store, common  # noqa: E402
 from dubtitlerr.pipeline import generate  # noqa: E402
 from dubtitlerr.review import review_requests as rr  # noqa: E402
 
@@ -136,7 +136,7 @@ def test_a_forced_rebuild_replays_text_from_cached_words(tmp_path, monkeypatch):
     words = tmp_path / f"Show - S01E01{common.WORDS_SUFFIX}"
     assert words.exists() and not words.with_name(words.name + ".stale").exists()
     # ...but the delivery stamp is parked, which is what makes the merge pass re-mux.
-    assert (tmp_path / f"Show - S01E01{common.STAMP_SUFFIX}.stale").exists()
+    assert not artifact_store.exists(str(tmp_path / "Show - S01E01"), "done")
 
 
 def test_a_forced_rebuild_only_transcribes_the_episodes_without_words(tmp_path, monkeypatch):

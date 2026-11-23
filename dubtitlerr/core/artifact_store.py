@@ -111,7 +111,11 @@ JUNK_KINDS = ("stale", "bak", "mux.log", "mux-recovery")
 DELIVERABLE_MARKERS = (".eng.dubtitles.ass", ".eng.dubtitles.srt", ".dubtitles.ass", ".dubtitles.srt")
 
 _LOCK = threading.Lock()
-_CONNS: dict[str, sqlite3.Connection] = {}
+# One connection per (store path, thread): sqlite connections are thread-affine, and the
+# review server answers requests on a thread pool while the pipeline writes from its own
+# process. Sharing one handle across threads raises ProgrammingError; a per-thread handle
+# keeps every caller on the same store without a global write lock.
+_CONNS: dict[tuple[str, int], sqlite3.Connection] = {}
 
 
 def config_dir(environ=None) -> str:
@@ -135,8 +139,9 @@ def _norm(stem: str) -> str:
 
 def _connect(path: str | None = None) -> sqlite3.Connection:
     path = path or store_path()
+    key = (path, threading.get_ident())
     with _LOCK:
-        conn = _CONNS.get(path)
+        conn = _CONNS.get(key)
         if conn is not None:
             return conn
         parent = os.path.dirname(path) or "."
@@ -153,7 +158,7 @@ def _connect(path: str | None = None) -> sqlite3.Connection:
                 os.chmod(path, DB_MODE)
             except OSError:
                 pass
-        _CONNS[path] = conn
+        _CONNS[key] = conn
         return conn
 
 

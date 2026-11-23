@@ -16,7 +16,7 @@ import stat
 import subprocess
 import sys
 
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 from dubtitlerr.pipeline import presentation
 
 MERGE_PASS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "merge_pass.sh")
@@ -332,12 +332,13 @@ def test_a_failed_stage_scan_never_prints_complete(tmp_path, monkeypatch):
 
 
 def test_a_crash_whose_record_cannot_be_written_still_blocks_mux(tmp_path, monkeypatch):
-    """rc != 0, no record, AND the crash fallback's write fails (here the sidecar path is a
-    directory, so os.replace onto it fails): the gate saw 'no record' and let mux run."""
+    """rc != 0, no record, AND the crash fallback's write fails (here the store path is a
+    directory, so the sqlite handle cannot open): the gate saw 'no record' and mux must not run."""
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     root, stem = _episode(tmp_path)
-    os.mkdir(stem + common.STAGES_SUFFIX)
-    res, calls = _gated_run(tmp_path, root, repair="exit3")
+    broken = tmp_path / "broken-store"
+    os.mkdir(broken)
+    res, calls = _gated_run(tmp_path, root, extra_env={"ARTIFACT_STORE": str(broken)}, repair="exit3")
     assert calls == ["repair ep01"], (calls, res.stdout, res.stderr)
     assert "skip mux: repair crashed (no record)" in res.stdout
 
@@ -345,9 +346,12 @@ def test_a_crash_whose_record_cannot_be_written_still_blocks_mux(tmp_path, monke
 def test_a_signs_crash_whose_record_cannot_be_written_still_blocks_mux(tmp_path, monkeypatch):
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     root, stem = _episode(tmp_path)
-    os.mkdir(stem + common.STAGES_SUFFIX)
+    broken = tmp_path / "broken-store"
+    os.mkdir(broken)
     # repair exits 0 with no record (passes the gate: rc == 0); signs then dies without one.
-    res, calls = _gated_run(tmp_path, root, repair="silent", signs="exit3")
+    res, calls = _gated_run(
+        tmp_path, root, extra_env={"ARTIFACT_STORE": str(broken)}, repair="silent", signs="exit3"
+    )
     assert calls[:2] == ["repair ep01", "signs ep01"] and "mux ep01" not in calls, (calls, res.stdout, res.stderr)
     assert "skip mux: signs crashed (no record)" in res.stdout
 
@@ -696,7 +700,7 @@ def test_dropping_the_stamp_reassembles_the_episode_once(tmp_path):
     env = {"OUTPUT_MODE": "sidecar"}
 
     assert _gated_run(tmp_path, root, extra_env=env)[1] == []
-    os.remove(stem + common.STAMP_SUFFIX)
+    artifact_store.delete(stem, "done")
 
     res, calls = _gated_run(tmp_path, root, extra_env=env)
     assert calls == ["repair ep01", "signs ep01", "mux ep01"], (calls, res.stdout, res.stderr)
@@ -769,7 +773,7 @@ def test_presentation_repass_stamps_a_delivered_episode_once(tmp_path, monkeypat
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(os.path.join(art, "toradora_s01e24_presentation.ass"), stem + ".eng.dubtitles.ass")
     shutil.copy(os.path.join(art, "toradora_s01e24_presentation.words.json"), stem + ".dubtitles.words.json")
-    open(stem + ".dubtitles.done", "w").write("{}")
+    artifact_store.put_json(stem, "done", {})
 
     res = _run(tmp_path, root)
     stamp = json.load(open(stem + ".dubtitles.presentation.json"))
@@ -792,7 +796,7 @@ def test_presentation_repass_is_off_when_disabled(tmp_path, monkeypatch):
     stem = str(root / "Show" / "ep01")
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(os.path.join(art, "toradora_s01e24_presentation.ass"), stem + ".eng.dubtitles.ass")
-    open(stem + ".dubtitles.done", "w").write("{}")
+    artifact_store.put_json(stem, "done", {})
 
     before = open(stem + ".eng.dubtitles.ass", encoding="utf-8").read()
     res = _run(tmp_path, root, extra_env={"PRESENTATION_REPASS": "0", "RESTORATION_REPASS": "0"})
@@ -808,7 +812,7 @@ def _restoration_stem(tmp_path, monkeypatch):
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(os.path.join(art, "e86_s01e01_presentation.ass"), stem + ".eng.dubtitles.ass")
     shutil.copy(os.path.join(art, "e86_s01e01_presentation.words.json"), stem + ".dubtitles.words.json")
-    open(stem + ".dubtitles.done", "w").write("{}")
+    artifact_store.put_json(stem, "done", {})
     return root, stem
 
 

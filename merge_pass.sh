@@ -170,7 +170,26 @@ has_record() {
 	python3 -c "import sys; from dubtitlerr.core import common; sys.exit(0 if sys.argv[2] in common.read_stages(sys.argv[1]) else 1)" "$1" "$2" </dev/null >/dev/null 2>&1
 }
 
-before=$(find "$@" -type f -name "*.dubtitles.done" | wc -l)
+# Delivered episodes under the given roots, counted from the artifact store. Replaces the
+# old `find -name '*.dubtitles.done'` -- the stamp is a store row, not a file (P39).
+done_count() {
+	python3 -c "
+import sys
+from dubtitlerr.core import artifact_store
+seen = set()
+for root in sys.argv[1:]:
+    seen.update(artifact_store.stems(root=root, kind='done'))
+print(len(seen))
+" "$@" </dev/null 2>/dev/null || echo 0
+}
+
+# True if this stem has a delivery stamp in the store. Fails closed (no stamp on error):
+# the caller only uses it to skip adoption of an already-delivered episode.
+stamp_has() {
+	python3 -m dubtitlerr.core.artifact_store has --stem "$1" --kind done </dev/null >/dev/null 2>&1
+}
+
+before=$(done_count "$@")
 # Optional bridge (ADOPT_DUB_EN=1): a dubsub-delivered .dub.en.srt/.ass is renamed to this
 # pipeline's own artifact name so repair/signs can upgrade it and sidecar mode republishes
 # it under the house name. OFF by default: on a library that already carries hundreds of
@@ -182,7 +201,7 @@ if [ "${ADOPT_DUB_EN:-0}" = "1" ]; then
 		*) stem="${f%.dub.en.ass}"; ext="ass" ;;
 		esac
 		# A stamped episode is already delivered; an existing artifact is already queued.
-		[ -f "$stem.dubtitles.done" ] && continue
+		stamp_has "$stem" && continue
 		[ -f "$stem.eng.dubtitles.srt" ] && continue
 		[ -f "$stem.eng.dubtitles.ass" ] && continue
 		echo "### adopt $(basename "$f")"
@@ -385,7 +404,7 @@ find "$@" -type f \( -name "*.eng.dubtitles.srt" -o -name "*.eng.dubtitles.ass" 
 		}
 	done
 done
-after=$(find "$@" -type f -name "*.dubtitles.done" | wc -l)
+after=$(done_count "$@")
 
 if [ "$after" -gt "$before" ] && [ -n "${PLEX_TOKEN:-}" ]; then
 	echo "muxed $((after - before)) new episode(s) -> refreshing Plex"
@@ -395,15 +414,20 @@ fi
 # The per-stem loop above runs in a subshell (piped into `while`), so no
 # counter incremented inside it survives past `done` -- the COMPLETE/
 # INCOMPLETE decision is computed here, after the loop exits, by a fresh scan
-# of every stage sidecar under ROOT rather than from any loop-local state.
-scan_out=$(find "$@" -type f -name "*.dubtitles.stages.json" -print0 |
-	xargs -0 -r python3 -c "
+# of every stage record under ROOT rather than from any loop-local state.
+scan_out=$(python3 -c "
 import sys
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 from dubtitlerr.pipeline import gate_fix
+seen = set()
+stems = []
+for root in sys.argv[1:]:
+    for stem in artifact_store.stems(root=root, kind='stages'):
+        if stem not in seen:
+            seen.add(stem)
+            stems.append(stem)
 failed = parked = 0
-for p in sys.argv[1:]:
-    stem = p[: -len(common.STAGES_SUFFIX)]
+for stem in stems:
     if common.failed_stage(stem) is None:
         continue
     # A parked episode is visible but not churning: it is counted on its own line, not as
@@ -418,9 +442,9 @@ for p in sys.argv[1:]:
     else:
         failed += 1
 print(failed, parked)
-" 2>/dev/null)
+" "$@" 2>/dev/null)
 scan_rc=$?
-# xargs may split a big library into several python runs, one count pair each: sum them.
+# One count pair for the whole tree; the awk sum below keeps working unchanged.
 failed_count=$(printf '%s\n' "$scan_out" | awk '{ n += $1 } END { print n + 0 }')
 parked_count=$(printf '%s\n' "$scan_out" | awk '{ n += $2 } END { print n + 0 }')
 if [ "$scan_rc" -eq 0 ] && [ "${failed_count:-0}" -eq 0 ] && stop_requested; then

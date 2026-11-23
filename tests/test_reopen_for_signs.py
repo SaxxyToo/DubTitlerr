@@ -9,6 +9,7 @@ gone so the merge actually re-runs, and an already-open episode is left alone.""
 import json
 import os
 
+from dubtitlerr.core import artifact_store
 from tools import reopen_for_signs as rfs
 
 CONF = ".dubtitles.conf.json"
@@ -22,8 +23,7 @@ def _muxed(tmp_path, name, ass=False):
     stem = str(tmp_path / name)
     with open(stem + CONF, "w") as f:
         json.dump([{"start": 0.0, "end": 2.0, "text": "I saw Spandam"}], f)
-    with open(stem + STAMP, "w") as f:
-        json.dump({"muxed": True, "version": 8}, f)
+    artifact_store.put_json(stem, "done", {"muxed": True})
     if ass:
         with open(stem + ASS, "w") as f:
             f.write("[Events]\nDialogue: 0,0:00:00.00,0:00:02.00,Dubtitles,,0,0,0,,old signs decisions\n")
@@ -36,7 +36,7 @@ def test_a_muxed_episode_gets_a_sidecar_and_loses_its_stamp(tmp_path):
     assert rfs.main([str(tmp_path), "--apply"]) == 0
 
     assert os.path.exists(stem + SRT), "no sidecar means merge_pass.sh never sees the episode"
-    assert not os.path.exists(stem + STAMP), "the stamp is mux's only skip guard"
+    assert not artifact_store.exists(stem, "done"), "the stamp is mux's only skip guard"
     assert "I saw Spandam" in open(stem + SRT).read()
 
 
@@ -72,7 +72,7 @@ def test_a_dry_run_writes_nothing(tmp_path):
 
     assert rfs.main([str(tmp_path)]) == 0
 
-    assert os.path.exists(stem + STAMP) and os.path.exists(stem + ASS)
+    assert artifact_store.exists(stem, "done") and os.path.exists(stem + ASS)
     assert not os.path.exists(stem + SRT)
 
 

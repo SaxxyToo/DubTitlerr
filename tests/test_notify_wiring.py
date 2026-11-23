@@ -32,11 +32,11 @@ sys.exit(int(os.environ.get("NOTIFY_EXIT", "0")))
 _STAGE_STUB = """\
 import os, sys
 sys.path.insert(0, {repo!r})
-from dubtitlerr.core import common
+from dubtitlerr.core import artifact_store, common
 common.OUTPUT_ROOT = ""
 name = {name!r}
 if "--delivered" in sys.argv:
-    sys.exit(0 if os.path.exists(sys.argv[sys.argv.index("--delivered") + 1] + ".dubtitles.done") else 1)
+    sys.exit(0 if artifact_store.exists(sys.argv[sys.argv.index("--delivered") + 1], "done") else 1)
 arg = sys.argv[-1]
 stem = arg
 for suffix in (".dubtitles.conf.json", ".eng.dubtitles.srt", ".mkv", ".mp4"):
@@ -53,7 +53,7 @@ if name == "signs":
     open(stem + ".eng.dubtitles.ass", "w").close()
     os.remove(stem + ".eng.dubtitles.srt")
 if name == "mux":
-    open(stem + ".dubtitles.done", "w").close()
+    artifact_store.put_json(stem, "done", dict())
 """
 
 

@@ -339,7 +339,7 @@ def test_publish_updates_the_readme_table_and_commits_it(tmp_path):
     # common.py re-exports the heartbeat document helpers, which live in their own stdlib-only
     # module (heartbeat.py) so the shell loops' CLI can import them without pysubs2 -- copy it
     # alongside, like atomic_file.py.
-    for name in ("__init__.py", "common.py", "atomic_file.py", "heartbeat.py", "media_types.py"):
+    for name in ("__init__.py", "common.py", "atomic_file.py", "heartbeat.py", "media_types.py", "artifact_store.py"):
         shutil.copy(
             os.path.join(ROOT, "dubtitlerr", "core", name), tmp_path / "dubtitlerr" / "core" / name
         )

@@ -36,10 +36,10 @@ from collections.abc import Collection
 
 import pysubs2
 
+from dubtitlerr.core import artifact_store
 from dubtitlerr.core.common import (
     NON_DIALOGUE_STYLE,
     SIGNS_TITLE,
-    STAMP_SUFFIX,
     is_our_track,
     load_extras,
     stop_requested,
@@ -515,8 +515,9 @@ def _mine(show_dir, show, gpath, bootstrap=False, bootstrap_limit=DEFAULT_BOOTST
         # nothing to re-mine INTO (no file exists), so the loop this skip prevents cannot start.
         # The gate is the refusal in main() -- with a glossary present, --bootstrap exits 2 --
         # so this branch is only ever reached for a show that has none.
-        if not bootstrap and any(
-            os.path.exists(stem + suf) for suf in (".eng.dubtitles.ass", ".eng.dubtitles.srt", STAMP_SUFFIX)
+        if not bootstrap and (
+            artifact_store.exists(stem, "done")
+            or any(os.path.exists(stem + suf) for suf in (".eng.dubtitles.ass", ".eng.dubtitles.srt"))
         ):
             continue
         # Soft stop (SIGTERM at window close). Between episodes is the safe point: nothing

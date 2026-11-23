@@ -57,7 +57,7 @@ try:  # local ASR only: the lite (endpoint-backed) image ships no torch/ctransla
 except ImportError:  # pragma: no cover - endpoint-only deployments
     WhisperModel = None
 
-from dubtitlerr.core import common, media_select
+from dubtitlerr.core import artifact_store, common, media_select
 from dubtitlerr.core.common import (
     STAMP_SUFFIX,
     TRANSCRIBE_VERSION,
@@ -575,8 +575,10 @@ def park_stale_sidecars(stem):
     (Raw paths, not out_for(): mux reads these same raw paths, so both already assume
     OUTPUT_ROOT resolves into the same mergerfs pool view.)"""
     try:
-        stamp_mtime = os.path.getmtime(stem + STAMP_SUFFIX)
-    except OSError:
+        stamp_mtime = artifact_store.mtime(stem, "done")
+    except Exception:  # noqa: BLE001 - an unreadable store must not abort the sweep
+        stamp_mtime = None
+    if stamp_mtime is None:
         return  # no stamp -> nothing is attributable to it
     for suff in SIDECAR_SUFFIXES:
         p = stem + suff
@@ -1301,11 +1303,17 @@ def force_park_sidecars(stem, keep_words=False):
     paths = [stem + s for s in SIDECAR_SUFFIXES if not (keep_words and s == WORDS_SUFFIX)]
     paths += [stem + prefix + ext for ext in (".ass", ".srt")]
     # The delivery MARKERS matter more than the artefacts: process() decides "already-muxed"
-    # from the .dubtitles.done stamp and the merge pass decides from the stage record, so
+    # from the stored `done` artifact and the merge pass decides from the stage record, so
     # parking only the files leaves the episode delivered and the run reports success with
     # nothing to do -- measured 2026-11-18: a forced season request finished "done" in nine
     # minutes having produced zero subtitles.
-    paths += [stem + STAMP_SUFFIX, stem + ".dubtitles.stages.json"]
+    #
+    # The two markers are store rows, not files: they are DELETED here rather than parked.
+    # The old rename-to-`.stale` gave failed replacements a one-rename undo; a stamp has
+    # nothing to undo -- it is derived from the video's size+mtime and the tier versions,
+    # and the next successful mux rewrites it. Parking it would only add a stale row.
+    artifact_store.delete(stem, "done")
+    artifact_store.delete(stem, "stages")
     for path in paths:
         if not os.path.exists(path):
             continue

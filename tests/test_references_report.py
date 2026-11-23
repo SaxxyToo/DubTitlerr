@@ -19,7 +19,7 @@ import sys
 import pytest
 
 import tools.references_report as rr
-from dubtitlerr.core import common, reftracks
+from dubtitlerr.core import artifact_store, common, reftracks
 
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not installed")
@@ -209,16 +209,17 @@ def test_stamp_state_current_then_stale(tmp_path):
 
     # a stamp one text tier behind, still describing this file
     st = video.stat()
-    (tmp_path / ("ep" + common.STAMP_SUFFIX)).write_text(
-        json.dumps({
+    artifact_store.put_json(
+        stem,
+        "done",
+        {
             "muxed": True,
             "size": st.st_size,
             "mtime": st.st_mtime,
             "transcribe_version": common.TRANSCRIBE_VERSION,
             "text_version": common.TEXT_VERSION - 1,
             **common.decoder_stamp_identity(),
-        }),
-        encoding="utf-8",
+        },
     )
     stale = rr.stamp_state(stem, str(video))
     assert stale["present"] and not stale["current"] and stale["stale_tiers"] == ["text"]
@@ -234,7 +235,7 @@ def test_missing_stamp_reads_stale_but_absent(tmp_path):
 # --- end-to-end synthetic library ---------------------------------------------
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def library(tmp_path_factory):
     """Six shows covering every axis/route/marker case in the card."""
     d = tmp_path_factory.mktemp("refreport_lib")

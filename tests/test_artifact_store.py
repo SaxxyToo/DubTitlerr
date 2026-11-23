@@ -60,6 +60,35 @@ def test_wal_mode_is_on():
         conn.close()
 
 
+def test_a_connection_is_usable_from_several_threads(tmp_path):
+    """The review server answers on a thread pool while the pipeline writes from its own
+    process. A single cached sqlite handle would raise ``ProgrammingError`` ("SQLite
+    objects created in a thread can only be used in that same thread") for every request
+    after the first, so connections are per-thread. Two threads must share one store.
+    """
+    import threading
+
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(2)
+
+    def worker(n: int) -> None:
+        try:
+            store.put(f"show/ep{n}", "done", f"thread {n}")
+            barrier.wait(timeout=5)  # both threads are inside the store at once
+            assert store.get(f"show/ep{n}", "done") == f"thread {n}".encode()
+        except BaseException as e:  # noqa: BLE001 - surfaced in the main thread below
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in (1, 2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert store.get("show/ep1", "done") == b"thread 1"
+    assert store.get("show/ep2", "done") == b"thread 2"
+
+
 # --- round-trip per kind -----------------------------------------------------------
 
 
