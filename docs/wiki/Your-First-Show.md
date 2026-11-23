@@ -163,7 +163,10 @@ docker compose logs -f
 image, build `Dockerfile.lite` instead (`docker build -f Dockerfile.lite -t dubtitlerr:lite .`).
 
 **`ANIME_ROOT` and `MERGE_ROOTS` have different built-in defaults**, which is why the
-compose file sets all three roots explicitly. Do not remove them.
+compose file sets all three roots explicitly — leave those lines in place for the first start.
+They are also rows in **Settings > General** (`#/settings/general`), so once the container is up
+you can move a root there instead of editing this file: a stored value wins over the environment,
+and the page then reads "Overrides the container value".
 
 ---
 

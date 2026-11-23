@@ -10,6 +10,27 @@ reads is editable except the `READ_ONLY_REASONS` ones (and the `managed_by` buck
 not edited as a plain value: "connections" (derived from a Connection), "bootstrap" (needed before the store can be read) or
 "retired" (the code stopped reading it).
 
+`managed_by: "bootstrap"` is a read-order claim, not a preference, so it is only correct where the value is needed before
+`settings.json` can be read — and the store read needs nothing but `CONFIG_DIR`. What stays bootstrap is that kind of key:
+where the store, the code and the models live, the stop flag, and the seed for the first admin account. This change covers
+the keys the deployment template forced, not the whole tier. Of those keys, two stay bootstrap and are deliberately excluded
+from the page:
+
+- `REVIEW_AUTH` decides whether the review server enforces roles, and every write to `secrets.json` is gated on it
+  (`settings_api._secrets_writable`). Letting the store set it would make the store's own write path self-authorising: a
+  stolen session could switch authentication off, and switching it back on would depend on the state it may have just
+  replaced. It is read at server start, so it is the container's decision, made before the page exists.
+- `TZ` is not registry-managed at all: nothing in the pipeline reads it. It reaches glibc (log timestamps, `time.localtime`
+  in the merge window) from the container runtime, so it belongs to the deployment, not to `settings.json`.
+
+`ANIME_ROOT`, `MERGE_ROOTS`, `MUX_ROOTS`, `MEDIA_UID`, `MEDIA_GID` and `JIMAKU_API_KEY` were bootstrap for no read-order
+reason and now live in the store. They keep `scope: container` / `applies: restart`: their readers cache the value at
+process start (`review_server.ROOTS`, `common.MEDIA_UID`), `merge_pass.sh` reads `MERGE_ROOTS` at line 16 — before its own
+export — and `container_run.sh` is the process that exports the container scope into every child before any of them starts.
+That is the same shape `MERGE_INTERVAL` has, and it is what makes a stored value reach a process that never reads the store.
+`JIMAKU_API_KEY` is a gen-scope secret, so it travels the `PLEX_TOKEN` path instead: `secrets.json`, write-only page field,
+exported by `gen_loop.sh` on each sweep.
+
 Stdlib only and import-cheap: the shell loops import it through review_settings_write.py on every sweep.
 """
 
@@ -205,7 +226,7 @@ REVIEW_MAX_CONCURRENT^general^int^16^server^restart^-^Concurrent requests^Most r
 REVIEW_STEMS_TTL^general^float^30^server^restart^-^Episode list cache (s)^How long the episode list is reused before the library is walked again.
 REVIEW_STEMS_TTL_FACTOR^general^float^20^server^restart^-^Episode list cache factor^Multiplier on the measured walk time that stretches the cache lifetime.
 REVIEW_RESTART^general^int^15^container^restart^-^Server restart delay (s)^Wait before the supervisor restarts a review server that exited.
-REVIEW_AUTH^general^string^""^server^restart^bootstrap^Authentication mode^Only the value off disables authentication; set in the container environment.
+REVIEW_AUTH^general^string^""^server^restart^bootstrap^Authentication mode^Only the value off disables authentication. Set only in the container environment: it is decided before the settings store can be read, and the store's own writes are gated on it.
 REQUIRE_TOKEN^general^bool^false^server^restart^bootstrap^Refuse to start without auth^When 1 the server refuses to start with authentication off.
 REVIEW_COOKIE_SECURE^general^bool^false^server^restart^bootstrap^Always mark the sign-in cookie Secure^When 1 the session cookie always carries the Secure flag, for a server reached over HTTPS through a proxy that does not send X-Forwarded-Proto.
 REVIEW_TOKEN^general^secret^^server^restart^bootstrap^Review token^Shared review token from the container environment.
@@ -220,13 +241,13 @@ RUNTIME_ENV_FILE^general^string^""^container^restart^bootstrap^Old runtime file^
 EFFECTIVE_ENV_FILE^general^string^""^container^restart^bootstrap^Effective report file^Where the generate loop reports what it runs with.
 STOP_FLAG^general^string^"/tmp/dubtitlerr.stop"^container^restart^bootstrap^Soft stop flag^File whose presence asks the loops to stop between units.
 PYTHONPATH^general^string^""^container^restart^bootstrap^Python path^Module search path inside the container.
-MEDIA_UID^general^int^1000^container^restart^bootstrap^Media user id^Owner id for files the builder writes.
-MEDIA_GID^general^int^100^container^restart^bootstrap^Media group id^Group id for files the builder writes.
+MEDIA_UID^general^int^1000^container^restart^-^Media user id^Owner id for files the builder writes.
+MEDIA_GID^general^int^100^container^restart^-^Media group id^Group id for files the builder writes.
 MEDIA_ROOT^general^string^"/media"^container^restart^bootstrap^Media root^Mount root of the media library.
 OUTPUT_ROOT^general^string^""^container^restart^bootstrap^Output root^Redirects writes onto another disk.
-ANIME_ROOT^general^string^"/media/Anime Library"^container^restart^bootstrap^Anime library^Folder holding the shows.
-MUX_ROOTS^general^path_list^"/data/Media/Anime Library"^container^restart^bootstrap^Mux roots^Library folders the muxer may write in.
-MERGE_ROOTS^general^path_list^"/data/Media/Anime Library"^container^restart^bootstrap^Merge roots^Library folders the merge pass walks.
+ANIME_ROOT^general^string^"/media/Anime Library"^container^restart^-^Anime library^Folder holding the shows.
+MUX_ROOTS^general^path_list^"/data/Media/Anime Library"^container^restart^-^Mux roots^Library folders the muxer may write in.
+MERGE_ROOTS^general^path_list^"/data/Media/Anime Library"^container^restart^-^Merge roots^Library folders the merge pass walks.
 HARDLINK_ROOTS^general^path_list^""^container^restart^bootstrap^Hardlink roots^Folders where hardlinks are followed.
 GLOSSARY_DIR^general^string^"/config/glossaries"^container^restart^bootstrap^Glossary folder^Where per-show glossaries live.
 MODEL_DIR^general^string^"/subgen/models"^container^restart^bootstrap^Model folder^Where speech models are stored.
@@ -339,7 +360,7 @@ ACQUIRE_BACKEND^connections^enum^""^gen,merge^next_show^connections^Acquire back
 OPENROUTER_JEV_API_KEY^connections^secret^^gen,merge^next_show^bootstrap^OpenRouter key^Key variable read by name from the container environment.
 COMMANDCODE_API_KEY^connections^secret^^gen,merge^next_show^bootstrap^CommandCode key^Key variable read by name from the container environment.
 LONGCATAI_API_KEY^connections^secret^^gen,merge^next_show^bootstrap^LongCat key^Key variable read by name from the container environment.
-JIMAKU_API_KEY^connect^secret^^gen^next_show^bootstrap^Jimaku API key^Free key from jimaku.cc; fetches a Japanese reference track for a show whose release ships none.
+JIMAKU_API_KEY^connect^secret^^gen^next_show^-^Jimaku API key^Free key from jimaku.cc; fetches a Japanese reference track for a show whose release ships none.
 IDLE_CHECK_INTERVAL^schedule^int^60^gen^next_sweep^-^Idle check interval (s)^How often the idle wait looks for requests.
 REQUEST_POLL_INTERVAL^schedule^int^60^gen^next_sweep^-^Request poll interval (s)^How often the idle wait looks for run requests.
 RESCAN_INTERVAL^schedule^int^21600^gen,server^next_sweep^-^Rescan interval (s)^Idle time after a full sweep before the next one.
@@ -376,6 +397,34 @@ _load_tail()
 _missing = set(READ_ONLY_REASONS) - set(REGISTRY)
 if _missing:
     raise ValueError(f"read-only reason for an unknown setting: {', '.join(sorted(_missing))}")
+
+#
+# --- wave 2: rows the operator can change without a container entry (bootstrap cleanup) ------------------------------------
+# Each of these was `managed_by: bootstrap` on the theory that the container needs it before settings.json can be read. The
+# read-order check in the module docstring says otherwise: `container_run.sh` exports the stored container scope into every
+# child before any of them starts, so a saved value reaches its readers exactly like the environment variable did. With the
+# wave-2 rule above, dropping `bootstrap` is what makes them editable; the tuple stays as the explicit record of which keys
+# this cleanup covered (and it carries the one-off shape changes below). The three library paths are shown without Show
+# Advanced (an install that moves its library has to find them); the two ids and the Jimaku key stay advanced, because they
+# are set once and then left alone.
+WAVE2_EDITABLE = (
+    "ANIME_ROOT",
+    "MERGE_ROOTS",
+    "MUX_ROOTS",
+    "MEDIA_UID",
+    "MEDIA_GID",
+    "JIMAKU_API_KEY",
+)
+for _key in WAVE2_EDITABLE:
+    REGISTRY[_key]["editable"] = True
+for _key in ("ANIME_ROOT", "MERGE_ROOTS", "MUX_ROOTS"):
+    REGISTRY[_key]["advanced"] = False
+# A path the page accepts must be one the walk can use: absolute, one line. A negative id would make chown fail on every
+# written file, so the ids take a floor. The container environment never had these checks; a stored value does.
+REGISTRY["ANIME_ROOT"]["pattern"] = r"/[^\x00-\x1f]{0,500}"
+REGISTRY["ANIME_ROOT"]["pattern_help"] = "must be an absolute path"
+for _key in ("MEDIA_UID", "MEDIA_GID"):
+    REGISTRY[_key]["min"] = 0
 
 # Enumerations and formats for the connection-managed keys, and the three that an old runtime.env could carry: those stay storable
 # (the one-time migration writes them) and resettable, but are changed through Connections, never edited as plain values.

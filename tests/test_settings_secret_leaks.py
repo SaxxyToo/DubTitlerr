@@ -14,6 +14,7 @@ from dubtitlerr.settings import settings_api as api
 from dubtitlerr.settings import settings_store as store
 
 TOKEN = "plex-tok-7f3a91c2d8e54b60"  # gitleaks:allow -- test fixture, not a real credential
+JIMAKU = "jimaku-tok-4b60d8e54b607f3a"  # gitleaks:allow -- test fixture, not a real credential
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -54,10 +55,11 @@ def test_a_saved_token_appears_in_no_response_log_or_report(env, tmp_path, capsy
     status, payload = api.handle(
         "PUT",
         "/api/settings",
-        {"revision": rev, "values": {"PLEX_TOKEN": TOKEN, "WHISPER_BEAM_SIZE": 5}},
+        {"revision": rev, "values": {"PLEX_TOKEN": TOKEN, "JIMAKU_API_KEY": JIMAKU, "WHISPER_BEAM_SIZE": 5}},
         environ=env,
     )
     assert status == 200, payload
+    assert {"JIMAKU_API_KEY", "PLEX_TOKEN", "WHISPER_BEAM_SIZE"} <= set(payload["changed"])
     bodies = [json.dumps(payload)]
 
     # sends a rejected secret (TOKEN + "\n") asserting the 400 does not echo it
@@ -145,8 +147,21 @@ def test_a_saved_token_appears_in_no_response_log_or_report(env, tmp_path, capsy
 
     for text in [*bodies, captured.out, captured.err, *reports]:
         assert TOKEN not in text
+        assert JIMAKU not in text
         assert CONN_SECRET not in text
         assert URL_PW not in text
+
+    # The key does reach the generate loop, which is the only consumer; that is what proves the write path works rather
+    # than the value simply being dropped.
+    gen_shell = subprocess.run(
+        [sys.executable, "-m", "dubtitlerr.review.review_settings_write", "export", "--scope", "gen"],
+        env={**os.environ, "CONFIG_DIR": str(tmp_path)},
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout
+    assert f"export JIMAKU_API_KEY={JIMAKU}" in gen_shell
 
 
 def test_a_connection_key_reaches_the_pipeline_env_but_no_report_or_plain_export(env, tmp_path):
