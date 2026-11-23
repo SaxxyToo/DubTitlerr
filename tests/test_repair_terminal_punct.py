@@ -7,7 +7,7 @@ import json
 import pytest
 import repair_ref_stub
 
-from dubtitlerr.core import unresolved
+from dubtitlerr.core import artifact_store, unresolved
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import repair
 
@@ -35,7 +35,7 @@ def run_episode(tmp_path, monkeypatch, cards, answers, name="ep", dur=6.0):
     it = iter(answers)
     monkeypatch.setattr(repair, "llm", lambda prompt, model=None: next(it))
     repair.process(stem + repair.CONF_SUFFIX)
-    return json.load(open(stem + ".dubtitles.repair-summary.json")), unresolved.items(stem)
+    return artifact_store.get_json(stem, "repair-summary"), unresolved.items(stem)
 
 
 # ---- 1. prev_text reaches the gate in production ----

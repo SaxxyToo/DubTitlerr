@@ -212,8 +212,12 @@ change. The merged `.ass` keeps the same `...eng.dubtitles.*` name, so it still 
 | `.muxtmp.mkv.recovered`          | `mux.py`                                                     | you                                          | The complete muxed file that failed copy kept. The marker names its path                                            |
 | `.dubtitles.crash.json`          | `generate.py`                                                | `review_requests.py`                         | Exception type, message and time from that crash; read by the `crash-marked` listing          |
 | `.dubtitles.qc.json`             | `generate.py`                                                | `mux.py`                                     | Quality counters, cps quantiles, layout violations, and duration flags (schema version 5: overlong and drip_chain)  |
+<<<<<<< HEAD
+| `.dubtitles.unresolved.jsonl`    | `unresolved.py`                                              | `unresolved.py`, `review_server.py`          | Rejections awaiting human triage (the review queue)                                                                 |
+=======
 | `.dubtitles.repair.csv`          | `repair.py`                                                  | -                                            | Audit trail: original, repaired, reference, latency                                                                 |
 | `.dubtitles.repair-summary.json` | `repair.py`                                                  | `mux.py`                                     | Targets, repaired, skipped, latency, model, rules, and `anchor_mode`                                                |
+>>>>>>> origin/main
 | `.dubtitles.mux.log`             | `mux.py`                                                     | -                                            | Tracks dropped, defaults set                                                                                        |
 
 ### Internal artifact store (P39)
@@ -233,6 +237,16 @@ Why: the media tree used to carry 11–13 artifacts per episode (~8,477 files, 3
 2026-11-22). It is NFS-backed, so each entry also costs scan, sweep and backup metadata
 traffic. The store keeps the same information with one file in an already-persisted volume.
 
+<<<<<<< HEAD
+Kinds that used to sit beside the video now live only here:
+
+| Kind     | Old suffix             | Written by                                                   | Read by                                               | Contents                                                                                          |
+| -------- | ---------------------- | ------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `done`   | `.dubtitles.done`      | `common.write_stamp` (`mux.py`, migration tools)              | `generate.py`, `mux.py`, `review_*`, `tools/*`        | Completion stamp: muxed size, mtime, tier versions, decoder identity (`asr_backend`, `asr_model`)  |
+| `stages` | `.dubtitles.stages.json` | `repair.py`, `dub_signs_merge.py`, `mux.py`, `merge_pass.sh` | `merge_pass.sh`, `mux.py`, `review_status.py`         | One outcome per stage (repair, signs, mux). See [Stage outcomes](#stage-outcomes)                  |
+| `repair.csv` | `.dubtitles.repair.csv` | `repair.py`                                            | `artifact_store get` / `export` (audit)               | Audit trail: original, repaired, reference, latency                                               |
+| `repair-summary` | `.dubtitles.repair-summary.json` | `repair.py`                                 | `repair.py` (prior-repairs guard), `mux.py`, `review_status.py`, `tools/reclaim_orphans.py` | Targets, repaired, skipped, latency, model, rules, and `anchor_mode` |
+=======
 Five kinds that used to sit beside the video now live only here:
 
 | Kind                  | Old suffix                               | Written by                                                   | Read by                                               | Contents                                                                                          |
@@ -242,11 +256,14 @@ Five kinds that used to sit beside the video now live only here:
 | `unresolved`          | `.dubtitles.unresolved.jsonl`            | `unresolved.record` (`repair.py`, `punctuation.py`, `restoration.py`) | `unresolved.py`, `review_server.py`, `review_requests.py`, `review_audit.py`, `queue_hygiene.py`, `tools/*` | Rejections awaiting human triage (the review queue), one JSON object per line |
 | `unresolved.counters` | `.dubtitles.unresolved.counters.json`    | `unresolved.record`                                          | `unresolved.metrics`, the queue hygiene digest        | P33 per-day/per-class counters and the sampling state                                             |
 | `unresolved.audit`    | `.dubtitles.unresolved.audit.jsonl`      | `unresolved.expire`/`enforce`/`undo_expire`                  | `review_audit.py` (`/api/audit`, undo)                | The bounded expiry/queue-bound/undo ring (P33)                                                    |
+>>>>>>> origin/main
 
 The `done` payload is byte-identical to the old file, so `stamp_valid` decides exactly as it
-did: a size or mtime mismatch, an older tier, or another decoder reads stale. No code reads
-the old beside-media file any more; `import --apply` is the only route from an existing file
-into the store, and `export --apply` writes it back out.
+did: a size or mtime mismatch, an older tier, or another decoder reads stale. The
+`repair.csv` and `repair-summary` payloads are the old CSV and indented JSON text byte for
+byte, so `prior_repairs` still refuses to overwrite shipped repairs on the same evidence. No
+code reads the old beside-media file any more; `import --apply` is the only route from an
+existing file into the store, and `export --apply` writes it back out.
 
 One CLI, `python3 -m dubtitlerr.core.artifact_store`, owns storage and migration. Every
 mutating subcommand is a **dry run unless `--apply` is passed**:
@@ -532,8 +549,13 @@ a rollback switch, not a stored setting.
 
 | Where                                   | Fields                                                                                                                                  |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+<<<<<<< HEAD
+| Queue entry (`.dubtitles.unresolved.jsonl`) | `ref_role`, `ref_provenance`, `ref_track_title` (absent or null when the card had no anchored reference); `reference` holds at most 300 characters |
+| `repair-summary`                        | `anchor_mode`: `native-dub`, `native-translation`, `mixed`, `none`, or `unclassified` (rollback path only)                              |
+=======
 | Queue entry (`unresolved` artifact) | `ref_role`, `ref_provenance`, `ref_track_title` (absent or null when the card had no anchored reference); `reference` holds at most 300 characters |
 | `repair-summary.json`                   | `anchor_mode`: `native-dub`, `native-translation`, `mixed`, `none`, or `unclassified` (rollback path only)                              |
+>>>>>>> origin/main
 | Review server entry                     | the three fields above plus a normalised `ref_class`: `dub`, `translation`, `unanchored`, `unclassified`                                |
 | Shared pairs (`/api/shared`)            | `ref_class` only when every episode in the pair agrees; otherwise `null`                                                                |
 
