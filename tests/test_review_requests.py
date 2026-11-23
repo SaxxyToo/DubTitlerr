@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from dubtitlerr.core import artifact_store
 from dubtitlerr.review import review_requests
 from dubtitlerr.review.review_requests import (
     Refused,
@@ -1468,9 +1469,9 @@ def _library(tmp_path):
 
 
 def _mark(stem):
-    marker = Path(str(stem) + ".dubtitles.fail")
-    marker.write_text("")
-    return marker
+    """Seed the store's poison marker for ``stem``; return the old file path an operator may paste."""
+    artifact_store.put(str(stem), "fail", "")
+    return Path(str(stem) + ".dubtitles.fail")
 
 
 def test_crash_marked_lists_every_poison_marker_under_the_library(tmp_path):
@@ -1486,16 +1487,15 @@ def test_crash_marked_lists_every_poison_marker_under_the_library(tmp_path):
 
     assert [e["stem"] for e in listed] == [str(a), str(b)]
     assert [e["show"] for e in listed] == ["Show A", "Show B"]
-    assert [e["marker"] for e in listed] == [str(a) + ".dubtitles.fail", str(b) + ".dubtitles.fail"]
+    assert all(e["clear"].startswith("python3 -m dubtitlerr.review.review_requests clear-crash") for e in listed)
+    assert str(a) in listed[0]["clear"] and str(b) in listed[1]["clear"]
 
 
 def test_crash_marked_carries_the_crash_record_when_generate_left_one(tmp_path):
     root = _library(tmp_path)
     stem = root / "Show A" / "S01" / "Show A - S01E03"
     _mark(stem)
-    Path(str(stem) + ".dubtitles.crash.json").write_text(
-        json.dumps({"exc_type": "EndpointAsrError", "msg": "503 Loading model", "time": 1795403664})
-    )
+    artifact_store.put_json(str(stem), "crash", {"exc_type": "EndpointAsrError", "msg": "503 Loading model", "time": 1795403664})
 
     [entry] = crash_marked(str(root))
 
@@ -1518,9 +1518,9 @@ def test_clear_crash_accepts_the_stem_the_video_or_the_marker(tmp_path, form):
     marker = _mark(stem)
     target = {"stem": str(stem), "video": str(video), "marker": str(marker)}[form]
 
-    assert clear_crash(target, str(root)) == str(marker)
+    assert clear_crash(target, str(root)) == str(stem)
 
-    assert not marker.exists()
+    assert not artifact_store.exists(str(stem), "fail")
     assert video.exists()
 
 
@@ -1530,12 +1530,11 @@ def test_clear_crash_keeps_the_crash_record(tmp_path):
     root = _library(tmp_path)
     stem = root / "Show A" / "S01" / "Show A - S01E03"
     _mark(stem)
-    record = Path(str(stem) + ".dubtitles.crash.json")
-    record.write_text(json.dumps({"exc_type": "RuntimeError"}))
+    artifact_store.put_json(str(stem), "crash", {"exc_type": "RuntimeError"})
 
     clear_crash(str(stem), str(root))
 
-    assert record.exists()
+    assert artifact_store.exists(str(stem), "crash")
 
 
 def test_clear_crash_refuses_a_path_outside_the_library_root(tmp_path):
@@ -1547,7 +1546,7 @@ def test_clear_crash_refuses_a_path_outside_the_library_root(tmp_path):
     with pytest.raises(ValueError):
         clear_crash(str(marker), str(root))
 
-    assert marker.exists()
+    assert artifact_store.exists(str(outside / "stray"), "fail")
 
 
 def test_clear_crash_refuses_an_episode_with_no_marker(tmp_path):
@@ -1573,7 +1572,7 @@ def test_crash_marked_cli_prints_one_stem_per_line_with_the_crash_detail(tmp_pat
     root = _library(tmp_path)
     stem = root / "Show A" / "S01" / "Show A - S01E03"
     _mark(stem)
-    Path(str(stem) + ".dubtitles.crash.json").write_text(json.dumps({"exc_type": "RuntimeError", "msg": "CUDA OOM"}))
+    artifact_store.put_json(str(stem), "crash", {"exc_type": "RuntimeError", "msg": "CUDA OOM"})
     monkeypatch.setattr(sys, "argv", ["review_requests.py", "crash-marked", str(root)])
 
     review_requests.main()
@@ -1593,7 +1592,7 @@ def test_clear_crash_cli_clears_every_path_it_is_given(tmp_path, monkeypatch, ca
 
     out = capsys.readouterr().out
     assert out.count("cleared ") == 2
-    assert not list(root.rglob("*.dubtitles.fail"))
+    assert artifact_store.stems(root=str(root), kind="fail") == []
 
 
 def test_clear_crash_cli_fails_loudly_but_still_clears_the_others(tmp_path, monkeypatch, capsys):
@@ -1609,5 +1608,5 @@ def test_clear_crash_cli_fails_loudly_but_still_clears_the_others(tmp_path, monk
         review_requests.main()
 
     assert exc.value.code == 1
-    assert not Path(str(good) + ".dubtitles.fail").exists()
+    assert not artifact_store.exists(str(good), "fail")
     assert "error clearing" in capsys.readouterr().err

@@ -15,6 +15,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+from dubtitlerr.core import artifact_store  # noqa: E402
+
 _NOTIFY_STUB = """\
 import json, os, sys
 argv = sys.argv[1:]
@@ -116,13 +118,14 @@ def _fake_bin(tmp_path):
 def _run(tmp_path, cues, words=None, **extra_env):
     app = _app(tmp_path)
     _STORE["path"] = str(tmp_path / "config" / "artifacts.db")
+    from dubtitlerr.core import artifact_store
     library = tmp_path / "library"
     stem = library / "Show" / "ep01"
     stem.parent.mkdir(parents=True, exist_ok=True)
     (stem.parent / "ep01.mkv").write_text("")
     (stem.parent / "ep01.eng.dubtitles.ass").write_text(_ass(cues))
     if words is not None:
-        (stem.parent / "ep01.dubtitles.words.json").write_text(json.dumps(words))
+        artifact_store.put_json(str(stem), "words", words, path=_STORE["path"])
     (tmp_path / "calls.log").write_text("")
     (tmp_path / "notify.log").write_text("")  # each pass reports only its own notifications
     env = dict(os.environ)
@@ -186,16 +189,17 @@ def test_the_fixed_file_is_what_got_muxed(tmp_path):
 
 
 def _park(stem):
-    try:
-        return json.load(open(stem + ".dubtitles.parked.json"))
-    except (OSError, ValueError):
-        return {}
+    from dubtitlerr.core import artifact_store
+
+    return artifact_store.get_json(stem, "parked", path=_STORE["path"]) or {}
 
 
 def _audit_attempts(stem):
+    from dubtitlerr.core import artifact_store
+
     try:
-        return len(json.load(open(stem + ".dubtitles.gate-fix.json"))["attempts"])
-    except (OSError, ValueError, KeyError):
+        return len(artifact_store.get_json(stem, "gate-fix", path=_STORE["path"])["attempts"])
+    except (TypeError, KeyError):
         return 0
 
 
@@ -235,7 +239,9 @@ def test_a_changed_attempt_stamp_retries_the_parked_episode_exactly_once(tmp_pat
     assert _audit_attempts(stem) == 1
 
     doc["attempt_stamp"]["gate_fix_epoch"] -= 1  # what an older release parked it with
-    (tmp_path / "library" / "Show" / "ep01.dubtitles.parked.json").write_text(json.dumps(doc))
+    from dubtitlerr.core import artifact_store
+
+    artifact_store.put_text(stem, "parked", json.dumps(doc), path=_STORE["path"])
 
     res, calls, sent, _ = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="1")
     assert "retry: parked ep01" in res.stdout, res.stdout
@@ -285,11 +291,11 @@ def test_an_unusable_park_record_keeps_the_park_and_is_reported_as_an_error(tmp_
     blob = "Kek" * 149
     _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="0")
     stem = str(tmp_path / "library" / "Show" / "ep01")
-    park = tmp_path / "library" / "Show" / "ep01.dubtitles.parked.json"
+    from dubtitlerr.core import artifact_store
+
     doc = _park(stem)
     doc["at"] = "yesterday"
-    park.write_text(json.dumps(doc))
-    before = park.read_text()
+    artifact_store.put_text(stem, "parked", json.dumps(doc), path=_STORE["path"])
 
     res, calls, _, _ = _run(tmp_path, _padded(blob, end=101.32), NOTIFY_SUBSCRIBED="0")
     assert "error: parked ep01" in res.stdout, res.stdout
@@ -297,7 +303,7 @@ def test_an_unusable_park_record_keeps_the_park_and_is_reported_as_an_error(tmp_
     assert "skip mux: publish gate failed" not in res.stdout, "the gate was not re-run on it"
     assert calls == []
     assert _audit_attempts(stem) == 1, "no attempt was spent on a record it could not trust"
-    assert park.read_text() == before, "the park is kept exactly as it was"
+    assert _park(stem) == doc, "the park is kept exactly as it was"
     assert "MERGE PASS INCOMPLETE" in res.stdout, "an unusable park record must be visible, not quietly parked"
 
 
@@ -316,7 +322,7 @@ def test_a_passing_episode_never_reaches_gate_fix(tmp_path):
     assert calls == ["mux ep01"], (calls, res.stdout)
     assert "gate_fix" not in res.stdout, res.stdout
     assert "gate_fix" not in _stages(stem), _stages(stem)
-    assert not os.path.exists(stem + ".dubtitles.gate-fix.json")
+    assert not artifact_store.exists(stem, "gate-fix", path=_STORE["path"])
 
 
 def test_gate_fix_off_restores_the_old_park_behaviour(tmp_path):
@@ -325,7 +331,7 @@ def test_gate_fix_off_restores_the_old_park_behaviour(tmp_path):
     assert calls == [], (calls, res.stdout)
     assert "skip mux: publish gate failed" in res.stdout
     assert _stages(stem)["mux"]["outcome"] == "refused"
-    assert not os.path.exists(stem + ".dubtitles.gate-fix.json")
+    assert not artifact_store.exists(stem, "gate-fix", path=_STORE["path"])
     # With no fixer there is no signature to dedupe on, so the park still escalates.
     assert len(_refusals(sent)) == 1, sent
 

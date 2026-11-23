@@ -85,8 +85,8 @@ IN-APP RE-PASS
 --------------
 ``RESTORATION_EPOCH`` is the behaviour stamp, the same discipline as
 ``presentation.PRESENTATION_EPOCH`` and ``gate_fix.GATE_FIX_EPOCH``: bump it for
-every change to what this module does. A delivered episode carries
-``<stem>.dubtitles.restoration.json`` recording the epoch, the outcome, the counters
+every change to what this module does. A delivered episode carries a
+``restoration`` store row recording the epoch, the outcome, the counters
 and the file's fingerprint; ``--sweep`` (run by ``merge_pass.sh`` after the
 presentation sweep) restores any delivered episode whose stamp is missing, older,
 or predates the file on disk. ``RESTORATION_REPASS=0`` disables it.
@@ -112,7 +112,7 @@ from dubtitlerr.core.atomic_file import MODE_KEEP, atomic_write
 from dubtitlerr.pipeline import presentation, punctuation
 
 RESTORATION_EPOCH = 2  # 1 = punctuation/caps/spacing/house style (P31); 2 = same inherited-refusal rule
-STAMP_SUFFIX = ".dubtitles.restoration.json"
+STAMP_KIND = "restoration"
 MAX_BATCH = 12  # cards per model call
 MAX_REJECT_EVENTS = 20
 ELLIPSIS = "\u2026"
@@ -657,19 +657,11 @@ def apply_file(path: str, stem: str | None = None, dry_run: bool = False, ask=No
     return report, True
 
 
-def _stamp_path(stem: str) -> str:
-    from dubtitlerr.core import common
-
-    return common.out_for(stem + STAMP_SUFFIX)
-
-
 def read_stamp(stem: str) -> dict:
-    try:
-        with open(_stamp_path(stem)) as f:
-            doc = json.load(f)
-        return doc if isinstance(doc, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    from dubtitlerr.core import artifact_store
+
+    doc = artifact_store.get_json(stem, STAMP_KIND)
+    return doc if isinstance(doc, dict) else {}
 
 
 def is_stale(stem: str) -> bool:
@@ -685,6 +677,8 @@ def is_stale(stem: str) -> bool:
 
 
 def _write_stamp(stem: str, path: str, report: dict, outcome: str) -> None:
+    from dubtitlerr.core import artifact_store
+
     doc = {
         "epoch": RESTORATION_EPOCH,
         "at": time.time(),
@@ -693,7 +687,7 @@ def _write_stamp(stem: str, path: str, report: dict, outcome: str) -> None:
         "counters": {k: v for k, v in report.items() if isinstance(v, int)},
         **_fingerprint(path),
     }
-    atomic_write(_stamp_path(stem), lambda f: json.dump(doc, f, indent=1))
+    artifact_store.put_text(stem, STAMP_KIND, json.dumps(doc, indent=1))
 
 
 def apply_episode(stem: str, dry_run: bool = False, force: bool = False, ask=None) -> dict:

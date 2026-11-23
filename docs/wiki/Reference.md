@@ -205,10 +205,7 @@ change. The merged `.ass` keeps the same `...eng.dubtitles.*` name, so it still 
 | -------------------------------- | ------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `.eng.dubtitles.srt`             | `generate.py`, `repair.py`, `review_apply.py`                | `dub_signs_merge.py`, `mux.py`               | The dialogue transcript from the dub audio                                                                          |
 | `.eng.dubtitles.ass`             | `dub_signs_merge.py`, `review_apply.py`                      | `mux.py`                                     | Dialogue plus signs, songs and credits                                                                              |
-| `.dubtitles.fail`                | `generate.py`                                                | `generate.py`, `review_requests.py`          | Poison marker while an episode is in flight / after a hard crash. Generate refuses the episode and a request containing it fails; see [Crash-marked episodes](#crash-marked-episodes) |
-| `.dubtitles.mux-recovery`        | `mux.py`                                                     | `mux.py`, the `deploy/` close unit           | Written when a failed cross-device copy may have damaged the episode. While it exists, mux refuses that episode     |
-| `.muxtmp.mkv.recovered`          | `mux.py`                                                     | you                                          | The complete muxed file that failed copy kept. The marker names its path                                            |
-| `.dubtitles.crash.json`          | `generate.py`                                                | `review_requests.py`                         | Exception type, message and time from that crash; read by the `crash-marked` listing          |
+| `.muxtmp.mkv.recovered`          | `mux.py`                                                     | you                                          | The complete muxed file that failed copy kept. The store's `mux-recovery` row names its path                        |
 | `.dubtitles.mux.log`             | `mux.py`                                                     | -                                            | Tracks dropped, defaults set                                                                                        |
 
 ### Internal artifact store (P39)
@@ -243,6 +240,14 @@ Kinds that used to sit beside the video now live only here:
 | `unresolved`          | `.dubtitles.unresolved.jsonl`            | `unresolved.record` (`repair.py`, `punctuation.py`, `restoration.py`) | `unresolved.py`, `review_server.py`, `review_requests.py`, `review_audit.py`, `queue_hygiene.py`, `tools/*` | Rejections awaiting human triage (the review queue), one JSON object per line |
 | `unresolved.counters` | `.dubtitles.unresolved.counters.json`    | `unresolved.record`                                          | `unresolved.metrics`, the queue hygiene digest        | P33 per-day/per-class counters and the sampling state                                             |
 | `unresolved.audit`    | `.dubtitles.unresolved.audit.jsonl`      | `unresolved.expire`/`enforce`/`undo_expire`                  | `review_audit.py` (`/api/audit`, undo)                | The bounded expiry/queue-bound/undo ring (P33)                                                    |
+| `gate-fix`   | `.dubtitles.gate-fix.json` | `gate_fix.py`                                             | `gate_fix.py` (`--parked`, park signature), `merge_pass.sh` | One attempt record per gate-fixer run: fails before/after, actions, corrections, music cues dropped |
+| `parked`     | `.dubtitles.parked.json`   | `gate_fix.py`                                             | `gate_fix.py` (`--parked`)                            | The refusal a give-up stands for, the attempt stamp, and the glossary fingerprint; keeps the episode parked until something changes |
+| `restoration` | `.dubtitles.restoration.json` | `restoration.py`                                      | `restoration.py` (epoch), `presentation.py`           | Restoration epoch, fingerprint and counters; a stale/missing stamp means the pass re-runs |
+| `presentation` | `.dubtitles.presentation.json` | `presentation.py`                                    | `presentation.py` (epoch)                             | Presentation epoch, outcome and card counters                                                                 |
+| `fail`       | `.dubtitles.fail`          | `generate.py`                                             | `generate.py`, `review_requests.py`, `review_status.py`, `merge_pass.sh`, `tools/reclaim_orphans.py` | Poison marker while an episode is in flight / after a hard crash. See [Crash-marked episodes](#crash-marked-episodes) |
+| `crash`      | `.dubtitles.crash.json`    | `generate.py`                                             | `review_requests.py`                                  | Exception type, message and time from that crash; read by the `crash-marked` listing            |
+| `no-speech`  | `.dubtitles.no-speech`     | `generate.py`                                             | `generate.py` (scope report, retry suppression)       | Endpoint gave up after the attempt limit: attempts, exception, message and time                   |
+| `mux-recovery` | `.dubtitles.mux-recovery` | `mux.py`                                                  | `mux.py`                                             | Written when a failed cross-device copy may have damaged the episode. While the row exists, mux refuses that episode |
 
 A parked artifact is the previous generation of a live kind, kept under `<kind>.parked` while a
 rebuild runs (`artifact_store.park`/`unpark`). The live row is deleted so nothing serves the
@@ -266,7 +271,7 @@ mutating subcommand is a **dry run unless `--apply` is passed**:
 | `export [ROOT]` | Write store rows back out as `<stem><suffix>` files, byte for byte. The reversibility belt; rows are kept |
 | `census ROOT` | Count artifacts in a tree and in the store |
 | `stems --kind K [--root R]` | Print the stems holding one kind — the shell loops' replacement for `find -name` |
-| `has / get / put` | Existence check, payload to stdout, payload from stdin for scripts |
+| `has / get / put / delete / kinds` | Existence check, payload to stdout, payload from stdin, remove one row (`delete` — how an operator resolves a `mux-recovery` or `fail` marker), and the kinds one stem holds |
 
 `import --apply` is the point of no return for files; run `export --apply` to undo it. Run
 `sweep` before `import`, so junk is deleted rather than migrated.
@@ -283,11 +288,12 @@ and `<glossary>.json.review-pending.bad` (a pending file that did not parse; kep
 
 ### Crash-marked episodes
 
-`generate.py` writes `<stem>.dubtitles.fail` before it starts transcribing an episode and removes it
-once that episode's words are written. A process killed hard — a redeploy, a restart, a power cut —
-leaves the marker behind, and every later pass refuses that episode (`skip-prior-crash`). Stopping
-the container softly no longer leaves one (0.2.2 and later), so a marker left by a kill means the
-episode needs one recovery step.
+`generate.py` writes a `fail` row (kind `fail`, formerly `<stem>.dubtitles.fail`) in the
+artifact store before it starts transcribing an episode and removes it once that episode's
+words are written. A process killed hard — a redeploy, a restart, a power cut — leaves the row
+behind, and every later pass refuses that episode (`skip-prior-crash`). Stopping the container
+softly no longer leaves one (0.2.2 and later), so a marker left by a kill means the episode
+needs one recovery step.
 
 A request whose scope contains a marked episode is filed **failed**, never "done with a gap": the
 episode has no transcript, and calling the request done would hide that. Its message names the
@@ -298,13 +304,25 @@ python3 -m dubtitlerr.review.review_requests crash-marked [LIBRARY_ROOT]
 python3 -m dubtitlerr.review.review_requests clear-crash [--root LIBRARY_ROOT] EPISODE [EPISODE ...]
 ```
 
-`crash-marked` walks the library once, prints one `<stem>` per marker (tab, then the exception from
-`<stem>.dubtitles.crash.json` when generate recorded one) and writes nothing. `clear-crash` removes
-the marker for each episode it is given — the stem, the video path, or the marker path all name the
-same marker — and keeps the crash record as history. `LIBRARY_ROOT` defaults to `ANIME_ROOT`;
-removal is confined to that root and only ever unlinks a `.dubtitles.fail` file, so a mistyped path
-cannot delete media. After clearing, the next request (or the next sweep) processes the episode
-normally.
+`crash-marked` queries the store once, prints one `<stem>` per live `fail` row (tab, then the
+exception from the `crash` row when generate recorded one) and writes nothing. `clear-crash`
+deletes the `fail` row for each episode it is given — the stem, the video path, or the old
+`<stem>.dubtitles.fail` filename all name the same row — and keeps the `crash` record as
+history. `LIBRARY_ROOT` defaults to `ANIME_ROOT`; removal is confined to that root and only ever
+deletes a `fail` row, so a mistyped path cannot delete media. After clearing, the next request
+(or the next sweep) processes the episode normally.
+
+There is no file to remove by hand. To clear one marker directly, use the store CLI (it defaults
+to `$CONFIG_DIR/artifacts.db`, or `$ARTIFACT_STORE` when set):
+
+```sh
+python3 -m dubtitlerr.core.artifact_store --store "$CONFIG_DIR/artifacts.db" has    --stem "<stem>" --kind fail
+python3 -m dubtitlerr.core.artifact_store --store "$CONFIG_DIR/artifacts.db" delete --stem "<stem>" --kind fail
+```
+
+`has` prints nothing and exits 0/1; `delete` exits 0 when it removed a row and 1 when there was
+none — the same answer `clear-crash` gives, without the library-root guard, so prefer
+`clear-crash` for a mistype-prone path.
 
 ### Review queue entries
 
@@ -369,9 +387,9 @@ sentence or clause boundary, or end an over-duration card where its own spoken w
 the gate is re-run on the file it wrote. If it passes, delivery continues normally. If it does not,
 the episode is parked exactly as before (mux stage `refused`, a `skip mux:` line, counted in
 `MERGE PASS INCOMPLETE`) and an `episode.refused` notification names the finding, once per distinct
-refusal. The attempt is recorded in `<stem>.dubtitles.gate-fix.json` (cards touched, before/after
-duration and length, outcome) and as the `gate_fix` stage record; an episode that already passes is
-not touched at all. `GATE_FIX=0` disables just the attempt.
+refusal. The attempt is recorded in the `gate-fix` artifact (cards touched, before/after
+duration and length, outcome) and as the `gate_fix` stage record; an episode that already passes
+is not touched at all. `GATE_FIX=0` disables just the attempt.
 
 A line the ASR emitted as one run of a single letter — a real 57-character `'A' + 'H'×56`
 scream, a long laugh — has no word boundary to wrap or split at, so it gets a **line break**

@@ -69,7 +69,7 @@ In-app re-pass
 --------------
 ``PRESENTATION_EPOCH`` is the behaviour stamp, the same discipline as
 ``gate_fix.GATE_FIX_EPOCH``: bump it for every change to what this module does.
-A delivered episode carries ``<stem>.dubtitles.presentation.json`` recording the
+A delivered episode carries a ``presentation`` store row recording the
 epoch it was rebuilt under; ``--sweep`` (run by ``merge_pass.sh`` before its
 delivered-file skip) rebuilds any delivered episode whose stamp is missing or
 older -- exactly once per epoch, with no operator step and no separate script.
@@ -136,7 +136,7 @@ _TRAILING_QUOTES = "\"'”’)]}*"
 _TURN_LINE = re.compile(r"^\s*-\s+")
 
 PRESENTATION_EPOCH = 3  # 2 = speaker-turn dashes (P30); 3 = keep the rebuild on an inherited refusal
-STAMP_SUFFIX = ".dubtitles.presentation.json"
+STAMP_KIND = "presentation"
 
 
 # --- text helpers -------------------------------------------------------------------
@@ -1076,19 +1076,11 @@ def restructure_file(path: str, words_doc: dict | None, audio_duration: float | 
 # --- epoch --------------------------------------------------------------------------
 
 
-def _stamp_path(stem: str) -> str:
-    from dubtitlerr.core import common
-
-    return common.out_for(stem + STAMP_SUFFIX)
-
-
 def read_stamp(stem: str) -> dict:
-    try:
-        with open(_stamp_path(stem)) as f:
-            doc = json.load(f)
-        return doc if isinstance(doc, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    from dubtitlerr.core import artifact_store
+
+    doc = artifact_store.get_json(stem, STAMP_KIND)
+    return doc if isinstance(doc, dict) else {}
 
 
 def is_stale(stem: str) -> bool:
@@ -1097,6 +1089,8 @@ def is_stale(stem: str) -> bool:
 
 
 def _write_stamp(stem: str, report: dict, outcome: str) -> None:
+    from dubtitlerr.core import artifact_store
+
     doc = {
         "epoch": PRESENTATION_EPOCH,
         "at": time.time(),
@@ -1105,7 +1099,7 @@ def _write_stamp(stem: str, report: dict, outcome: str) -> None:
         "cards_after": report.get("cards_after"),
         "counters": {k: v for k, v in report.items() if isinstance(v, int) and k not in ("cards_before", "cards_after")},
     }
-    atomic_write(_stamp_path(stem), lambda f: json.dump(doc, f, indent=1))
+    artifact_store.put_text(stem, STAMP_KIND, json.dumps(doc, indent=1))
 
 
 def apply_episode(stem: str, dry_run: bool = False, force: bool = False) -> dict:

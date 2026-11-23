@@ -143,15 +143,17 @@ def test_generate_main_stops_between_episodes_and_returns_normally(tmp_path, mon
         return "ok"
 
     monkeypatch.setattr(generate, "process", _process)
-    marker = tmp_path / "other.dubtitles.fail"  # unrelated poison marker must survive untouched
-    marker.write_text("keep")
+    # an unrelated poison marker must survive untouched
+    from dubtitlerr.core import artifact_store
+
+    artifact_store.put(str(tmp_path / "other"), "fail", "keep")
     monkeypatch.setattr(sys, "argv", ["generate.py", *vids])
 
     generate.main()  # must return, not sys.exit
 
     assert seen == ["ep1.mkv"]
-    assert marker.read_text() == "keep"
-    assert not list(tmp_path.glob("ep*.dubtitles.fail"))
+    assert artifact_store.get_text(str(tmp_path / "other"), "fail") == "keep"
+    assert artifact_store.stems(root=str(tmp_path), kind="fail") == [str(tmp_path / "other")]
     assert (tmp_path / "gloss" / "Stopper.lastrun.json").exists()
 
 

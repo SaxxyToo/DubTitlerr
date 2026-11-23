@@ -49,7 +49,12 @@ def _orphan(tmp_path, stem_name, payload, *, mtime=None, extra=(".dubtitles.conf
 
 
 # The old beside-media suffix of each artifact kind P39 moved into the store.
-_KIND_FOR = {".dubtitles.conf.json": "conf", ".dubtitles.qc.json": "qc", common.WORDS_SUFFIX: "words"}
+_KIND_FOR = {
+    ".dubtitles.conf.json": "conf",
+    ".dubtitles.qc.json": "qc",
+    common.WORDS_SUFFIX: "words",
+    ".dubtitles.fail": "fail",
+}
 
 
 def test_a_renamed_identical_video_is_reclaimed(tmp_path):
@@ -174,7 +179,8 @@ def test_apply_never_moves_the_markers(tmp_path):
 
     ro.reclaim(str(tmp_path), apply=True)
 
-    assert os.path.exists(stem + ".dubtitles.fail"), ".fail must not follow the rename"
+    assert artifact_store.exists(stem, "fail"), ".fail must not follow the rename"
+    assert not artifact_store.exists(str(tmp_path / "renamed"), "fail")
     assert os.path.exists(stem + ".eng.dubtitles.srt.stale"), ".stale must not follow the rename"
 
 

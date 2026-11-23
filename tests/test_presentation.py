@@ -11,6 +11,8 @@ import json
 import os
 import shutil
 
+import store_seed
+
 from dubtitlerr.core import artifact_store
 from dubtitlerr.pipeline import presentation, publish_gate
 
@@ -249,7 +251,7 @@ def test_dashes_land_in_the_file_and_survive_the_gate(tmp_path):
     stem = str(tmp_path / "Show" / "ep01")
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(TORA_ASS, stem + ".dub.en.ass")
-    shutil.copy(TORA_WORDS, stem + ".dubtitles.words.json")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(TORA_WORDS)))
 
     report, changed = presentation.restructure_file(stem + ".dub.en.ass", {"words": _words(TORA_WORDS)}, None)
     assert changed is True and report["turn_dashes"] == 6
@@ -303,7 +305,7 @@ def test_file_rewrite_touches_only_the_dialogue_cards(tmp_path):
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     ass = stem + ".dub.en.ass"
     shutil.copy(E86_ASS, ass)
-    shutil.copy(E86_WORDS, stem + ".dubtitles.words.json")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(E86_WORDS)))
 
     report, changed = presentation.restructure_file(ass, {"words": _words(E86_WORDS)}, None)
     assert changed is True and report["outcome"] == "rebuilt"
@@ -337,7 +339,7 @@ def test_epoch_stamp_makes_the_repass_exactly_once(tmp_path):
     stem = str(tmp_path / "Show" / "ep01")
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(TORA_ASS, stem + ".dub.en.ass")
-    shutil.copy(TORA_WORDS, stem + ".dubtitles.words.json")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(TORA_WORDS)))
     artifact_store.put_json(stem, "done", {})
 
     assert presentation.is_stale(stem) is True
@@ -346,7 +348,7 @@ def test_epoch_stamp_makes_the_repass_exactly_once(tmp_path):
     assert presentation.is_stale(stem) is False
     second = presentation.apply_episode(stem)
     assert second["outcome"] == "no-op"
-    assert json.load(open(stem + presentation.STAMP_SUFFIX))["epoch"] == presentation.PRESENTATION_EPOCH
+    assert artifact_store.get_json(stem, "presentation")["epoch"] == presentation.PRESENTATION_EPOCH
 
     sweep = presentation.sweep([str(tmp_path)])
     assert sweep["scanned"] == 1 and sweep["stale"] == 0
@@ -356,7 +358,7 @@ def test_a_gate_refusal_restores_the_original_bytes(tmp_path, monkeypatch):
     stem = str(tmp_path / "Show" / "ep01")
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(TORA_ASS, stem + ".dub.en.ass")
-    shutil.copy(TORA_WORDS, stem + ".dubtitles.words.json")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(TORA_WORDS)))
     original = open(stem + ".dub.en.ass", encoding="utf-8").read()
 
     # A refusal the rebuild INTRODUCES (the input was clean): the bytes must go back.
@@ -370,7 +372,7 @@ def test_a_gate_refusal_restores_the_original_bytes(tmp_path, monkeypatch):
     report = presentation.apply_episode(stem)
     assert report["outcome"] == "regressed"
     assert open(stem + ".dub.en.ass", encoding="utf-8").read() == original
-    assert json.load(open(stem + presentation.STAMP_SUFFIX))["outcome"] == "regressed"
+    assert artifact_store.get_json(stem, "presentation")["outcome"] == "regressed"
     assert presentation.is_stale(stem) is False  # a deterministic refusal does not churn
 
 
@@ -385,7 +387,7 @@ def test_a_refusal_the_input_already_carried_keeps_the_rebuild(tmp_path):
     stem = str(tmp_path / "Show" / "ep12")
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(JJK_E12_ASS, stem + ".dub.en.ass")
-    shutil.copy(JJK_E12_WORDS, stem + ".dubtitles.words.json")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(JJK_E12_WORDS)))
     original = open(stem + ".dub.en.ass", encoding="utf-8").read()
     cues_before = publish_gate.load_cues(stem)[1]
     fails_before = publish_gate.evaluate(cues_before)
@@ -399,5 +401,5 @@ def test_a_refusal_the_input_already_carried_keeps_the_rebuild(tmp_path):
     kept = open(stem + ".dub.en.ass", encoding="utf-8").read()
     assert kept != original
     assert publish_gate.evaluate(publish_gate.load_cues(stem)[1]) == fails_before
-    assert json.load(open(stem + presentation.STAMP_SUFFIX))["outcome"] == "rebuilt"
+    assert artifact_store.get_json(stem, "presentation")["outcome"] == "rebuilt"
     assert presentation.is_stale(stem) is False

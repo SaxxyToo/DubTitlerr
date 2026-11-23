@@ -5,6 +5,8 @@ import os
 import threading
 import time
 
+import store_seed
+
 from dubtitlerr.core import artifact_store, common, decisions
 from dubtitlerr.review import review_server, review_status
 
@@ -13,8 +15,7 @@ def _create_episode(tmp_path, show="ShowA", season="Season 1", ep="E01"):
     ep_dir = tmp_path / show / season
     ep_dir.mkdir(parents=True, exist_ok=True)
     stem = str(ep_dir / f"{show} - {ep}")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 1.0, "text": "Hello world"}], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"start": 0.0, "end": 1.0, "text": "Hello world"}])
     return stem
 
 
@@ -59,9 +60,9 @@ def test_status_stages(tmp_path, monkeypatch):
     """Stage classification covers failed, stale (M3/T5), pending-review, muxed, repaired, transcribed."""
     monkeypatch.setattr(decisions, "DECISIONS_DIR", str(tmp_path / "decisions"))
 
-    # 1. Failed via .dubtitles.fail
+    # 1. Failed via the fail marker (store kind `fail`)
     s_failed = _create_episode(tmp_path, "One Pace", "S01", "E01")
-    (tmp_path / "One Pace" / "S01" / "One Pace - E01.dubtitles.fail").write_text("crash")
+    artifact_store.put(s_failed, "fail", "")
 
     # 2. Failed via stages record
     s_failed_stage = _create_episode(tmp_path, "One Pace", "S01", "E02")
@@ -386,8 +387,7 @@ def test_status_decisions_show_for(tmp_path, monkeypatch):
     ep_dir = tmp_path / "media" / "ShowA" / "Season 1" / "Part A"
     ep_dir.mkdir(parents=True, exist_ok=True)
     stem = str(ep_dir / "ShowA - E01")
-    with open(stem + ".dubtitles.conf.json", "w") as f:
-        json.dump([{"start": 0.0, "end": 1.0, "text": "Hello world"}], f)
+    store_seed.conf(stem + ".dubtitles.conf.json", [{"start": 0.0, "end": 1.0, "text": "Hello world"}])
 
     # Decisions directory
     dec_dir = tmp_path / "decisions"

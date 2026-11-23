@@ -96,11 +96,10 @@ def test_needs_work_matrix(tmp_path, monkeypatch):
     assert needs_work(str(v)) is False
     srt.unlink()
 
-    # 4. .dubtitles.fail poison marker present -> skip (a prior hard crash; needs manual rm)
-    fail = tmp_path / "ep.dubtitles.fail"
-    fail.write_text("")
+    # 4. fail poison marker present -> skip (a prior hard crash; clear it in the store to retry)
+    artifact_store.put(stem, "fail", "")
     assert needs_work(str(v)) is False
-    fail.unlink()
+    artifact_store.delete(stem, "fail")
 
     # 5. no sidecar/stamp/marker at all -> needs work
     assert needs_work(str(v)) is True
@@ -577,7 +576,8 @@ def test_a_run_with_a_glossary_does_not_warn(monkeypatch, tmp_path, capsys):
 
 
 def _fail_marker(video):
-    return os.path.splitext(video)[0] + ".dubtitles.fail"
+    """The episode stem whose `fail` store row is generate's poison marker (P39)."""
+    return os.path.splitext(video)[0]
 
 
 def test_runtimeerror_poisons_episode_and_exits(monkeypatch, tmp_path):
@@ -590,7 +590,7 @@ def test_runtimeerror_poisons_episode_and_exits(monkeypatch, tmp_path):
     monkeypatch.setattr(generate, "WhisperModel", lambda *a, **kw: object())
 
     def _boom(video):
-        open(_fail_marker(video), "w").close()  # simulate process()'s in-flight marker
+        artifact_store.put(_fail_marker(video), "fail", "")  # simulate process()'s in-flight marker
         raise RuntimeError("CUDA error: out of memory")
 
     monkeypatch.setattr(generate, "process", _boom)
@@ -599,7 +599,7 @@ def test_runtimeerror_poisons_episode_and_exits(monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as ei:
         generate.main()
     assert ei.value.code == 3
-    assert os.path.exists(_fail_marker(str(v)))  # NOT removed -- stays poisoned
+    assert artifact_store.exists(_fail_marker(str(v)), "fail")  # NOT removed -- stays poisoned
 
 
 def test_non_runtimeerror_mentioning_cuda_does_not_poison(monkeypatch, tmp_path):
@@ -614,7 +614,7 @@ def test_non_runtimeerror_mentioning_cuda_does_not_poison(monkeypatch, tmp_path)
     monkeypatch.setattr(generate, "GLOSS_DIR", str(tmp_path))  # let main() finish (C1 write)
 
     def _boom(video):
-        open(_fail_marker(video), "w").close()
+        artifact_store.put(_fail_marker(video), "fail", "")
         raise ValueError("bad value near a cuda-adjacent buffer index")
 
     monkeypatch.setattr(generate, "process", _boom)
@@ -622,8 +622,8 @@ def test_non_runtimeerror_mentioning_cuda_does_not_poison(monkeypatch, tmp_path)
 
     generate.main()  # must NOT sys.exit
 
-    assert not os.path.exists(_fail_marker(str(v)))  # cleared -- retries next sweep
-    crash = json.loads((tmp_path / "ep.dubtitles.crash.json").read_text())
+    assert not artifact_store.exists(_fail_marker(str(v)), "fail")  # cleared -- retries next sweep
+    crash = artifact_store.get_json(str(tmp_path / "ep"), "crash")
     assert crash["exc_type"] == "ValueError"
     assert crash["path"] == str(v)
     assert "cuda" in crash["msg"].lower()
@@ -673,7 +673,7 @@ def test_endpoint_error_does_not_poison_the_episode(monkeypatch, tmp_path):
     monkeypatch.setattr(generate, "GLOSS_DIR", str(tmp_path))
 
     def _boom(video):
-        open(_fail_marker(video), "w").close()
+        artifact_store.put(_fail_marker(video), "fail", "")
         raise generate.EndpointAsrError("endpoint returned no segments")
 
     monkeypatch.setattr(generate, "process", _boom)
@@ -681,8 +681,8 @@ def test_endpoint_error_does_not_poison_the_episode(monkeypatch, tmp_path):
 
     generate.main()  # must NOT sys.exit
 
-    assert not os.path.exists(_fail_marker(str(v)))
-    crash = json.loads((tmp_path / "ep.dubtitles.crash.json").read_text())
+    assert not artifact_store.exists(_fail_marker(str(v)), "fail")
+    crash = artifact_store.get_json(str(tmp_path / "ep"), "crash")
     assert crash["exc_type"] == "EndpointAsrError"
 
 
@@ -695,10 +695,10 @@ def test_endpoint_error_gives_up_after_three_attempts(monkeypatch, tmp_path):
     monkeypatch.setattr(generate, "GLOSS_DIR", str(tmp_path))
     monkeypatch.setattr(common, "OUTPUT_ROOT", "")
     monkeypatch.setattr(generate, "ENDPOINT_MAX_ATTEMPTS", 3)
-    (tmp_path / "ep.dubtitles.crash.json").write_text(json.dumps({"attempts": 2}))
+    artifact_store.put_json(str(tmp_path / "ep"), "crash", {"attempts": 2})
 
     def _boom(video):
-        open(_fail_marker(video), "w").close()
+        artifact_store.put(_fail_marker(video), "fail", "")
         raise generate.EndpointAsrError("endpoint returned no segments")
 
     real_process = generate.process
@@ -707,10 +707,10 @@ def test_endpoint_error_gives_up_after_three_attempts(monkeypatch, tmp_path):
 
     generate.main()
 
-    marker = json.loads((tmp_path / "ep.dubtitles.no-speech").read_text())
+    marker = artifact_store.get_json(str(tmp_path / "ep"), "no-speech")
     assert marker["attempts"] == 3
     assert marker["exc_type"] == "EndpointAsrError"
-    assert not os.path.exists(_fail_marker(str(v)))
+    assert not artifact_store.exists(_fail_marker(str(v)), "fail")
 
     # and a marked episode is skipped, not retried
     assert real_process(str(v)) == "no-speech"
@@ -814,11 +814,11 @@ def test_stale_version_file_discards_only_the_leftovers_not_the_fresh_work(monke
 
 
 def test_poison_marked_stale_file_keeps_its_sidecars(monkeypatch, tmp_path):
-    """A .dubtitles.fail file is never transcribed, so discarding its sidecars would be
+    """A fail-marked file is never transcribed, so discarding its sidecars would be
     pure destruction -- it would leave mux with nothing to embed until an operator
-    manually removes the marker."""
+    clears the store marker."""
     v = _stale_stamped(tmp_path, monkeypatch, leftovers=["ep.eng.dubtitles.ass"])
-    (tmp_path / "ep.dubtitles.fail").write_text("")
+    artifact_store.put(str(tmp_path / "ep"), "fail", "")
     assert generate.process(str(v)) == "already-ass"  # skipped, and nothing destroyed
     assert (tmp_path / "ep.eng.dubtitles.ass").exists()
 
@@ -849,7 +849,7 @@ def test_a_version_bump_that_ends_infeasible_leaves_the_prior_output_recoverable
     v = _stale_stamped(tmp_path, monkeypatch, leftovers=["ep.eng.dubtitles.srt", "ep.dubtitles.conf.json"])
     _infeasible_model(monkeypatch, generate)
     assert generate.process(str(v)) == "cascade-infeasible"
-    assert (tmp_path / "ep.dubtitles.fail").exists()
+    assert artifact_store.exists(str(tmp_path / "ep"), "fail")
     assert not (tmp_path / "ep.eng.dubtitles.srt").exists()  # still not muxable...
     assert (tmp_path / "ep.eng.dubtitles.srt.stale").exists()  # ...but not destroyed
     assert artifact_store.has_parked(str(tmp_path / "ep"), "conf")
@@ -891,7 +891,7 @@ def test_needs_work_false_for_a_poison_marked_stale_file(monkeypatch, tmp_path):
     drag the ~40s model load into a sweep that has nothing else to do."""
     needs_work = _real_needs_work()
     v = _stale_stamped(tmp_path, monkeypatch, leftovers=["ep.eng.dubtitles.ass"])
-    (tmp_path / "ep.dubtitles.fail").write_text("")
+    artifact_store.put(str(tmp_path / "ep"), "fail", "")
     assert needs_work(str(v)) is False
 
 
@@ -1262,9 +1262,9 @@ def test_cascade_infeasible_writes_no_subtitle_and_poisons_the_episode(monkeypat
     poison marker retires the episode instead of letting every sweep re-fail it."""
     v = _infeasible_setup(monkeypatch, tmp_path)
     assert generate.process(str(v)) == "cascade-infeasible"
-    assert (tmp_path / "ep.dubtitles.fail").exists()
+    assert artifact_store.exists(str(tmp_path / "ep"), "fail")
     assert not (tmp_path / "ep.eng.dubtitles.srt").exists()
-    assert not (tmp_path / "ep.dubtitles.conf.json").exists()
+    assert not artifact_store.exists(str(tmp_path / "ep"), "conf")
     assert not (tmp_path / "ep.eng.dubtitles.ass").exists()
     assert generate.process(str(v)) == "skip-prior-crash"  # the next sweep moves on
 
@@ -1276,8 +1276,8 @@ def test_cascade_infeasible_never_reaches_main_and_never_clears_the_marker(monke
     seen = []
     monkeypatch.setattr(generate, "log", lambda *a: seen.append(" ".join(str(x) for x in a)))
     generate.process(str(v))
-    assert (tmp_path / "ep.dubtitles.fail").exists()
-    assert not (tmp_path / "ep.dubtitles.crash.json").exists()
+    assert artifact_store.exists(str(tmp_path / "ep"), "fail")
+    assert not artifact_store.exists(str(tmp_path / "ep"), "crash")
     assert any("cascade" in m.lower() for m in seen)
 
 
@@ -2002,7 +2002,7 @@ def test_common_and_generate_agree_on_the_decoder_identity(monkeypatch):
 def test_a_poison_marked_episode_is_in_neither_queue(tmp_path):
     """The .fail marker wins over everything, as it does in needs_work()."""
     v = _stamped(tmp_path, "ep.mkv", version=4)
-    open(os.path.splitext(v)[0] + ".dubtitles.fail", "w").close()
+    artifact_store.put(os.path.splitext(v)[0], "fail", "")
     assert generate.partition_todo([v]) == ([], [])
 
 
@@ -2693,15 +2693,14 @@ def test_a_chunk_is_re_encoded_not_stream_copied(tmp_path, monkeypatch):
 
 
 def test_a_success_clears_the_failure_markers(tmp_path, monkeypatch):
-    """A stale crash.json on an episode that delivered misleads every later triage."""
-    crash = tmp_path / "ep.dubtitles.crash.json"
-    no_speech = tmp_path / ("ep" + generate.NO_SPEECH_SUFFIX)
-    crash.write_text("{}", encoding="utf-8")
-    no_speech.write_text("{}", encoding="utf-8")
+    """A stale crash record on an episode that delivered misleads every later triage."""
+    stem = str(tmp_path / "ep")
+    artifact_store.put_text(stem, "crash", "{}")
+    artifact_store.put_text(stem, "no-speech", "{}")
     monkeypatch.setattr(generate, "out_for", lambda p: p)
-    generate._clear_failure_markers(str(tmp_path / "ep"))
-    assert not crash.exists()
-    assert not no_speech.exists()
+    generate._clear_failure_markers(stem)
+    assert not artifact_store.exists(stem, "crash")
+    assert not artifact_store.exists(stem, "no-speech")
 
 
 def test_force_redo_parks_the_delivered_sidecar(tmp_path, monkeypatch):

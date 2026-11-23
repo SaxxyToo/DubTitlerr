@@ -17,10 +17,11 @@ import sys
 import time
 
 import pytest
+import store_seed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dubtitlerr.core.atomic_file import atomic_write
+from dubtitlerr.core import artifact_store, common
 from dubtitlerr.pipeline import gate_fix, presentation, publish_gate
 
 ASS_HEAD = (
@@ -74,7 +75,10 @@ def write_episode(tmp_path, cues, words=None, stem="ep01"):
     stem_path = str(d / stem)
     (d / f"{stem}.eng.dubtitles.ass").write_text(ass_text(cues))
     if words is not None:
-        (d / f"{stem}.dubtitles.words.json").write_text(json.dumps({"words": words}))
+        store_seed.words(
+            str(d / f"{stem}.dubtitles.words.json"),
+            {"words": words, "transcribe_version": common.TRANSCRIBE_VERSION},
+        )
     return stem_path
 
 
@@ -193,7 +197,7 @@ def test_a_single_unbroken_token_is_reported_unfixable_and_nothing_is_written(tm
     assert "single unbroken token" in result["summary"]
     assert read(stem + ".eng.dubtitles.ass") == before
     assert not os.path.exists(stem + ".eng.dubtitles.ass.pre-gate-fix.bak")
-    audit = json.load(open(stem + ".dubtitles.gate-fix.json"))
+    audit = artifact_store.get_json(stem, "gate-fix")
     assert audit["attempts"][-1]["outcome"] == gate_fix.OUTCOME_UNFIXABLE
 
 
@@ -226,8 +230,8 @@ def test_a_passing_file_is_a_no_op_and_leaves_no_trace(tmp_path):
     assert result["code"] == 0
     assert read(stem + ".eng.dubtitles.ass") == before
     assert os.path.getmtime(stem + ".eng.dubtitles.ass") == mtime
-    assert not os.path.exists(stem + ".dubtitles.gate-fix.json")
-    assert not os.path.exists(stem + ".dubtitles.stages.json")
+    assert not artifact_store.exists(stem, "gate-fix")
+    assert not artifact_store.exists(stem, "stages")
 
 
 def test_re_running_on_the_fixed_file_changes_nothing(tmp_path):
@@ -243,7 +247,7 @@ def test_re_running_on_the_fixed_file_changes_nothing(tmp_path):
     assert first["outcome"] == gate_fix.OUTCOME_FIXED
     assert second["outcome"] == gate_fix.OUTCOME_NOOP
     assert read(stem + ".eng.dubtitles.ass") == fixed_bytes
-    audit = json.load(open(stem + ".dubtitles.gate-fix.json"))
+    audit = artifact_store.get_json(stem, "gate-fix")
     assert len(audit["attempts"]) == 1, "the no-op run must not append an attempt"
 
 
@@ -257,7 +261,7 @@ def test_the_attempt_is_recorded_as_a_stage_and_in_the_audit_trail(tmp_path):
     from dubtitlerr.core import common
 
     assert common.read_stages(stem)["gate_fix"]["outcome"] == "ok"
-    audit = json.load(open(stem + ".dubtitles.gate-fix.json"))
+    audit = artifact_store.get_json(stem, "gate-fix")
     attempt = audit["attempts"][-1]
     assert attempt["fails_before"] == ["1 card(s) over 7.5s (max 16.9s)"]
     assert attempt["fails_after"] == []
@@ -744,7 +748,7 @@ def test_the_live_blue_eye_files_pass_once_their_music_cards_are_dropped(tmp_pat
         assert len(gone) == drops
         assert all(not any(ch.isalnum() for ch in t) and (e - s) > 7.5 for s, e, t in gone)
         assert [a["action"] for a in result["fixes"]] == ["drop-music"] * drops
-        audit = json.load(open(stem + ".dubtitles.gate-fix.json"))
+        audit = artifact_store.get_json(stem, "gate-fix")
         assert audit["music_cues_dropped"] == drops, audit
         assert "dropped" in audit["attempts"][-1]["summary"]
 
@@ -900,32 +904,22 @@ def test_an_unusable_park_record_is_an_error_never_a_stale_verdict(tmp_path):
     "the verdict no longer stands": it unparked the episode and dropped the record. A record it
     cannot trust must stay parked and be reported (exit 3), not silently deleted."""
     stem = write_episode(tmp_path, padded(100.0, 101.32, "Kek" * 149))
-    park_path = gate_fix._park_path(stem)
-    atomic_write(
-        park_path,
-        lambda f: f.write(
-            json.dumps(
-                {
-                    "parked": True,
-                    "at": "yesterday",
-                    "outcome": "unfixable",
-                    "summary": "old",
-                    "attempt_stamp": gate_fix.attempt_stamp(),
-                }
-            )
-        ),
-    )
+    doc = {"parked": True, "at": "yesterday", "outcome": "unfixable", "summary": "old", "attempt_stamp": gate_fix.attempt_stamp()}
+    artifact_store.put_text(stem, "parked", json.dumps(doc))
 
     with pytest.raises(gate_fix.ParkRecordError):
         gate_fix.parked_state(stem)
     assert gate_fix.main([stem, "--parked"]) == 3
-    assert os.path.exists(park_path), "the park is kept for a human, not dropped"
+    assert artifact_store.exists(stem, "parked"), "the park is kept for a human, not dropped"
 
 
 def test_a_park_record_without_a_usable_attempt_stamp_is_an_error_too(tmp_path):
     stem = write_episode(tmp_path, padded(100.0, 101.32, "Kek" * 149))
-    park_path = gate_fix._park_path(stem)
-    atomic_write(park_path, lambda f: f.write(json.dumps({"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old"})))
+    artifact_store.put_text(
+        stem,
+        "parked",
+        json.dumps({"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old"}),
+    )
 
     with pytest.raises(gate_fix.ParkRecordError):
         gate_fix.parked_state(stem)
@@ -946,20 +940,18 @@ def test_a_fixed_episode_drops_its_parked_record(tmp_path):
         {"text": w, "start": 100.0 + i * 0.31, "end": 100.31 + i * 0.31, "prob": 0.9} for i, w in enumerate(sentence.split())
     ]
     stem = write_episode(tmp_path, cues, words=words)
-    park_path = gate_fix._park_path(stem)
-    atomic_write(
-        park_path,
-        lambda f: f.write(
-            json.dumps(
-                {"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old", "attempt_stamp": gate_fix.attempt_stamp()}
-            )
+    artifact_store.put_text(
+        stem,
+        "parked",
+        json.dumps(
+            {"parked": True, "at": 1.0, "outcome": "unfixable", "summary": "old", "attempt_stamp": gate_fix.attempt_stamp()}
         ),
     )
 
     result = gate_fix.attempt(stem)
 
     assert result["outcome"] == gate_fix.OUTCOME_FIXED, result
-    assert not os.path.exists(park_path), "a healed episode must not stay parked"
+    assert not artifact_store.exists(stem, "parked"), "a healed episode must not stay parked"
 
 
 # --- the correction lane (P24): the glossary heals what it flagged --------------------
@@ -1002,7 +994,7 @@ def test_a_parked_mishear_heals_by_reapplying_the_glossary(tmp_path, monkeypatch
     assert not any("Zine" in t for t in bodies)
     assert result["corrections"][0]["before"] == "Zine's very generous notes."
     assert result["corrections"][0]["after"] == "Sein's very generous notes."
-    audit = json.load(open(stem + ".dubtitles.gate-fix.json"))
+    audit = artifact_store.get_json(stem, "gate-fix")
     assert audit["attempts"][-1]["corrections"] == result["corrections"]
 
 
@@ -1116,21 +1108,15 @@ def test_a_glossary_change_unparks_a_parked_episode(tmp_path, monkeypatch):
     # Stand in for the record an older pass wrote: a real give-up, stamped against THIS
     # glossary. (No plain-text gate finding can park this file until the fix lands, so the
     # record is written the way _write_park writes it.)
-    atomic_write(
-        gate_fix._park_path(stem),
-        lambda f: f.write(
-            json.dumps(
-                {
-                    "parked": True,
-                    "at": time.time(),
-                    "outcome": gate_fix.OUTCOME_UNSUPPORTED,
-                    "summary": "known mishear(s): zine",
-                    "fails": ["known mishear(s): zine"],
-                    "attempt_stamp": gate_fix.attempt_stamp(stem),
-                }
-            )
-        ),
-    )
+    doc = {
+        "parked": True,
+        "at": time.time(),
+        "outcome": gate_fix.OUTCOME_UNSUPPORTED,
+        "summary": "known mishear(s): zine",
+        "fails": ["known mishear(s): zine"],
+        "attempt_stamp": gate_fix.attempt_stamp(stem),
+    }
+    artifact_store.put_text(stem, "parked", json.dumps(doc))
     assert gate_fix.parked_state(stem)[0] is True
 
     gloss_path.write_text(json.dumps({"show": "Show", "names": ["Sein"], "hard_fixes": {"zinza": "Sense", "zine": "Sein"}}))
@@ -1162,7 +1148,7 @@ def _live_episode(tmp_path, fixture, words=None):
     dest = str(d / f"ep01.eng.dubtitles{ext}")
     shutil.copyfile(os.path.join(LIVE, fixture), dest)
     if words:
-        shutil.copyfile(os.path.join(LIVE, words), str(d / "ep01.dubtitles.words.json"))
+        store_seed.words(str(d / "ep01.dubtitles.words.json"), json.load(open(os.path.join(LIVE, words))))
     return str(d / "ep01")
 
 

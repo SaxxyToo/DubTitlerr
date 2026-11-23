@@ -317,8 +317,7 @@ def test_a_crash_marked_episode_fails_the_request_with_the_remedy_named(tmp_path
     verdict is still failed (fail-closed: the episode has no subtitles), but it now names the
     episode and both commands that clear it."""
     _show(tmp_path, 3, delivered=False)
-    marker = tmp_path / "Show - S01E02.dubtitles.fail"
-    marker.write_text("")
+    artifact_store.put(str(tmp_path / "Show - S01E02"), "fail", "")
 
     calls, rep = _run(tmp_path, monkeypatch, force=False)
 
@@ -338,7 +337,7 @@ def test_a_crash_marked_episode_fails_the_request_with_the_remedy_named(tmp_path
 def test_clearing_the_marker_lets_the_next_request_process_the_episode(tmp_path, monkeypatch):
     """The recovery half: list it (rr.crash_marked), clear it (rr.clear_crash), re-fire."""
     _show(tmp_path, 2, delivered=False)
-    (tmp_path / "Show - S01E02.dubtitles.fail").write_text("")
+    artifact_store.put(str(tmp_path / "Show - S01E02"), "fail", "")
     calls, rep = _run(tmp_path, monkeypatch, force=False)
     assert calls == ["Show - S01E01.mkv"]
     assert rr.verdict(rep, 0)[0] is False
@@ -354,7 +353,7 @@ def test_clearing_the_marker_lets_the_next_request_process_the_episode(tmp_path,
 def test_a_marker_on_an_episode_that_was_never_requested_stays_out_of_the_report(tmp_path, monkeypatch):
     """The remedy must name the episodes that blocked THIS request, not every marker in the tree."""
     _show(tmp_path, 2, delivered=False)
-    (tmp_path / "Unrelated - S09E09.dubtitles.fail").write_text("")
+    artifact_store.put(str(tmp_path / "Unrelated - S09E09"), "fail", "")
 
     _calls, rep = _run(tmp_path, monkeypatch, force=False)
 

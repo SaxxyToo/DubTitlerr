@@ -317,16 +317,16 @@ the stamp is written, nothing looks at the episode again.
 
 So mux has to be sure what it is shipping. If repair refuses to overwrite repairs that already
 shipped, the `.srt` on disk is raw speech recognition. Muxing it would put that in the video
-and mark the episode done. Each stage therefore records its outcome in
-`<stem>.dubtitles.stages.json`, and mux runs only for an episode whose earlier stages passed.
-A failed episode is retried on the next pass instead.
+and mark the episode done. Each stage therefore records its outcome as a `stages` row in the
+artifact store, and mux runs only for an episode whose earlier stages passed. A failed episode
+is retried on the next pass instead.
 
-The same reasoning shapes the stop. `generate.py` writes the `.dubtitles.fail` marker before it
-starts transcribing, so that a crash does not loop forever. A process killed at an arbitrary
-moment is indistinguishable from a crash, and it leaves the marker behind. A stop therefore
-waits for a safe point instead of interrupting: the unit in flight finishes, no new one
-starts, and the exit code is 0. The cost is that `docker stop` needs a grace period as long as
-your longest unit of work. [Stop the container without losing
+The same reasoning shapes the stop. `generate.py` writes a `fail` poison row in the artifact
+store before it starts transcribing, so that a crash does not loop forever. A process killed at
+an arbitrary moment is indistinguishable from a crash, and it leaves the row behind. A stop
+therefore waits for a safe point instead of interrupting: the unit in flight finishes, no new
+one starts, and the exit code is 0. The cost is that `docker stop` needs a grace period as long
+as your longest unit of work. [Stop the container without losing
 work](How-To-Guides.md#stop-the-container-without-losing-work) says how to set it.
 
 ---

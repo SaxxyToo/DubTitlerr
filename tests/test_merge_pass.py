@@ -786,11 +786,14 @@ def test_presentation_repass_stamps_a_delivered_episode_once(tmp_path, monkeypat
     stem = str(root / "Show" / "ep01")
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(os.path.join(art, "toradora_s01e24_presentation.ass"), stem + ".eng.dubtitles.ass")
-    shutil.copy(os.path.join(art, "toradora_s01e24_presentation.words.json"), stem + ".dubtitles.words.json")
+    store_seed.words(
+        stem + ".dubtitles.words.json",
+        json.load(open(os.path.join(art, "toradora_s01e24_presentation.words.json"))),
+    )
     artifact_store.put_json(stem, "done", {})
 
     res = _run(tmp_path, root)
-    stamp = json.load(open(stem + ".dubtitles.presentation.json"))
+    stamp = artifact_store.get_json(stem, "presentation")
     assert stamp["epoch"] == presentation.PRESENTATION_EPOCH, (stamp, res.stdout, res.stderr)
     assert stamp["outcome"] in ("rebuilt", "no-op"), (stamp, res.stdout, res.stderr)
     assert "presentation: scanned=1" in res.stdout, res.stdout
@@ -800,7 +803,7 @@ def test_presentation_repass_stamps_a_delivered_episode_once(tmp_path, monkeypat
     delivered = open(stem + ".eng.dubtitles.ass", encoding="utf-8").read()
     _run(tmp_path, root)
     assert open(stem + ".eng.dubtitles.ass", encoding="utf-8").read() == delivered
-    assert json.load(open(stem + ".dubtitles.presentation.json"))["epoch"] == presentation.PRESENTATION_EPOCH
+    assert artifact_store.get_json(stem, "presentation")["epoch"] == presentation.PRESENTATION_EPOCH
 
 
 def test_presentation_repass_is_off_when_disabled(tmp_path, monkeypatch):
@@ -814,7 +817,7 @@ def test_presentation_repass_is_off_when_disabled(tmp_path, monkeypatch):
 
     before = open(stem + ".eng.dubtitles.ass", encoding="utf-8").read()
     res = _run(tmp_path, root, extra_env={"PRESENTATION_REPASS": "0", "RESTORATION_REPASS": "0"})
-    assert not os.path.exists(stem + ".dubtitles.presentation.json"), res.stdout + res.stderr
+    assert not artifact_store.exists(stem, "presentation"), res.stdout + res.stderr
     assert open(stem + ".eng.dubtitles.ass", encoding="utf-8").read() == before
 
 
@@ -825,7 +828,7 @@ def _restoration_stem(tmp_path, monkeypatch):
     stem = str(root / "Show" / "ep01")
     os.makedirs(os.path.dirname(stem), exist_ok=True)
     shutil.copy(os.path.join(art, "e86_s01e01_presentation.ass"), stem + ".eng.dubtitles.ass")
-    shutil.copy(os.path.join(art, "e86_s01e01_presentation.words.json"), stem + ".dubtitles.words.json")
+    store_seed.words(stem + ".dubtitles.words.json", json.load(open(os.path.join(art, "e86_s01e01_presentation.words.json"))))
     artifact_store.put_json(stem, "done", {})
     return root, stem
 
@@ -837,11 +840,11 @@ def test_restoration_repass_runs_on_a_delivered_episode(tmp_path, monkeypatch):
     root, stem = _restoration_stem(tmp_path, monkeypatch)
     res = _run(tmp_path, root, extra_env={"RESTORE_BACKEND": "bogus"})
     assert "restoration: scanned=1" in res.stdout, res.stdout + res.stderr
-    assert not os.path.exists(stem + ".dubtitles.restoration.json"), res.stdout
+    assert not artifact_store.exists(stem, "restoration"), res.stdout
 
 
 def test_restoration_repass_is_off_when_disabled(tmp_path, monkeypatch):
     root, stem = _restoration_stem(tmp_path, monkeypatch)
     res = _run(tmp_path, root, extra_env={"RESTORATION_REPASS": "0", "RESTORE_BACKEND": "bogus"})
     assert "restoration: scanned=" not in res.stdout, res.stdout + res.stderr
-    assert not os.path.exists(stem + ".dubtitles.restoration.json"), res.stdout
+    assert not artifact_store.exists(stem, "restoration"), res.stdout

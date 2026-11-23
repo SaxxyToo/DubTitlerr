@@ -783,6 +783,13 @@ def main(argv=None) -> int:
     p.add_argument("--stem", required=True)
     p.add_argument("--kind", required=True)
 
+    p = sub.add_parser("delete", help="remove one artifact row (a marker a human resolved)")
+    p.add_argument("--stem", required=True)
+    p.add_argument("--kind", required=True)
+
+    p = sub.add_parser("kinds", help="list the artifact kinds one stem holds")
+    p.add_argument("--stem", required=True)
+
     args = ap.parse_args(argv)
     store = args.store
 
@@ -820,6 +827,12 @@ def main(argv=None) -> int:
         return 0
     if args.cmd == "put":
         put(args.stem, args.kind, sys.stdin.buffer.read(), path=store)
+        return 0
+    if args.cmd == "delete":
+        return 0 if delete(args.stem, args.kind, path=store) else 1
+    if args.cmd == "kinds":
+        for kind in kinds(args.stem, path=store):
+            print(kind)
         return 0
     return 2
 

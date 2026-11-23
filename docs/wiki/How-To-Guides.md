@@ -215,21 +215,23 @@ python3 -m dubtitlerr.review.review_requests crash-marked
 python3 -m dubtitlerr.review.review_requests clear-crash "Show - S01E05.mkv"
 ```
 
-`crash-marked` prints the episode path for each marker, with the exception generate recorded when
-there is one. `clear-crash` removes the marker (the `.dubtitles.crash.json` record is kept as
-history); the next request or sweep then transcribes the episode normally. Both commands run inside
-the container, and the library root comes from `ANIME_ROOT`.
+`crash-marked` prints the episode path for each live marker, with the exception generate recorded
+when there is one. `clear-crash` deletes the marker (the crash record is kept as history); the
+next request or sweep then transcribes the episode normally. Both commands run inside the
+container, and the library root comes from `ANIME_ROOT`.
 
-The crash file names the exception, so you can still decide whether to retry at all — or read it
-directly:
+The crash record names the exception, so you can still decide whether to retry at all — or read
+it directly from the store (it defaults to `$CONFIG_DIR/artifacts.db`, or `$ARTIFACT_STORE` when
+set):
 
 ```sh
-ls  "Show - S01E05".dubtitles.fail
-cat "Show - S01E05".dubtitles.crash.json
+python3 -m dubtitlerr.core.artifact_store --store "$CONFIG_DIR/artifacts.db" has --stem "Show - S01E05" --kind fail
+python3 -m dubtitlerr.core.artifact_store --store "$CONFIG_DIR/artifacts.db" get --stem "Show - S01E05" --kind crash
 ```
 
-`rm "Show - S01E05".dubtitles.fail` does the same thing by hand; the CLI only adds the listing and
-the containment check.
+`python3 -m dubtitlerr.core.artifact_store ... delete --stem "Show - S01E05" --kind fail` clears
+the marker directly; `clear-crash` does the same with a listing and a library-root containment
+check, so prefer it.
 
 From 0.2.2, stopping the container with `docker stop` no longer leaves this marker, so one now
 means a real crash. A SIGKILL or a power cut during transcription can still leave one. See
@@ -244,8 +246,8 @@ transcribed is skipped from then on.
 
 Before 0.2.2 the entrypoint ignored SIGTERM. `docker stop` waited out its grace period while the
 loops kept starting new episodes, then sent SIGKILL. The episode killed mid-transcription kept
-its `.dubtitles.fail` marker, so every later sweep skipped it. From 0.2.2 the container stops
-softly: it starts no new work, lets the unit already running finish, and exits 0.
+its `fail` poison marker in the artifact store, so every later sweep skipped it. From 0.2.2 the
+container stops softly: it starts no new work, lets the unit already running finish, and exits 0.
 
 1. Set the grace period above your longest single unit of work. That is one episode's
    transcription, or one mux including a cross-device copy. Start with 900 seconds and tune it
@@ -265,9 +267,9 @@ softly: it starts no new work, lets the unit already running finish, and exits 0
 If you run a nightly window, `deploy/` has the systemd units for it. `dubtitlerr-window-open`
 runs `docker start` at 00:00 and `dubtitlerr-window-close` runs `docker stop -t 900` at 10:00
 (America/New_York), each from its own timer. The close unit logs the exit code, prints a warning
-when it is not 0, and deletes orphan `*.muxtmp.mkv` files. It skips any episode that has a
-`.dubtitles.mux-recovery` marker. The units use the author's container name and library path, so
-edit those and the times before you install them.
+when it is not 0, and deletes orphan `*.muxtmp.mkv` files. It skips any episode that has a live
+`mux-recovery` row in the artifact store. The units use the author's container name and library
+path, so edit those and the times before you install them.
 
 Releases up to 0.2.2 check the stop flag only before a glossary step starts, so an acquire step
 that is already running ends at its own end or at `ACQUIRE_TIMEOUT`. Set the grace period
@@ -327,14 +329,15 @@ fresh file. Deleting the file has the same effect as the first boot: paused.
 For an `.mkv` source, the muxed file replaces the original. When the rename crosses
 filesystems, mux falls back to a copy that overwrites the episode in place. If that copy fails
 partway, the episode file may be damaged and the temp file may be the only complete copy. Mux
-then keeps the temp file as `<episode>.muxtmp.mkv.recovered`, writes
-`<episode>.dubtitles.mux-recovery`, and skips that episode on every pass until you resolve it.
-Each pass reports `MERGE PASS INCOMPLETE` while the marker exists.
+then keeps the temp file as `<episode>.muxtmp.mkv.recovered`, writes a `mux-recovery` row in the
+artifact store (formerly `<episode>.dubtitles.mux-recovery`), and skips that episode on every
+pass until you resolve it. Each pass reports `MERGE PASS INCOMPLETE` while the row exists, and
+the warning line prints the exact `get` and `delete` commands for that episode.
 
-1. Read the marker. The `kept` field is the path of the complete copy.
+1. Read the row. The `kept` field is the path of the complete copy.
 
    ```sh
-   cat "Show - S01E05".dubtitles.mux-recovery
+   python3 -m dubtitlerr.core.artifact_store --store "$CONFIG_DIR/artifacts.db" get --stem "Show - S01E05" --kind mux-recovery
    ```
 
 2. Check that the kept file plays and has the tracks you expect.
@@ -343,15 +346,15 @@ Each pass reports `MERGE PASS INCOMPLETE` while the marker exists.
    ffprobe "<the path from kept>"
    ```
 
-3. Move the kept file over the episode's `.mkv`, then delete the marker.
+3. Move the kept file over the episode's `.mkv`, then delete the row.
 
    ```sh
    mv "<the path from kept>" "Show - S01E05.mkv"
-   rm "Show - S01E05".dubtitles.mux-recovery
+   python3 -m dubtitlerr.core.artifact_store --store "$CONFIG_DIR/artifacts.db" delete --stem "Show - S01E05" --kind mux-recovery
    ```
 
 If the kept file does not play either, restore the episode from your own copy of the release and
-delete the marker. The next pass treats the episode like any other.
+delete the row. The next pass treats the episode like any other.
 
 ---
 
@@ -1079,7 +1082,8 @@ Include:
 2. The `repair-summary` artifact
    (`python3 -m dubtitlerr.core.artifact_store get --stem <stem> --kind repair-summary`) — it names
    the model, the rules and the counts.
-3. `.dubtitles.crash.json`, if there is one.
+3. The `crash` artifact
+   (`python3 -m dubtitlerr.core.artifact_store get --stem <stem> --kind crash`), if there is one.
 4. Whether the show is **anchored or unanchored**, plus the `ffprobe` track listing from the
    first recipe on this page.
 

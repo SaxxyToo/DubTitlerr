@@ -120,7 +120,9 @@ ASR_MODEL = os.environ.get("ASR_MODEL", "openai/whisper-1").strip()
 ASR_KEY_ENV = os.environ.get("ASR_KEY_ENV", "OPENROUTER_API_KEY").strip()
 ASR_TIMEOUT = int(os.environ.get("ASR_TIMEOUT", "900"))
 ENDPOINT_MAX_ATTEMPTS = int(os.environ.get("ENDPOINT_MAX_ATTEMPTS", "3"))
-NO_SPEECH_SUFFIX = ".dubtitles.no-speech"
+FAIL_KIND = "fail"
+CRASH_KIND = "crash"
+NO_SPEECH_KIND = "no-speech"
 ASR_REFERER = os.environ.get("ASR_REFERER", "https://github.com/SaxxyToo/dubtitlerr").strip()
 
 
@@ -142,10 +144,10 @@ class EndpointAsrError(Exception):
     """An endpoint transcription failed in a way that must not poison the episode.
 
     Deliberately NOT a RuntimeError: the caller treats RuntimeError as a CUDA-context
-    failure -- it keeps the .dubtitles.fail marker (skip-prior-crash on every later
+    failure -- it keeps the fail poison row (skip-prior-crash on every later
     sweep) and exits the process. An endpoint answering 200 with an error body, a
     truncated upload or a stretch with no speech is a per-episode retry, not a broken
-    GPU context. Raising this takes the non-poison path: marker cleared, crash.json
+    GPU context. Raising this takes the non-poison path: marker cleared, crash record
     written, episode retried on the next sweep.
     """
 
@@ -868,7 +870,7 @@ def _record_cascades(rec, cards, cascades):
         )
 
 
-def _cascade_infeasible(stem, fail, exc):
+def _cascade_infeasible(stem, exc):
     """A2b (strict): the card list cannot satisfy the A5 temporal invariants, so the
     episode is structurally unfixable. No srt/conf/ass is written and nothing is muxed.
     The poison marker goes back down -- process() already cleared the in-flight one after
@@ -877,9 +879,9 @@ def _cascade_infeasible(stem, fail, exc):
     non-RuntimeError branch REMOVES the marker and schedules exactly that retry loop.
     The QC sidecar is still written: a failed episode is when the evidence matters most."""
     try:
-        open(fail, "w").close()
-    except OSError:
-        # Best effort: if the marker cannot be written the episode simply re-runs; the caller's exception must still propagate.
+        artifact_store.put(stem, FAIL_KIND, "")
+    except Exception:  # noqa: BLE001 - best effort: an unwritable marker only means the episode re-runs
+        # If the marker cannot be written the episode simply re-runs; the caller's exception must still propagate.
         pass
     rec = qc.Recorder()
     rec.count("cascade_infeasible")
@@ -906,7 +908,7 @@ def _cascade_infeasible(stem, fail, exc):
     return "cascade-infeasible"
 
 
-def text_stages(stem, words, segments, audio_duration, rec, fail):
+def text_stages(stem, words, segments, audio_duration, rec):
     """Everything downstream of the word list: reflow, glossary correction, the
     hallucination gate, layout re-validation, and the srt/conf write.
 
@@ -924,7 +926,7 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
             words, segments, merge_log=merge_log, audio_duration=audio_duration, cascade_log=cascade_log, cuts=cut_list
         )
     except reflow.CascadeInfeasible as e:
-        return _cascade_infeasible(stem, fail, e)
+        return _cascade_infeasible(stem, e)
     kept, fixes, dropped = [], 0, 0
     known = [*GLOSS["names"], *GLOSS.get("phrases", [])]
     # a word looped across many short cards is invisible to the per-card rules; glossary names and phrases are exempt
@@ -1057,7 +1059,7 @@ def text_stages(stem, words, segments, audio_duration, rec, fail):
 
 def _tier_for_file(v):
     stem = os.path.splitext(v)[0]
-    if os.path.exists(stem + ".dubtitles.fail"):
+    if artifact_store.exists(stem, FAIL_KIND):
         return None  # poison marker wins, exactly as in needs_work()
     stale = stale_tiers(read_stamp(stem + STAMP_SUFFIX), v)
     if not stale:
@@ -1110,7 +1112,6 @@ def process_text(video):
         doc.get("segments") or [],
         doc.get("audio_duration"),
         rec,
-        stem + ".dubtitles.fail",
     )
 
 
@@ -1267,11 +1268,11 @@ def scope_report(files, since, statuses):
             continue
         if key == "delivered":
             reason = "still delivered from an earlier run"
-        elif os.path.exists(stem + ".dubtitles.fail"):
-            reason = "prior crash (.dubtitles.fail)"
+        elif artifact_store.exists(stem, FAIL_KIND):
+            reason = "prior crash (fail marker)"
             rep["crash_marked"].append(v)
-        elif os.path.exists(stem + NO_SPEECH_SUFFIX):
-            reason = "endpoint gave up (.dubtitles.no-speech)"
+        elif artifact_store.exists(stem, NO_SPEECH_KIND):
+            reason = "endpoint gave up (no-speech marker)"
         else:
             reason = statuses.get(v) or "not attempted"
         not_done[reason] = not_done.get(reason, 0) + 1
@@ -1378,10 +1379,10 @@ def _clear_failure_markers(stem):
     counter never resets, and anyone triaging sees a failure on an episode that
     delivered.
     """
-    for suffix in (".dubtitles.crash.json", NO_SPEECH_SUFFIX):
+    for kind in (CRASH_KIND, NO_SPEECH_KIND):
         try:
-            os.remove(out_for(stem + suffix))
-        except OSError:
+            artifact_store.delete(stem, kind)
+        except Exception:  # noqa: BLE001
             # Both markers are advisory; one that cannot be removed is retried next pass rather than failing a run that delivered.
             pass
 
@@ -1768,21 +1769,20 @@ def process(video):
     stamp = read_stamp(stem + STAMP_SUFFIX)
     if stamp_valid(stamp, video):  # muxed, current version -> skip
         return "already-muxed"
-    fail = stem + ".dubtitles.fail"
     # Our own superseded output -> its leftover sidecars are stale too. Skipped for a
     # poison-marked file: that one is never transcribed, so discarding its sidecars would
     # be pure destruction (mux would then have nothing to embed until the marker is
     # cleared by hand).
-    if stale_version_stamp(stamp, video) and not os.path.exists(fail):
+    if stale_version_stamp(stamp, video) and not artifact_store.exists(stem, FAIL_KIND):
         park_stale_sidecars(stem)
     if os.path.exists(stem + ".eng.dubtitles.ass"):  # assembled already -> skip (idempotent)
         return "already-ass"
     if os.environ.get("SKIP_IF_SRT", "1") == "1" and os.path.exists(stem + ".eng.dubtitles.srt"):
         return "already-srt"  # generated, awaiting (a retry of) assemble
-    if os.path.exists(fail):  # a previous attempt hard-crashed on this
-        return "skip-prior-crash"  # file -> skip it (rm the .fail to retry)
-    if os.path.exists(stem + NO_SPEECH_SUFFIX):  # gave up: the endpoint reported no speech
-        return "no-speech"  # rm the marker to retry
+    if artifact_store.exists(stem, FAIL_KIND):  # a previous attempt hard-crashed on this
+        return "skip-prior-crash"  # marker -> skip it (clear it in the store to retry)
+    if artifact_store.exists(stem, NO_SPEECH_KIND):  # gave up: the endpoint reported no speech
+        return "no-speech"  # clear the marker to retry
     idx = eng_audio_index(video)
     if idx is None:
         return "no-eng-dub"  # sub-only release (or no audio) -> skip
@@ -1793,8 +1793,8 @@ def process(video):
         audio_duration = media_duration(wav)  # measured while the wav still exists
 
         try:
-            open(fail, "w").close()  # mark in-flight (a segfault here leaves the
-        except OSError:
+            artifact_store.put(stem, FAIL_KIND, "")  # mark in-flight (a segfault here leaves the
+        except Exception:  # noqa: BLE001
             pass  # marker, so a resume skips this poison file)
         if ASR_BACKEND == "endpoint":
             segments, words = endpoint_transcribe(wav)
@@ -1860,8 +1860,8 @@ def process(video):
                     )
         audio_duration = _apply_audio_start_offset(words, segments, audio_duration, audio_start_time(video, idx))
     try:
-        os.remove(fail)  # transcription finished -> clear in-flight mark
-    except OSError:
+        artifact_store.delete(stem, FAIL_KIND)  # transcription finished -> clear in-flight mark
+    except Exception:  # noqa: BLE001
         # Best effort: a marker that cannot be cleared ages out via the stale-file sweep.
         pass
     # A0: restore sentence punctuation to the WORD LIST before anything splits it. This has
@@ -1883,7 +1883,7 @@ def process(video):
     except Exception as e:
         rec.count("words_missing")
         log("words.json write failed (episode stays GPU-only):", stem, e)
-    return text_stages(stem, words, segments, audio_duration, rec, fail)
+    return text_stages(stem, words, segments, audio_duration, rec)
 
 
 def build_lastrun(show, elapsed_s, episodes_total, transcribed, totals, census, words_totals=None, no_glossary=0):
@@ -1993,11 +1993,11 @@ def main():
             # exactly what it overrides -- but only once: an episode this request already
             # rebuilt (in an earlier resume pass) is not parked and rebuilt again. A poison
             # marker still wins; it is reported, not silently skipped.
-            return not os.path.exists(stem + ".dubtitles.fail") and not _rebuilt_since(stem, _request_since())
+            return not artifact_store.exists(stem, FAIL_KIND) and not _rebuilt_since(stem, _request_since())
         stamp = read_stamp(stem + STAMP_SUFFIX)
         if stamp_valid(stamp, v):
             return False  # muxed at the current version -> done
-        if os.path.exists(stem + ".dubtitles.fail"):
+        if artifact_store.exists(stem, FAIL_KIND):
             return False  # poison marker wins
         # Superseded output: its leftover sidecars are stale, so the checks below must not
         # read them as "done" -- process() discards them and re-transcribes.
@@ -2112,17 +2112,17 @@ def main():
             # marker so the next sweep retries it, and persist a small JSON record of what
             # happened (V2 C15's retry log) for later triage.
             stem = os.path.splitext(v)[0]
-            crash_path = out_for(stem + ".dubtitles.crash.json")
             attempts = 1
             if isinstance(e, EndpointAsrError):
-                try:
-                    with open(crash_path) as fh:
-                        attempts = int(json.load(fh).get("attempts", 0)) + 1
-                except (OSError, ValueError):
-                    attempts = 1
+                doc = artifact_store.get_json(stem, CRASH_KIND)
+                if isinstance(doc, dict):
+                    try:
+                        attempts = int(doc.get("attempts", 0)) + 1
+                    except (TypeError, ValueError):
+                        attempts = 1
             try:
-                os.remove(stem + ".dubtitles.fail")
-            except OSError:
+                artifact_store.delete(stem, FAIL_KIND)
+            except Exception:  # noqa: BLE001
                 # Best effort: the marker is advisory -- the crash counter below is what gates the next attempt.
                 pass
             if isinstance(e, EndpointAsrError) and attempts >= ENDPOINT_MAX_ATTEMPTS:
@@ -2130,22 +2130,27 @@ def main():
                 # for this episode. No empty sidecar is written -- the census keeps showing
                 # it as a gap, which is the truth.
                 try:
-                    with open(out_for(stem + NO_SPEECH_SUFFIX), "w") as fh:
-                        json.dump(
-                            {"path": v, "attempts": attempts, "exc_type": type(e).__name__, "msg": str(e), "time": time.time()},
-                            fh,
-                        )
-                except OSError:
+                    artifact_store.put_text(
+                        stem,
+                        NO_SPEECH_KIND,
+                        json.dumps(
+                            {"path": v, "attempts": attempts, "exc_type": type(e).__name__, "msg": str(e), "time": time.time()}
+                        ),
+                    )
+                except Exception:  # noqa: BLE001
                     # Evidence only: the episode still retires through the marker/counter path if the sidecar cannot be written.
                     pass
                 log(f"  endpoint failed {attempts}x -> marked no-speech, no further retries: {os.path.basename(v)}")
             else:
                 try:
-                    with open(crash_path, "w") as f:
-                        json.dump(
-                            {"path": v, "exc_type": type(e).__name__, "msg": str(e), "time": time.time(), "attempts": attempts}, f
-                        )
-                except OSError:
+                    artifact_store.put_text(
+                        stem,
+                        CRASH_KIND,
+                        json.dumps(
+                            {"path": v, "exc_type": type(e).__name__, "msg": str(e), "time": time.time(), "attempts": attempts}
+                        ),
+                    )
+                except Exception:  # noqa: BLE001
                     # A crash record that cannot be written must not turn a handled failure into an unhandled one.
                     pass
     # V2 C1: per-show run summary (glossaries/<show>.lastrun.json) -- one file per --root
