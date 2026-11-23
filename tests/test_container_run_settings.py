@@ -48,6 +48,33 @@ def test_gen_scope_values_are_not_exported_at_container_start(tmp_path):
     assert res.stdout.splitlines()[-1] == "beam=unset"
 
 
+def test_the_library_paths_and_media_ids_reach_every_child_from_the_boot_block(tmp_path):
+    """S3: these stopped being bootstrap because nothing at boot reads them before settings.json is loaded.
+
+    The boot block is exactly what a stored value needs to reach a reader that caches it at import (review_server.ROOTS,
+    common.MEDIA_UID, merge_pass.sh's ROOT), so it has to land before any loop starts — the tail below stands in for one.
+    """
+    values = {
+        "ANIME_ROOT": "/media/Stored Library",
+        "MERGE_ROOTS": "/media/Stored Library",
+        "MUX_ROOTS": "/media/Stored Library",
+        "MEDIA_UID": 1024,
+        "MEDIA_GID": 101,
+    }
+    res = run_block(tmp_path, values, tail='echo "roots=$ANIME_ROOT|$MERGE_ROOTS|$MUX_ROOTS ids=$MEDIA_UID:$MEDIA_GID"')
+    assert res.stdout.splitlines()[-1] == "roots=/media/Stored Library|/media/Stored Library|/media/Stored Library ids=1024:101"
+    assert "stored settings" in SCRIPT and SCRIPT.index("# <<< stored settings") < SCRIPT.index('sh "$APP_DIR/gen_loop.sh"')
+
+
+def test_every_former_bootstrap_key_is_exported_by_that_block_and_not_before_it():
+    """The claim the reclassification rests on: the export is the step that carries the value, and it runs after the store
+    read (which needs CONFIG_DIR alone) and before the first default and the first child."""
+    start, end = SCRIPT.index("# >>> stored settings"), SCRIPT.index("# <<< stored settings")
+    assert "export --boot --scope container" in SCRIPT[start:end]
+    for key in ("ANIME_ROOT", "MERGE_ROOTS", "MUX_ROOTS", "MEDIA_UID", "MEDIA_GID"):
+        assert key not in SCRIPT[:start], f"{key} would be read before settings.json can be read: that keeps it bootstrap"
+
+
 def test_a_missing_exporter_changes_nothing(tmp_path):
     res = run_block(tmp_path, {"MERGE_INTERVAL": 120}, {"APP_DIR": str(tmp_path / "no-app")})
     assert res.stdout.startswith("interval=600") and res.returncode == 0

@@ -9,6 +9,7 @@ import pytest
 
 from dubtitlerr.review import review_auth
 from dubtitlerr.settings import settings_api as api
+from dubtitlerr.settings import settings_registry as reg
 from dubtitlerr.settings import settings_store as store
 
 SECRET = "plex-secret-7c1e9a52b8d4"  # gitleaks:allow -- test fixture, not a real credential
@@ -84,14 +85,116 @@ def test_one_bad_key_refuses_the_whole_save_and_leaves_both_files_byte_identical
     assert snapshot(tmp_path) == before
 
 
-def test_unknown_and_not_yet_editable_keys_are_refused_by_name(env):
-    status, payload = put(env, {"NOPE": 1, "REPAIR_MODEL": "x", "RESCAN_INTERVAL": 60})
+def test_unknown_and_read_only_keys_are_refused_by_name(env):
+    status, payload = put(
+        env,
+        {
+            "NOPE": 1,
+            "REPAIR_MODEL": "x",
+            "REVIEW_TOKEN": {"clear": True},
+            "REVIEW_ADMIN_TOKEN": {"clear": True},
+            "RESCAN_INTERVAL": 60,
+            "WIKI_HOST_ALLOW": "a",
+        },
+    )
     assert status == 400
     assert payload["errors"] == {
         "NOPE": "unknown setting",
         "REPAIR_MODEL": "set through a Connection",
-        "RESCAN_INTERVAL": "edit in a later release",
+        "REVIEW_TOKEN": "set in the container environment",
+        "REVIEW_ADMIN_TOKEN": "retired: no longer read",
+        "RESCAN_INTERVAL": reg.REGISTRY["RESCAN_INTERVAL"]["read_only_reason"],
+        "WIKI_HOST_ALLOW": reg.REGISTRY["WIKI_HOST_ALLOW"]["read_only_reason"],
     }
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("REVIEW_MAX_CONCURRENT", 8),
+        ("FFMPEG_TIMEOUT", 900),
+        ("VERIFY_TIMEOUT", 600),
+        ("LEN_RATIO_MAX", 2.0),
+        ("DUR_TOL", 3.5),
+        ("IDLE_CHECK_INTERVAL", 30),
+        ("PLEX_PATH", "/mnt/plex"),
+        ("LLM_TIMEOUT_READ", 90.0),
+    ],
+)
+def test_a_newly_editable_key_of_every_category_is_accepted(env, key, value):
+    """Wave 2 graduates the read-only tail: one representative key per category must save and read back."""
+    assert reg.REGISTRY[key]["editable"] is True and reg.REGISTRY[key]["first_wave"] is False
+    status, payload = put(env, {key: value})
+    assert status == 200 and payload["changed"] == [key], payload
+    assert entry(env, key)["value"] == value and entry(env, key)["source"] == "ui"
+
+
+def test_a_newly_editable_value_reaches_the_effective_report(env, tmp_path):
+    """Write via the API, then run the same export the loop evaluates: the value is in effective.env."""
+    from dubtitlerr.review import review_requests, review_settings, review_settings_write
+
+    assert put(env, {"FFMPEG_TIMEOUT": 900})[0] == 200
+    runtime = {k: v for k, v in os.environ.items() if k != "FFMPEG_TIMEOUT"}
+    assignments, _ = review_settings_write.export_assignments(env, scope="gen", plain=True)
+    runtime.update(dict(assignments))
+    report = tmp_path / "effective.env"
+    review_requests.write_effective_env(str(report), runtime)
+    assert review_settings.read_effective_env(str(report))["FFMPEG_TIMEOUT"] == "900"
+    assert entry(env, "FFMPEG_TIMEOUT")["source"] == "ui"
+
+
+def test_the_library_paths_and_media_ids_are_writable_from_the_page(env):
+    """S3: the former bootstrap values are saved like any other row, so a deployment needs no container entry for them."""
+    status, payload = put(
+        env,
+        {
+            "ANIME_ROOT": "/media/Other Library",
+            "MERGE_ROOTS": "/media/Other Library:/data/Staging",
+            "MUX_ROOTS": "/media/Other Library",
+            "MEDIA_UID": 1024,
+            "MEDIA_GID": 101,
+        },
+    )
+    assert status == 200, payload
+    assert payload["restart_required"] == ["ANIME_ROOT", "MEDIA_GID", "MEDIA_UID", "MERGE_ROOTS", "MUX_ROOTS"]
+    got = entry(env, "MERGE_ROOTS")
+    assert got["value"] == "/media/Other Library:/data/Staging" and got["source"] == "ui"
+    assert got["overridden_env"] is False
+    assert got["pending"] is True, "the loops are still running with the old value until the restart"
+
+
+def test_a_stored_library_path_overrides_the_container_value_and_reports_pending_until_restart(env):
+    env["ANIME_ROOT"] = "/media/Container Library"
+    assert entry(env, "ANIME_ROOT")["source"] == "env"
+    assert put(env, {"ANIME_ROOT": "/media/Stored Library"})[0] == 200
+    after = entry(env, "ANIME_ROOT")
+    assert after["value"] == "/media/Stored Library" and after["source"] == "ui"
+    assert after["overridden_env"] is True and after["pending"] is True
+    assert api.handle("POST", "/api/settings/reset", {"keys": ["ANIME_ROOT"]}, environ=env)[0] == 200
+    back = entry(env, "ANIME_ROOT")
+    assert back["value"] == "/media/Container Library" and back["source"] == "env" and back["pending"] is False
+
+
+def test_a_library_path_must_be_absolute_and_a_media_id_not_negative(env):
+    status, payload = put(env, {"ANIME_ROOT": "media/Anime Library", "MEDIA_UID": -1})
+    assert status == 400
+    assert payload["errors"]["ANIME_ROOT"] == "must be an absolute path"
+    assert payload["errors"]["MEDIA_UID"] == "must be at least 0"
+
+
+def test_the_jimaku_key_is_a_write_only_secret_on_the_page(env):
+    status, payload = put(env, {"JIMAKU_API_KEY": "jimaku-7f3a91c2d8e54b60"})
+    assert status == 200 and payload["changed"] == ["JIMAKU_API_KEY"]
+    saved = entry(env, "JIMAKU_API_KEY")
+    assert saved["set"] is True and saved["source"] == "ui" and "value" not in saved
+    assert "jimaku-7f3a91c2d8e54b60" not in json.dumps(api.handle("GET", "/api/settings", environ=env)[1])
+    assert "jimaku-7f3a91c2d8e54b60" not in json.dumps(api.handle("GET", "/api/settings/schema", environ=env)[1])
+
+
+def test_a_jimaku_key_put_is_403_until_login_is_enabled(env, monkeypatch):
+    secrets_off(monkeypatch)
+    status, payload = put(env, {"JIMAKU_API_KEY": "jimaku-7f3a91c2d8e54b60"})
+    assert status == 403 and "login" in payload["error"]
 
 
 def test_a_malformed_body_is_a_400_not_a_crash(env):

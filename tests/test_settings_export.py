@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 
@@ -241,6 +242,102 @@ def test_a_cleared_stage_is_restored_to_the_container_value_by_reset_to_init(cfg
     out = run(cfg, "export", "--scope", "merge", "--reset-to-init").stdout
     assert "else unset DT_CONN_KEY_REPAIR; fi" in out and "else unset REPAIR_BACKEND; fi" in out
     assert not any(line.startswith("export REPAIR_BACKEND=") for line in out.splitlines())
+
+
+# --- S3: the former bootstrap keys are store-manageable, and the stored -> env -> default chain holds for each of them ------
+
+WAVE2_PLAIN = (
+    ("ANIME_ROOT", "/media/Anime Library", "/media/Saved Library", "/media/Env Library"),
+    ("MERGE_ROOTS", "/data/Media/Anime Library", "/data/Saved", "/data/Env"),
+    ("MUX_ROOTS", "/data/Media/Anime Library", "/data/Saved", "/data/Env"),
+    ("MEDIA_UID", 1000, 1024, 1001),
+    ("MEDIA_GID", 100, 101, 102),
+)
+
+
+def exported(cfg, *args, env=None):
+    """{NAME: value} from an export, decoded exactly as the shell would see it (the exporter shell-quotes every value)."""
+    pairs = {}
+    for line in run(cfg, "export", *args, env=env).stdout.splitlines():
+        words = shlex.split(line)
+        if words[0] == "export":  # --plain prints NAME=value, the shell form prints export NAME=value
+            words = words[1:]
+        name, _, value = words[0].partition("=")
+        pairs[name] = value
+    return pairs
+
+
+@pytest.mark.parametrize("key,default,stored,env_value", WAVE2_PLAIN)
+def test_a_former_bootstrap_key_exports_nothing_until_it_is_stored(cfg, key, default, stored, env_value):
+    """Absent from the store: the exporter prints no line, so the container environment or the code default stands — the
+    same silence that made these safe to move, because nothing at boot reads them before the export runs."""
+    res = run(cfg, "export", "--scope", "container", "--plain", env={key: str(env_value)})
+    assert res.returncode == 0 and res.stdout == "", res.stderr
+
+
+@pytest.mark.parametrize("key,default,stored,env_value", WAVE2_PLAIN)
+def test_a_stored_former_bootstrap_key_is_exported_for_the_container_scope(cfg, key, default, stored, env_value):
+    save(cfg, {key: stored})
+    assert exported(cfg, "--scope", "container", "--plain") == {key: str(stored)}
+
+
+@pytest.mark.parametrize("key,default,stored,env_value", WAVE2_PLAIN)
+def test_the_stored_value_wins_over_the_container_value_and_boot_records_the_latter(cfg, key, default, stored, env_value):
+    save(cfg, {key: stored})
+    got = exported(cfg, "--scope", "container", "--boot", env={key: str(env_value)})
+    assert got[key] == str(stored)
+    assert got[f"DT_BOOT_{key}"] == str(env_value)
+
+
+def test_the_stored_env_default_chain_holds_in_a_real_shell(cfg):
+    """What container_run.sh does, then what a child sees: stored, else the container value, else the code default."""
+    saved = {
+        "ANIME_ROOT": "/media/Saved Library",
+        "MERGE_ROOTS": "/data/Saved",
+        "MUX_ROOTS": "/data/Saved",
+        "MEDIA_UID": 1024,
+        "MEDIA_GID": 101,
+    }
+    save(cfg, saved)
+    exporter = f"'{sys.executable}' {EXPORTER} export --scope container"
+    # The defaults the consumer code falls back to, asserted against the registry so the two cannot drift.
+    from dubtitlerr.settings import settings_registry as reg
+
+    defaults = ";".join(f"{k}={reg.REGISTRY[k]['default']}" for k in saved)
+    container_env = "ANIME_ROOT='/media/Env Library' MERGE_ROOTS='/data/Env' MUX_ROOTS='/data/Env' MEDIA_UID=1001 MEDIA_GID=102"
+    script = f"""
+set -u
+export {container_env}
+eval "$({exporter} 2>/dev/null)"
+printf 'stored:%s|%s|%s|%s|%s\\n' "$ANIME_ROOT" "$MERGE_ROOTS" "$MUX_ROOTS" "$MEDIA_UID" "$MEDIA_GID"
+rm -f "$CONFIG_DIR/settings.json"
+export {container_env}
+eval "$({exporter} 2>/dev/null)"
+printf 'env:%s|%s|%s|%s|%s\\n' "$ANIME_ROOT" "$MERGE_ROOTS" "$MUX_ROOTS" "$MEDIA_UID" "$MEDIA_GID"
+unset ANIME_ROOT MERGE_ROOTS MUX_ROOTS MEDIA_UID MEDIA_GID
+eval "$({exporter} 2>/dev/null)"
+printf 'default:%s|%s|%s|%s|%s\\n' \\
+  "${{ANIME_ROOT:-}}" "${{MERGE_ROOTS:-}}" "${{MUX_ROOTS:-}}" "${{MEDIA_UID:-}}" "${{MEDIA_GID:-}}"
+"""
+    env = {k: v for k, v in os.environ.items() if k not in {*saved, "CONFIG_DIR"}}
+    env["CONFIG_DIR"] = str(cfg)
+    got = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=30)
+    lines = got.stdout.splitlines()
+    assert lines[0] == "stored:/media/Saved Library|/data/Saved|/data/Saved|1024|101", got.stderr
+    assert lines[1] == "env:/media/Env Library|/data/Env|/data/Env|1001|102", got.stderr
+    # Nothing stored and nothing in the environment: the exporter prints nothing, so the consumer's own default applies.
+    assert lines[2] == "default:||||", f"{lines[2]} (registry defaults are {defaults})"
+
+
+def test_the_jimaku_key_travels_the_secret_path_like_the_plex_token(cfg):
+    """S3: JIMAKU_API_KEY is a stored secret now, so it reaches the generate loop and no plain or boot export."""
+    save(cfg, {}, {"JIMAKU_API_KEY": "jimaku-key-7f3a91c2"})
+    gen = run(cfg, "export", "--scope", "gen").stdout.splitlines()
+    assert "export JIMAKU_API_KEY=jimaku-key-7f3a91c2" in gen
+    for flag in ("--plain", "--boot"):
+        assert "JIMAKU_API_KEY" not in run(cfg, "export", "--scope", "gen", flag).stdout, flag
+    assert "JIMAKU_API_KEY" not in run(cfg, "export", "--scope", "merge").stdout
+    assert "JIMAKU_API_KEY" not in run(cfg, "export", "--scope", "server", "--secrets-only").stdout
 
 
 def test_merge_scope_does_not_carry_gen_only_secrets(cfg):

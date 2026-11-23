@@ -37,8 +37,10 @@ services:
       - "8842:8842" # repair-review web UI
     environment:
       # --- where things are ---
-      # ANIME_ROOT and MERGE_ROOTS have different built-in defaults; set all
-      # three explicitly rather than relying on them lining up.
+      # The library paths are rows in Settings > General, stored in the config volume, so none of them
+      # requires a line here: a stored value wins over the environment, which wins over the built-in
+      # default. They stay listed because ANIME_ROOT and MERGE_ROOTS have different built-in defaults
+      # and a fresh install has to line them up; edit them in the UI afterwards, or set them here.
       ANIME_ROOT: ${ANIME_ROOT:-/media/Anime Library}
       MERGE_ROOTS: ${ANIME_ROOT:-/media/Anime Library}
       MUX_ROOTS: ${ANIME_ROOT:-/media/Anime Library}
@@ -101,6 +103,8 @@ services:
 
       # --- repair-review web UI auth: accounts live in users.json; visit /review/setup on first start ---
       REVIEW_TOKEN: ${REVIEW_TOKEN:-}
+      # REVIEW_AUTH stays a container value, not a Settings row: it is decided before the settings store is
+      # read, and every secrets write is gated on it (REVIEW_AUTH=off disables authentication entirely).
       REVIEW_AUTH: ${REVIEW_AUTH:-}
       # Optional one-time automated seed for the initial admin account when users.json is empty.
       # If unset, create the first administrator on the /review/setup page in your browser.
@@ -116,6 +120,9 @@ services:
       # Sonarr/Radarr report into this container's paths: "remote=local;remote2=local2".
       # WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:-}
       # REMOTE_PATH_MAPPINGS: ${REMOTE_PATH_MAPPINGS:-}
+      # Jimaku key for the Japanese-reference lane (Settings > Connect, write-only, or seed it here).
+      # Only the generate loop reads it.
+      # JIMAKU_API_KEY: ${JIMAKU_API_KEY:-}
       # The queue, schedule and effective-settings files live under /config by default
       # (requests/, schedule.json, effective.env); change them only together:
       # REQUESTS_DIR: /config/requests
@@ -138,6 +145,8 @@ services:
       # is what lets the page's Restart Now bring the builder back.
 
       # --- ownership of what it writes ---
+      # Settings > General owns these two as well; the lines stay so an .env that already sets them keeps
+      # working. The defaults are the Unraid-common 1000:100, not 99:100.
       MEDIA_UID: ${MEDIA_UID:-1000}
       MEDIA_GID: ${MEDIA_GID:-100}
     volumes:

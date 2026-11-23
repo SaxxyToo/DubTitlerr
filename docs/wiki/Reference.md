@@ -620,15 +620,17 @@ carry — without it the archive is reported as unextractable rather than silent
 
 ## Environment variables
 
+Every variable in this section is editable from **Settings** under its category, at the boundary the Settings row shows. The exceptions are the bootstrap values, the Connection-managed keys and the short list of [rows that stay read-only](#rows-that-stay-read-only).
+
 ### Paths and roots
 
 | Var              | Default                     | Meaning                                            |
 | ---------------- | --------------------------- | -------------------------------------------------- |
 | `MEDIA_ROOT`     | `/media`                    | Media mount                                        |
 | `OUTPUT_ROOT`    | _(empty)_                   | Write sidecars elsewhere than beside the video     |
-| `ANIME_ROOT`     | `/media/Anime Library`      | Root the generate loop walks                       |
-| `MERGE_ROOTS`    | `/data/Media/Anime Library` | Roots the merge pass walks (colon-separated)       |
-| `MUX_ROOTS`      | `/data/Media/Anime Library` | Roots `mux.py` walks                               |
+| `ANIME_ROOT`     | `/media/Anime Library`      | Root the generate loop walks. Editable in Settings > General; requires a restart |
+| `MERGE_ROOTS`    | `/data/Media/Anime Library` | Roots the merge pass walks (colon-separated). Editable in Settings > General; requires a restart |
+| `MUX_ROOTS`      | `/data/Media/Anime Library` | Roots `mux.py` walks. Editable in Settings > General; requires a restart |
 | `ANIME_ORDER`    | `/config/anime_order.txt`   | Show order file; if missing, the builder queues the library tree |
 | `GLOSSARY_DIR`   | `/config/glossaries`        | Per-show glossaries                                |
 | `DECISIONS_DIR`  | `/config/decisions`         | Per-show verdict stores                            |
@@ -638,7 +640,8 @@ carry — without it the archive is reported as unextractable rather than silent
 
 > **`ANIME_ROOT` and `MERGE_ROOTS` have different defaults.** The generate loop defaults to
 > `/media/Anime Library` and the merge pass to `/data/Media/Anime Library`. Set both
-> explicitly; do not rely on either default lining up with the other.
+> explicitly — in Settings > General or in the container environment — and do not rely on
+> either default lining up with the other.
 
 ### Transcription
 
@@ -859,7 +862,7 @@ Every wiki fetch is https-only. A redirect to another scheme is refused before t
 | `DUB_SUFFIX`              | `.eng.dubtitles.srt`     | Sidecar the merge step looks for                                                                  |
 | `REVIEW_GATE_SHOWS`       | _(empty)_                | Shows whose episodes wait for review before muxing                                                |
 | `REVIEW_GATE_STALE_DAYS`  | `7`                      | A hold older than this is reported loudly and **stays held**. It buys a log line, never a release |
-| `MEDIA_UID` / `MEDIA_GID` | `1000` / `100`           | Ownership set on written files                                                                    |
+| `MEDIA_UID` / `MEDIA_GID` | `1000` / `100`           | Ownership set on written files. Editable in Settings > General; requires a restart |
 
 The muxed `Dubtitles` track is appended last and flagged default, so the relative order of the other subtitle tracks is unchanged while players pick it up through the default flag. An MP4 or M4V source is removed only after the remuxed MKV verifies and the stamp writes. If the stamp write itself fails, the new MKV is rolled back and the original file is left untouched, so a failed run always leaves something complete on disk. Plex reads `.ass` sidecars and renders styling and positioning on direct-play clients; transcoding clients burn them in.
 
@@ -870,7 +873,7 @@ The muxed `Dubtitles` track is appended last and flagged default, so the relativ
 | `REVIEW_PORT`           | `8842`                 | Listen port. Editable in Settings > General; requires container restart                                                                           |
 | `REVIEW_BIND`           | `0.0.0.0`              | Listen address. Editable in Settings > General; requires container restart                                                                        |
 | `REVIEW_TOKEN`          | _(retired for web UI)_ | Retired for browser access. On initial startup without an API key file, an existing value is imported once into `/config/apikey` and then retired |
-| `REVIEW_AUTH`           | _(unset)_              | Set to `off` to disable authentication entirely (see Authentication)                                                                              |
+| `REVIEW_AUTH`           | _(unset)_              | Set to `off` to disable authentication entirely (see Authentication). Container environment only: it is decided before the settings store can be read, and every secrets write is gated on it, so the page never offers it |
 | `REVIEW_MAX_CONCURRENT` | `16`                   | Concurrent request cap                                                                                                                            |
 | `REVIEW_STEMS_TTL`      | `30`                   | Seconds an episode listing is cached                                                                                                              |
 | `REVIEW_RESTART`        | `15`                   | Seconds before restarting the server after an exit                                                                                                |
@@ -888,7 +891,7 @@ The muxed `Dubtitles` track is appended last and flagged default, so the relativ
 | `JELLYFIN_URL` / `JELLYFIN_API_KEY` / `JELLYFIN_USER` | _(empty)_ / _(empty)_ / _(empty: every user)_ | Jellyfin direct watch source; an empty user aggregates all users                                                                                                                                        |
 | `PLEX_URL` / `PLEX_TOKEN` / `PLEX_SECTION` | _(empty)_ / _(empty)_ / `7` | Plex refresh and watch source                                                                                                                                                                                             |
 | `PLEX_PATH`                                | _(empty)_                   | Path prefix Plex sees, if it differs                                                                                                                                                                                      |
-| `JIMAKU_API_KEY`                           | _(empty: acquisition off)_  | Free key from jimaku.cc; used by `dubtitlerr.core.refs.acquire` to fetch a Japanese reference track for a show whose release ships none                                                                                   |
+| `JIMAKU_API_KEY`                           | _(empty: acquisition off)_  | Free key from jimaku.cc; used by `dubtitlerr.core.refs.acquire` to fetch a Japanese reference track for a show whose release ships none. Write-only secret in Settings > Connect |
 
 **How a watched show finds its folder:** by the show's TVDB id first — WatchState's
 `parent.guid_tvdb`, the `tvdb://` Guid on the Plex show, or Jellyfin's `ProviderIds.Tvdb` —
@@ -927,20 +930,43 @@ Every environment variable the pipeline reads has a row under **Settings** in th
 
 **Connect** carries more than rows. Besides `PLEX_URL`, `PLEX_TOKEN`, `PLEX_SECTION`, `WATCHSTATE_URL`, `WATCHSTATE_API_KEY`, `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER`, `PLEX_PATH` and the webhook access rows, it holds the **Notifications** panel. Notification providers are a user-defined list stored beside Connections and have no environment variable; see [Notifications](#notifications).
 
+<<<<<<< HEAD
 **Transcription** carries the endpoint model picker. **Fetch endpoint models** posts `{"endpoint": "transcription"}` to `POST /api/settings/models`, probes the saved `ASR_URL` (with `/audio/transcriptions` stripped, at its `/v1/models`), and fills `ASR_MODEL` — only on **Save Changes**. The row also states the hard requirement: the endpoint model must return word timestamps (the `timestamp_granularities[]` parameter). `openai/whisper-1` is the only hosted model that does, it retires on **2027-02-26**, and no hosted replacement returns them; [Choosing an ASR model](Choosing-an-ASR-Model.md#hosted-endpoints-and-a-date-worth-knowing) compares the options. `WHISPER_MODEL` is a local model file rather than a server listing, so it keeps its free-text field.
 
 The first-wave rows are editable. Every other row shows its value and why it cannot be changed here: "Set in the container environment" for the values the container fixes, "Set through a Connection", "Retired: no longer read", or "edit in a later release". For a signed-in user who is not an admin, the rows that would be editable are read-only and say "Only an admin can change settings". **Show Advanced** in the toolbar reveals the rows that rarely change. The bootstrap values always list, under General.
+=======
+Every row the pipeline reads is editable, with two exceptions that the page explains on the row itself. The bootstrap values ("Set in the container environment"), the keys derived from a Connection ("Set through a Connection") and the retired keys ("Retired: no longer read") stay read-only because another surface owns them. A short list of rows the running processes cannot honour also stays read-only, each carrying its own reason (see [Rows that stay read-only](#rows-that-stay-read-only)). For a signed-in user who is not an admin, the rows that would be editable are read-only and say "Only an admin can change settings". **Show Advanced** in the toolbar reveals the rows that rarely change — the tuning knobs are advanced rows, so turn it on to see most of the glossary, repair and transcription thresholds. The bootstrap values always list, under General.
+
+**What the container keeps.** Two values are not editable, and the read order is the reason:
+
+- `REVIEW_AUTH` (authentication mode) is the switch that decides whether the review server enforces roles, and every write to `secrets.json` is gated on it. A page that could set it would make the store's own write path self-authorising: a stolen session could turn authentication off, and turning it back on would depend on the state it may have just replaced. It is read when the server starts, before the page exists, so it stays in the container environment.
+- `TZ` is not a DubTitlerr setting at all: nothing in the pipeline reads it. It reaches the C library (log timestamps, and `time.localtime` for the merge window) from the container runtime, so it belongs to the deployment.
+
+Everything else that used to be "needed before the store can be read" is now a normal row: `ANIME_ROOT`, `MERGE_ROOTS`, `MUX_ROOTS`, `MEDIA_UID` and `MEDIA_GID` under General (stored in `settings.json`, applied at the next restart, and overriding a container value), and `JIMAKU_API_KEY` under Connect as a write-only secret. A deployment that seeds them in the container environment keeps working unchanged: a stored value wins over the environment, the environment wins over the default, and a row with neither falls back to the default above.
+>>>>>>> origin/main
 
 Where a value comes from, in order: what you saved in the UI (**Set here**), else the container's environment (**From the container**), else the built-in default (**Default**). A saved value that hides an environment value reads "Overrides the container value". Resetting a row removes your saved value, so the container value or the default applies again.
 
 Saved values live in `$CONFIG_DIR/settings.json` (values, Connections and stage choices) and `$CONFIG_DIR/secrets.json` (the secrets, mode 0600). Each save keeps one `.prev` copy of each file and writes one log line that names the keys and never a secret value.
 
 | A row says       | The change applies                                                                                                                                                                                                                                                                        |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| nothing special  | at the next show, sweep or merge pass, never in the middle of an episode                                                                                                                                                                                                                  |
-| Restart required | after the builder restarts. The rows you can change that need one are the web port and address, the merge interval and window, the webhook token and path mappings. The read-only rows carry the same badge, for example the sign-in values, the container paths and the tool thresholds. |
+| Restart required | after the builder restarts. The rows you can change that need one are the web port and address, the review server's concurrency and episode-list cache, the merge interval and window, the library roots (`ANIME_ROOT`, `MERGE_ROOTS`, `MUX_ROOTS`), the media ids (`MEDIA_UID`, `MEDIA_GID`), the webhook token and path mappings. The read-only rows carry the same badge, for example the sign-in values, the container paths and the timing-comparison tool thresholds. |
 
 After a save that changed a restart-only row the page offers **Restart Now** and **Restart Later**. Restart Now asks the builder to finish the episode in flight and stop. Restart Later leaves a "Restart pending" banner until the next start. The banner appears whenever a saved restart-only value is not running yet. The container comes back only with a restart policy of `unless-stopped` or `always`, and the supplied `compose.yaml` sets `unless-stopped`.
+
+#### Rows that stay read-only
+
+Eleven rows stay read-only because the running processes cannot honour an edit, and each row says why:
+
+| Row | Why it stays read-only |
+| --- | --- |
+| `ANIME_ORDER` | The watch queue rewrites this file as root, so a saved path could be overwritten by a show list. |
+| `DECISIONS_DIR`, `REQUESTS_DIR`, `SCHEDULE_FILE`, `HEARTBEAT_PATH`, `RESCAN_INTERVAL`, `GLOSSARY_LOCK_WAIT` | The web server is long-lived and reads these at startup, while the loops re-read them at every boundary. A saved value would reach the loops but not the server until the container restarts, so the two would disagree about where requests, verdicts, the schedule or the heartbeat live, or about how long a glossary lock waits. |
+| `WIKI_ALLOW_HTTP` | The web server checks a glossary's `wiki` URL against it in the running process, so a saved value would not reach that check until a restart. |
+| `WIKI_HOST_ALLOW` | No stage reads this value; it is listed for documentation only. |
+| `ACQUIRE_NO_CACHE`, `VERIFY_NO_JOURNAL` | These read presence, not truth: any exported value, including `0`, turns the cache or the journal off. A stored "off" could therefore never be turned back on from the page. |
+
+Everything else in this section's tables is editable from the Settings page. A value saved there takes effect at the boundary the row shows.
 
 **Connections** are named LLM servers: a kind (llama.cpp, Ollama or OpenAI-compatible), a URL, a model, a second model for repair, an extra request body and connect and read timeouts. Each stage (repair, restore, verify, decision, acquire) picks one. A stage with no Connection keeps the container's own settings. Only an admin can save them or run Test.
 
@@ -957,7 +983,7 @@ Rules a saved Connection obeys:
 
 Model choice, in short (the pages linked below argue it): repair tolerates a small 3–4B instruct model, restore runs the same family as repair, and verify, decision and acquire reason over names and need a capable model. The Connections page carries these hints under each stage picker and links [Choosing a repair model](Choosing-a-repair-model.md).
 
-Secrets (the Plex token, the WatchState and Jellyfin keys, the webhook token, Connection keys and notification credentials) are entered only by a signed-in admin. Until login is enabled the page shows "available after login is enabled" and a plain set or not set.
+Secrets (the Plex token, the WatchState and Jellyfin keys, the Jimaku key, the webhook token, Connection keys and notification credentials) are entered only by a signed-in admin. Until login is enabled the page shows "available after login is enabled" and a plain set or not set.
 
 The first start after the upgrade imports the keys an existing `runtime.env` carried: `REPAIR_MODEL`, `VERIFY_BACKEND`, `VERIFY_DECISION_MODEL`, `REQUIRE_ENG` and `ACQUIRE_APPLY`. A `REPAIR_PROFILE` choice becomes the repair stage. The old `RUNTIME_VERIFY_BACKENDS` and `RUNTIME_DECISION_MODELS` opt-in filter still applies to what is imported. The file is renamed `runtime.env.migrated`, or an empty one is written so the import runs once. Under its own `profiles.migrated` marker, each `REPAIR_PROFILES` entry becomes a Connection. `REPAIR_PROFILES`, `RUNTIME_VERIFY_BACKENDS` and `RUNTIME_DECISION_MODELS` are retired: nothing reads them after that, and General lists them while they are still set.
 
