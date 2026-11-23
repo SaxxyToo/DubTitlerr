@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 import store_seed
 
-from dubtitlerr.core import common, decisions, unresolved
+from dubtitlerr.core import artifact_store, common, decisions, unresolved
 from dubtitlerr.review import review_server
 
 # Card texts and queue entries are kept in CORRESPONDENCE on purpose. repair.py only ever
@@ -1593,9 +1593,7 @@ def test_head_on_api_paths_is_gated_the_same_as_get():
 def _strip_ts(stem):
     """Rewrite the queue the way an old build left it: entries with no ts."""
     entries = [{k: v for k, v in e.items() if k != "ts"} for e in unresolved.items(stem)]
-    with open(unresolved.path_for(stem), "w") as f:
-        for e in entries:
-            f.write(json.dumps(e) + "\n")
+    unresolved._rewrite(stem, entries)
 
 
 def _recent_ts(days_ago):
@@ -1612,9 +1610,7 @@ def test_oldest_pending_at_is_the_earliest_entry_ts_among_the_undecided(tmp_path
     rows[1]["ts"] = _recent_ts(4)  # rejected_guard: pending, the oldest
     rows[2]["ts"] = _recent_ts(2)
     rows[3]["ts"] = _recent_ts(6)  # llm_empty is not a primary reason: not counted
-    with open(unresolved.path_for(stem), "w") as f:
-        for e in rows:
-            f.write(json.dumps(e) + "\n")
+    unresolved._rewrite(stem, rows)
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
     assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == rows[1]["ts"]
@@ -1626,28 +1622,26 @@ def test_oldest_pending_at_ignores_a_decided_entry(tmp_path, monkeypatch):
     for e, days in zip(rows, (2, 5, 1, 3)):
         e["ts"] = _recent_ts(days)
     rows[1]["resolved"] = True  # the oldest is settled
-    with open(unresolved.path_for(stem), "w") as f:
-        for e in rows:
-            f.write(json.dumps(e) + "\n")
+    unresolved._rewrite(stem, rows)
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
     assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == rows[0]["ts"]
 
 
-def test_oldest_pending_at_falls_back_to_the_sidecar_mtime_when_no_entry_has_a_ts(tmp_path, monkeypatch):
+def test_oldest_pending_at_falls_back_to_the_store_mtime_when_no_entry_has_a_ts(tmp_path, monkeypatch):
     stem = _episode(tmp_path, "busy")
     _strip_ts(stem)
-    os.utime(unresolved.path_for(stem), (1_700_000_000, 1_700_000_000))
+    artifact_store.touch(stem, "unresolved", 1_700_000_000)
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
     assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == "2023-11-14T22:13:20Z"
 
 
-def test_oldest_pending_at_is_null_when_there_is_no_ts_and_the_file_cannot_be_stat(tmp_path, monkeypatch):
+def test_oldest_pending_at_is_null_when_there_is_no_ts_and_the_store_cannot_be_read(tmp_path, monkeypatch):
     stem = _episode(tmp_path, "busy")
     _strip_ts(stem)
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-    monkeypatch.setattr(review_server.os.path, "getmtime", lambda p: (_ for _ in ()).throw(OSError("gone")))
+    monkeypatch.setattr(artifact_store, "mtime", lambda *a, **k: (_ for _ in ()).throw(OSError("gone")))
 
     assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] is None
 
@@ -1656,10 +1650,10 @@ def test_forget_drops_the_cached_mtime_with_the_cached_queue(tmp_path, monkeypat
     stem = _episode(tmp_path, "busy")
     _strip_ts(stem)
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-    os.utime(unresolved.path_for(stem), (1_700_000_000, 1_700_000_000))
+    artifact_store.touch(stem, "unresolved", 1_700_000_000)
     assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == "2023-11-14T22:13:20Z"
 
-    os.utime(unresolved.path_for(stem), (1_800_000_000, 1_800_000_000))
+    artifact_store.touch(stem, "unresolved", 1_800_000_000)
     review_server.forget(stem)
 
     assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == "2027-01-15T08:00:00Z"

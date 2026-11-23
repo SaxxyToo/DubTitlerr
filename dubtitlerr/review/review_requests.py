@@ -12,6 +12,7 @@ import uuid
 import zoneinfo
 from typing import Any
 
+from dubtitlerr.core import artifact_store
 from dubtitlerr.core.atomic_file import atomic_write, atomic_write_bytes
 
 REQUESTS_DIR = os.environ.get("REQUESTS_DIR", "/config/requests")
@@ -27,41 +28,34 @@ CRASH_RECORD_SUFFIX = ".dubtitles.crash.json"
 # model stack. tests/test_request_accounting.py pins the two strings together.
 CRASH_REASON = "prior crash (.dubtitles.fail)"
 
-# The review queue's on-disk file (see dubtitlerr/core/unresolved.py:SUFFIX). Restated instead of
-# imported because unresolved.py imports common (pysubs2) and this module must stay importable in
-# a minimal app directory -- the same rule atomic_file.py and notify.py follow.
-UNRESOLVED_SUFFIX = ".dubtitles.unresolved.jsonl"
+# The review queue lives in the central artifact store since P39 (see
+# dubtitlerr/core/unresolved.py). artifact_store is stdlib-only and unresolved.py is not
+# (it imports common/pysubs2), so the kind name is restated here rather than imported --
+# the same rule atomic_file.py and notify.py follow.
+UNRESOLVED_KIND = "unresolved"
 
 ALLOWED_BODY_KEYS = frozenset(("show", "season", "episode_re", "require_eng", "webhook", "force"))
 
 
 def unresolved_pending_count(root: str) -> int:
-    """Unresolved review items under ``root``, from the review queue's per-episode JSONL files.
+    """Unresolved review items under ``root``, from the review queue's store rows.
 
     The loops' digest for ``review.pending``: called once per show the sweep already walked, so it
     never adds a second pass over the library. The predicate is unresolved.pending()'s -- an entry
     without ``resolved`` is still open -- and records exactly as that writer emits them, tolerant of
-    a torn final line. An unreadable file or entry counts as nothing rather than raising.
+    a corrupt line. An unreadable store or entry counts as nothing rather than raising.
     """
     total = 0
-    for dirpath, _dirnames, filenames in os.walk(root):
-        for name in filenames:
-            if not name.endswith(UNRESOLVED_SUFFIX):
-                continue
-            try:
-                with open(os.path.join(dirpath, name), encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            entry = json.loads(line)
-                        except ValueError:
-                            continue
-                        if isinstance(entry, dict) and not entry.get("resolved"):
-                            total += 1
-            except OSError:
-                continue
+    try:
+        stems = artifact_store.stems(root=root, kind=UNRESOLVED_KIND)
+    except Exception:
+        return 0
+    for stem in stems:
+        try:
+            entries = artifact_store.read_jsonl(stem, UNRESOLVED_KIND)
+        except Exception:
+            continue
+        total += sum(1 for entry in entries if isinstance(entry, dict) and not entry.get("resolved"))
     return total
 
 

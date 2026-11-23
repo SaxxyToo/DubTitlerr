@@ -1415,9 +1415,13 @@ def test_a_notify_module_that_cannot_be_imported_never_fails_the_request(tmp_pat
 
 
 def test_unresolved_pending_count_counts_open_entries_only(tmp_path):
+    from dubtitlerr.core import artifact_store
+
     queue = tmp_path / "Show"
     queue.mkdir()
-    (queue / "ep01.dubtitles.unresolved.jsonl").write_text(
+    artifact_store.put_text(
+        str(queue / "ep01"),
+        "unresolved",
         "\n".join(
             [
                 json.dumps({"stage": "repair", "reason": "rejected_guard"}),
@@ -1426,16 +1430,18 @@ def test_unresolved_pending_count_counts_open_entries_only(tmp_path):
                 "{torn final line",
             ]
         )
-        + "\n"
+        + "\n",
     )
-    (queue / "ep02.dubtitles.unresolved.jsonl").write_text(json.dumps({"resolved": False}) + "\n")
+    artifact_store.put_text(str(queue / "ep02"), "unresolved", json.dumps({"resolved": False}) + "\n")
     (queue / "notes.txt").write_text("ignored\n")
 
     assert review_requests.unresolved_pending_count(str(tmp_path)) == 3
 
 
 def test_unresolved_count_cli_prints_the_integer(tmp_path):
-    (tmp_path / "ep01.dubtitles.unresolved.jsonl").write_text(json.dumps({"stage": "repair"}) + "\n")
+    from dubtitlerr.core import artifact_store
+
+    artifact_store.put_text(str(tmp_path / "ep01"), "unresolved", json.dumps({"stage": "repair"}) + "\n")
     out = subprocess.run(
         [sys.executable, "-m", "dubtitlerr.review.review_requests", "unresolved-count", str(tmp_path)],
         cwd=str(Path(__file__).resolve().parent.parent),

@@ -15,6 +15,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from dubtitlerr.core import artifact_store
+
 REPO = Path(__file__).resolve().parent.parent
 
 # Recorder standing in for dubtitlerr/core/notify.py. It logs argv and can pretend to be subscribed
@@ -61,6 +63,7 @@ def _package_skeleton(app):
     for pkg in ("", "core", "glossary", "pipeline", "review"):
         (app / "dubtitlerr" / pkg).mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / "dubtitlerr" / pkg / "__init__.py", app / "dubtitlerr" / pkg / "__init__.py")
+    shutil.copy(REPO / "dubtitlerr" / "core" / "artifact_store.py", app / "dubtitlerr" / "core" / "artifact_store.py")
     (app / "shell").mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO / "shell" / "lib.sh", app / "shell" / "lib.sh")
 
@@ -110,7 +113,7 @@ def _run_gen_loop(tmp_path, generate_body, *shows, unresolved=None, **extra_env)
     for show in shows:
         (anime / show).mkdir(parents=True)
     for show, text in (unresolved or {}).items():
-        (anime / show / "ep01.dubtitles.unresolved.jsonl").write_text(text)
+        artifact_store.put_text(str(anime / show / "ep01"), "unresolved", text)
     order = tmp_path / "order.txt"
     order.write_text("".join(f"{show}\n" for show in shows))
     requests_dir = tmp_path / "config" / "requests"

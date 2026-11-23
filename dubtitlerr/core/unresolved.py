@@ -42,24 +42,26 @@ Contract, mirroring qc.write: this is OBSERVABILITY. It must never raise and nev
 episode that otherwise generated correctly. Every entry point returns a bool.
 """
 
-import json
 import os
 import re
 import time
 
-from dubtitlerr.core import decisions, queue_policy
-from dubtitlerr.core.common import SIDECAR_MODE, atomic_write, out_for, read_conf
+from dubtitlerr.core import artifact_store, decisions, queue_policy
+from dubtitlerr.core.common import read_conf
 
 # Imported as a NAME so the CLI resolves a show exactly the way the store and the mux gate
 # do. decisions.py imports stdlib plus common, and common imports nothing from this repo
 # (it is the leaf), so this cannot cycle back through here.
 from dubtitlerr.core.decisions import show_for
 
-SUFFIX = ".dubtitles.unresolved.jsonl"
-# P33: the counters P33 keeps beside the (now bounded) evidence log, and the bounded audit the
-# expiry/undo path writes. Same window as the queue policy: nothing here grows forever.
-COUNTER_SUFFIX = ".dubtitles.unresolved.counters.json"
-AUDIT_SUFFIX = ".dubtitles.unresolved.audit.jsonl"
+# Inner artifacts of the review queue (P39). They used to be three files beside the media --
+# ``.dubtitles.unresolved.jsonl``, ``.dubtitles.unresolved.counters.json`` and
+# ``.dubtitles.unresolved.audit.jsonl`` -- and now live only in the central artifact store,
+# keyed by episode stem. One JSON object per line for the queue and its audit, so the
+# ``items()`` contract and the P33 bound are exactly what they were.
+KIND = "unresolved"
+COUNTER_KIND = "unresolved.counters"
+AUDIT_KIND = "unresolved.audit"
 SAMPLE_CAP = queue_policy.SAMPLE_CAP
 QUEUE_MAX = queue_policy.QUEUE_MAX
 EXPIRY_DAYS = queue_policy.EXPIRY_DAYS
@@ -136,56 +138,32 @@ PRIMARY = (
 )
 
 
-def path_for(stem: str) -> str:
-    return out_for(stem + SUFFIX)
-
-
 def items(stem: str) -> list:
     """Every entry, resolved and pending. Returns [] rather than raising.
 
-    JSONL, one entry per line. A trailing partial line -- the only thing a crash mid-append
-    can produce -- is skipped, so a torn write costs the last entry rather than the file."""
-    out = []
+    JSONL, one entry per line, held in the artifact store. A corrupt line is skipped, so a
+    torn or hand-edited payload costs that entry rather than the queue."""
     try:
-        with open(path_for(stem), encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    e = json.loads(line)
-                except ValueError:
-                    continue  # torn final line; everything before it is intact
-                if isinstance(e, dict):
-                    out.append(e)
-    except OSError:
+        return artifact_store.read_jsonl(stem, KIND)
+    except Exception:
+        # Observability, not a dependency: an unreadable store reads as an empty queue.
         return []
-    return out
 
 
 _WORD = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
 
 
-def counter_path(stem: str) -> str:
-    return out_for(stem + COUNTER_SUFFIX)
-
-
-def audit_path(stem: str) -> str:
-    return out_for(stem + AUDIT_SUFFIX)
-
-
 def _load_counters(stem: str) -> dict:
     try:
-        with open(counter_path(stem), encoding="utf-8") as f:
-            doc = json.load(f)
-        if isinstance(doc, dict):
-            for key in ("counts", "days", "sampled", "sample_day"):
-                if not isinstance(doc.get(key), dict):
-                    doc[key] = {}
-            return doc
-    except (OSError, ValueError):
-        # A missing or corrupt state doc falls through to the fresh document built above.
-        pass
+        doc = artifact_store.get_json(stem, COUNTER_KIND)
+    except Exception:
+        doc = None
+    if isinstance(doc, dict):
+        for key in ("counts", "days", "sampled", "sample_day"):
+            if not isinstance(doc.get(key), dict):
+                doc[key] = {}
+        return doc
+    # A missing or corrupt state doc falls through to the fresh document built here.
     return {"counts": {}, "days": {}, "sampled": {}, "sample_day": {}}
 
 
@@ -198,10 +176,13 @@ def _trim_counters(doc: dict, days: int = EXPIRY_DAYS + 1) -> None:
 
 
 def _save_counters(stem: str, doc: dict) -> bool:
-    def render(f):
-        json.dump(doc, f, ensure_ascii=False, sort_keys=True)
-
-    return atomic_write(counter_path(stem), render, quiet=True)
+    try:
+        artifact_store.put_json(stem, COUNTER_KIND, doc)
+        return True
+    except Exception:
+        # Same contract as the file writer: a counter that cannot be stored is a False
+        # return, never an exception on an episode that otherwise generated.
+        return False
 
 
 def _count_and_sample(stem: str, stage: str, reason: str, day: str) -> tuple[bool, bool]:
@@ -247,11 +228,23 @@ def metrics(stem: str) -> dict:
 
 def audit(stem: str, limit: int = 50) -> list:
     """Newest-first queue audit (expiry, undo), bounded by queue_policy.AUDIT_MAX."""
-    return queue_policy.audit_read(audit_path(stem), limit)
+    try:
+        return queue_policy.audit_records_read(artifact_store.read_jsonl(stem, AUDIT_KIND), limit)
+    except Exception:
+        return []
 
 
 def _audit(stem: str, records: list) -> bool:
-    return queue_policy.audit_append(audit_path(stem), records)
+    """Append to the bounded audit ring in the store. Never raises."""
+    records = [r for r in (records or []) if isinstance(r, dict)]
+    if not records:
+        return False
+    try:
+        existing = artifact_store.read_jsonl(stem, AUDIT_KIND)
+        artifact_store.write_jsonl(stem, AUDIT_KIND, queue_policy.audit_records_append(existing, records))
+        return True
+    except Exception:
+        return False
 
 
 def expire(stem: str, now=None, days: float = EXPIRY_DAYS) -> dict:
@@ -564,12 +557,12 @@ def undecided(entries: list, store: dict) -> list:
 
 
 def _rewrite(stem: str, doc: list) -> bool:
-    """Whole-file replace, used only by resolve(). Written through common.atomic_write."""
-    def render(f):
-        for e in doc:
-            f.write(json.dumps(e, ensure_ascii=False) + "\n")
-
-    return atomic_write(path_for(stem), render, quiet=True)
+    """Replace the whole queue payload, used by resolve()/expire(). One store transaction."""
+    try:
+        artifact_store.write_jsonl(stem, KIND, doc)
+        return True
+    except Exception:
+        return False
 
 
 def record(stem: str, stage: str, reason: str, **fields) -> bool:
@@ -584,28 +577,18 @@ def record(stem: str, stage: str, reason: str, **fields) -> bool:
     entry = {"stage": stage, "reason": reason, "resolved": False, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     entry.update({k: v for k, v in fields.items() if v is not None})
     day = entry["ts"][:10]
-    counted, keep = _count_and_sample(stem, stage, reason, day)
-    if not keep:
-        return counted
-    path = path_for(stem)
     try:
-        # O(1) append. The array version re-read and re-wrote the whole file per card --
-        # O(n^2) I/O, and one CIFS round-trip each, on a path that fires ~86x per episode.
-        exists = os.path.exists(path)
-        line = (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
-        with open(path, "a+b") as f:
-            # A crash mid-append leaves an unterminated tail. Writing straight after it would join this record to the broken
-            # bytes on one line and lose BOTH; start on a fresh line instead and keep the damaged bytes (items() skips them).
-            # One write() call, so the newline and the record go out together.
-            if f.seek(0, os.SEEK_END):
-                f.seek(-1, os.SEEK_END)
-                if f.read(1) != b"\n":
-                    line = b"\n" + line
-            f.write(line)
-        if not exists:
-            os.chmod(path, SIDECAR_MODE)  # only the creator sets the mode
+        counted, keep = _count_and_sample(stem, stage, reason, day)
+        if not keep:
+            return counted
+        # The store's append is one read-modify-write under its own transaction, so a torn
+        # tail cannot happen and two writers cannot lose each other's line. The queue is
+        # bounded by P33, so rewriting the row is cheap at this size.
+        artifact_store.append_jsonl(stem, KIND, entry)
         return True
-    except (OSError, ValueError):
+    except Exception:
+        # The module's contract: observability never fails an episode that otherwise
+        # generated. Any store failure here is a False return, never a traceback.
         return False
 
 
@@ -739,7 +722,6 @@ def _record_verdict(stem: str, e: dict, ans: str, note: str) -> bool:
 
 def main(argv=None):
     import argparse
-    import glob as _glob
 
     ap = argparse.ArgumentParser(description="Review subtitle-quality cases the pipeline could not settle.")
     ap.add_argument("target", help="an episode stem, or a directory to walk")
@@ -747,11 +729,12 @@ def main(argv=None):
     ap.add_argument("--all", action="store_true", help="also list entries dismissed as large changes (REPAIR_AUTO_DISMISS_WORDS)")
     a = ap.parse_args(argv)
 
-    stems = (
-        [a.target]
-        if os.path.exists(a.target + SUFFIX)
-        else [p[: -len(SUFFIX)] for p in sorted(_glob.glob(os.path.join(a.target, "**", "*" + SUFFIX), recursive=True))]
-    )
+    # The queue lives in the store now, so discovery asks the store for the stems holding an
+    # ``unresolved`` row under the target directory. A target that is itself a stem wins.
+    try:
+        stems = [a.target] if artifact_store.exists(a.target, KIND) else artifact_store.stems(root=a.target, kind=KIND)
+    except Exception:
+        stems = []
     total = 0
     for stem in stems:
         todo = pending(stem)

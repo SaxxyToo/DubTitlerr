@@ -1337,12 +1337,14 @@ def test_ref_classic_restores_the_legacy_merged_pool(tmp_path, monkeypatch):
 
 
 def test_legacy_queue_entries_without_ref_fields_still_read(tmp_path):
-    """Backward compatibility: files written before R2 must keep reading fine."""
+    """Backward compatibility: entries written before R2 must keep reading fine."""
+    from dubtitlerr.core import artifact_store
+
     stem = str(tmp_path / "ep_legacy")
     line = json.dumps(
         {"stage": "repair_applied", "reason": "accepted", "original_text": "a", "proposed_text": "b", "resolved": False}
     )
-    open(unresolved.path_for(stem), "w").write(line + "\n")
+    artifact_store.put_text(stem, "unresolved", line + "\n")
     items = unresolved.items(stem)
     assert len(items) == 1 and items[0]["proposed_text"] == "b"
     assert items[0].get("ref_role") is None
@@ -2360,12 +2362,12 @@ def test_a_second_repair_pass_does_not_re_queue_a_line_already_in_the_queue(tmp_
     monkeypatch.setattr(decisions, "decisions_for", lambda *a, **k: ({}, "Show"))
 
     repair.process(conf_path)
-    first = os.path.getmtime(unresolved.path_for(stem))
+    first = artifact_store.mtime(stem, "unresolved")
     repair.process(conf_path)
 
     queued = [e for e in unresolved.items(stem) if e["stage"] == "repair_applied"]
     assert len(queued) == 1, "a second sweep must not re-queue a line the reviewer already has"
-    assert os.path.getmtime(unresolved.path_for(stem)) == first, "and must not refresh the staleness clock"
+    assert artifact_store.mtime(stem, "unresolved") == first, "and must not refresh the staleness clock"
 
 
 def test_a_changed_proposal_supersedes_the_pending_one_for_that_line(tmp_path, monkeypatch):
@@ -2963,7 +2965,7 @@ def test_an_approval_orphaned_by_a_new_proposal_is_queued_not_silent(tmp_path, m
     assert repair.process(conf_path) == "repaired"
     summary = _repair_summary(stem)
     assert summary["verdict_stale_proposal"] == 1, "the orphaned approval must be counted"
-    queued = [json.loads(x) for x in open(stem + ".dubtitles.unresolved.jsonl") if x.strip()]
+    queued = [q for q in unresolved.items(stem) if q.get("reason") == "verdict_stale_proposal"]
     stale = [q for q in queued if q.get("reason") == "verdict_stale_proposal"]
     assert stale, "and queued, so the reviewer can rule on the new wording"
     assert stale[0]["approved_text"] == "I saw Spandam", "what they had approved"
@@ -3095,7 +3097,7 @@ def test_a_dead_backend_refuses_the_episode_instead_of_rebuilding_raw_asr(tmp_pa
 
     assert repair.process(conf_path) == "refused"
     assert open(srt_path, encoding="utf-8").read() == shipped, "the shipped srt must not be rewritten"
-    assert not os.path.exists(stem + ".dubtitles.unresolved.jsonl"), "a dead endpoint is not a review item"
+    assert not artifact_store.exists(stem, "unresolved"), "a dead endpoint is not a review item"
     assert common.read_stages(stem)["repair"]["outcome"] == "backend-unreachable"
 
 
@@ -3901,7 +3903,7 @@ def test_one_deterministic_400_in_five_lines_ships_the_other_four(tmp_path, monk
     summary = _repair_summary(stem)
     assert summary["repaired"] == 4 and summary["rejected_4xx"] == 1 and summary["unreachable"] == 0
     assert summary["llm_empty"] == 1  # the rejected line lands in the existing llm_empty bucket
-    queued = [json.loads(line) for line in open(stem + ".dubtitles.unresolved.jsonl")]
+    queued = unresolved.items(stem)
     empties = [q for q in queued if q["reason"] == "llm_empty"]
     assert len(empties) == 1 and empties[0]["original_text"] == "garbled line 2"
 
