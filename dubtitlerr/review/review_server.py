@@ -56,7 +56,7 @@ import threading
 import time
 from pathlib import Path
 
-from dubtitlerr.core import common, decisions, media_select, unresolved
+from dubtitlerr.core import artifact_store, common, decisions, media_select, unresolved
 from dubtitlerr.core.common import log
 from dubtitlerr.core.decisions import show_for
 from dubtitlerr.review import (
@@ -108,7 +108,7 @@ STEMS_TTL = float(os.environ.get("REVIEW_STEMS_TTL", "30"))
 STEMS_TTL_FACTOR = float(os.environ.get("REVIEW_STEMS_TTL_FACTOR", "20"))
 _STEMS_CACHE = None  # (expiry, stems, filled_at): filled_at is the walk START, time.monotonic(), for /api/status's cache_age_s
 # One episode's open queue, filled by the same pass that discovers the episodes and dropped
-# when that pass is redone. The index reads every episode's queue jsonl AND its conf.json --
+# when that pass is redone. The index reads every episode's queue artifact AND its conf.json --
 # ~200s across the live library, on top of the walk.
 #
 # NOT validated per request. The first version stat-ed both files each time to check
@@ -122,7 +122,7 @@ _STEMS_CACHE = None  # (expiry, stems, filled_at): filled_at is the walk START, 
 # Deliberately holds the entries BEFORE the decisions store is consulted. The store is one
 # small file read per request, so a verdict shows up everywhere immediately.
 _QUEUE_CACHE: dict = {}
-# stem -> queue sidecar mtime as ISO 8601 UTC (None when unreadable). Filled and dropped with _QUEUE_CACHE: a stat per episode
+# stem -> queue artifact updated_at as ISO 8601 UTC (None when unreadable). Filled and dropped with _QUEUE_CACHE: a stat
 # on every index call is exactly the touch that cache exists to avoid.
 _QUEUE_MTIME: dict = {}
 # A miss sentinel for the two readers below, and it has to be an object rather than None:
@@ -333,7 +333,18 @@ def known_stems() -> list:
                 if not os.path.realpath(full).startswith(real_root + os.sep):
                     continue
                 out.append(full[: -len(CONF_SUFFIX)])
-    stems = sorted(out)
+        # Episodes whose queue row is in the store but whose conf.json the walk did not see
+        # are still reviewable -- and once the conf kind moves into the store (P39-B2) this
+        # becomes the walk's only discovery. Same symlink rule: the store key is a path
+        # written by the pipeline, not a client's, but it still may not point outside a root.
+        try:
+            for stem in artifact_store.stems(root=root, kind=unresolved.KIND):
+                if os.path.realpath(stem).startswith(real_root + os.sep):
+                    out.append(stem)
+        except Exception:
+            # A store that cannot be read contributes no extra stems; the conf walk still does.
+            pass
+    stems = sorted(set(out))
     # Filled together, dropped together. Nothing else expires a queue entry, so a re-repaired
     # episode would otherwise keep its old queue until the container restarted.
     _QUEUE_CACHE.clear()
@@ -363,15 +374,16 @@ def _store_for(stem: str, cache: dict) -> dict:
 
 
 def queue_written_at(stem: str):
-    """When this episode's queue sidecar was last written, ISO 8601 UTC, or None: the fallback for entries that carry no ts.
-    Cached per walk, like the entries it describes."""
+    """When this episode's queue was last written in the store, ISO 8601 UTC, or None: the fallback for entries that carry no
+    ts. Cached per walk, like the entries it describes."""
     cached = _QUEUE_MTIME.get(stem, _CACHE_MISS)
     if cached is not _CACHE_MISS:
         return cached
     try:
-        when = datetime.datetime.fromtimestamp(os.path.getmtime(unresolved.path_for(stem)), datetime.timezone.utc)
-        value = when.strftime("%Y-%m-%dT%H:%M:%SZ")
-    except OSError:
+        updated_at = artifact_store.mtime(stem, unresolved.KIND)
+        when = datetime.datetime.fromtimestamp(updated_at, datetime.timezone.utc) if updated_at else None
+        value = when.strftime("%Y-%m-%dT%H:%M:%SZ") if when else None
+    except Exception:
         value = None
     _QUEUE_MTIME[stem] = value
     return value

@@ -487,14 +487,15 @@ def held_for_review(stem):
         pend = unresolved.live_only(stem, pend)
         if not pend:
             return False
-    # Entries carry no timestamp, so the sidecar's mtime is the only staleness signal
+    # Entries carry no timestamp, so the queue's store mtime is the only staleness signal
     # available -- a deliberate approximation, and it moves whenever repair appends, which
     # makes it "time since the queue last changed" rather than "time since the oldest
     # entry". Good enough to surface a backlog; not a clock anything branches on.
     try:
-        age_days = (time.time() - os.path.getmtime(unresolved.path_for(stem))) / 86400.0
-    except OSError:
-        age_days = 0.0
+        updated_at = artifact_store.mtime(stem, "unresolved")
+    except Exception:
+        updated_at = None
+    age_days = (time.time() - updated_at) / 86400.0 if updated_at else 0.0
     if age_days > REVIEW_GATE_STALE_DAYS:
         log(
             f"  STALLED: {os.path.basename(stem)} held for review {age_days:.0f}d "

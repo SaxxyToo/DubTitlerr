@@ -30,10 +30,10 @@ import hashlib
 import json
 import os
 
-from dubtitlerr.core import decisions, queue_policy, unresolved
+from dubtitlerr.core import artifact_store, decisions, queue_policy, unresolved
 from dubtitlerr.glossary import review_policy
 
-AUDIT_SUFFIX = ".json.review-audit.jsonl"
+AUDIT_SUFFIX = ".json.review-audit.jsonl"  # the glossary's audit; it stays beside the glossary file
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 
@@ -52,20 +52,24 @@ def media_roots() -> list:
     return roots or ["/media"]
 
 
-def _audit_files(limit: int) -> list:
-    out = []
+def _gloss_audit_files(limit: int) -> list:
     try:
-        out += sorted(glob.glob(os.path.join(glossary_dir(), "*" + AUDIT_SUFFIX)))[:limit]
+        return sorted(glob.glob(os.path.join(glossary_dir(), "*" + AUDIT_SUFFIX)))[:limit]
     except OSError:
-        # No glossary audit dir (or unreadable): the media-root scan below still contributes.
-        pass
+        # No glossary audit dir (or unreadable): the queue sources below still contribute.
+        return []
+
+
+def _queue_audit_stems() -> list:
+    """Every episode stem holding a queue audit row, limited to the configured media roots."""
+    stems = []
     for root in media_roots():
         try:
-            out += sorted(glob.glob(os.path.join(root, "**", "*" + unresolved.AUDIT_SUFFIX), recursive=True))[:limit]
-        except OSError:
-            # An unreadable media root contributes no files; the other roots still do.
+            stems += artifact_store.stems(root=root, kind=unresolved.AUDIT_KIND)
+        except Exception:
+            # An unreadable store contributes no rows; the glossary files still do.
             pass
-    return out
+    return sorted(set(stems))
 
 
 def item_id(kind: str, target: str, at, extra: str = "") -> str:
@@ -128,24 +132,22 @@ def feed(limit: int = DEFAULT_LIMIT, show: str = "") -> dict:
     except (TypeError, ValueError):
         limit = DEFAULT_LIMIT
     items: list = []
-    for path in _audit_files(limit):
-        if path.endswith(AUDIT_SUFFIX):
-            gloss_path = path[: -len(AUDIT_SUFFIX)]
-            try:
-                with open(gloss_path, encoding="utf-8") as f:
-                    gloss_show = str((json.load(f) or {}).get("show") or "")
-            except (OSError, ValueError, TypeError, AttributeError):
-                gloss_show = ""
-            for rec in queue_policy.audit_read(path, limit):
-                if isinstance(rec, dict) and rec.get("term"):
-                    item = _gloss_item(rec)
-                    item["show"] = item["show"] or gloss_show
-                    items.append(item)
-        elif path.endswith(unresolved.AUDIT_SUFFIX):
-            stem = path[: -len(unresolved.AUDIT_SUFFIX)]
-            for rec in queue_policy.audit_read(path, limit):
-                if isinstance(rec, dict):
-                    items.append(_queue_item(rec, stem))
+    for path in _gloss_audit_files(limit):
+        gloss_path = path[: -len(AUDIT_SUFFIX)]
+        try:
+            with open(gloss_path, encoding="utf-8") as f:
+                gloss_show = str((json.load(f) or {}).get("show") or "")
+        except (OSError, ValueError, TypeError, AttributeError):
+            gloss_show = ""
+        for rec in queue_policy.audit_read(path, limit):
+            if isinstance(rec, dict) and rec.get("term"):
+                item = _gloss_item(rec)
+                item["show"] = item["show"] or gloss_show
+                items.append(item)
+    for stem in _queue_audit_stems():
+        for rec in unresolved.audit(stem, limit):
+            if isinstance(rec, dict):
+                items.append(_queue_item(rec, stem))
     if show:
         wanted = show.strip().casefold()
         items = [i for i in items if str(i.get("show") or "").casefold() == wanted]
