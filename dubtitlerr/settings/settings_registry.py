@@ -172,8 +172,8 @@ _wave('ACQUIRE_MIN_SIM', 'glossary', 'Acquire similarity floor', 'Minimum simila
 _wave('VERIFY_DECISION_TAU', 'glossary', 'Decision confidence floor', 'Confidence a decision-model verdict needs before it is trusted.', 'float', 0.5, 'gen', 'next_show', advanced=True, min=0, max=1)
 _wave('DECISIONS_APPLY', 'repair', 'Apply stored decisions', 'Use the rulings you already made when repairing.', 'bool', True, 'merge', 'next_merge_pass')
 _wave('REPAIR_UNANCHORED', 'repair', 'Unanchored repair', 'Let repair fix lines that no glossary entry anchors; changes many more lines.', 'bool', False, 'merge', 'next_merge_pass')
-_wave('RESTORE_PUNCTUATION', 'repair', 'Restore punctuation', 'Run the pass that puts punctuation back into transcribed dialogue.', 'bool', True, 'merge', 'next_merge_pass')
-_wave('REPAIR_AUTO_DISMISS_WORDS', 'repair', 'Auto-dismiss word change', 'Word-change size above which a rejected repair is hidden from the review queue.', 'int', 6, 'merge', 'next_merge_pass', min=0, max=1000)
+_wave('RESTORE_PUNCTUATION', 'repair', 'Restore punctuation', 'Run the pass that puts punctuation back into transcribed dialogue.', 'bool', True, ['gen', 'merge'], 'next_show')
+_wave('REPAIR_AUTO_DISMISS_WORDS', 'repair', 'Auto-dismiss word change', 'Word-change size above which a rejected repair or punctuation proposal is hidden from the review queue.', 'int', 6, ['gen', 'merge'], 'next_show', min=0, max=1000)
 _wave('REPAIR_KEEP_NAME_PARTS', 'repair', 'Keep name parts', 'Stop repair from dropping part of a multi-word name the glossary knows.', 'bool', True, 'merge', 'next_merge_pass')
 _wave('REPAIR_EPISODE_DEADLINE', 'repair', 'Episode repair deadline (s)', 'Seconds repair may spend on one episode before giving up; 0 disables the limit.', 'int', 3600, 'merge', 'next_merge_pass', advanced=True, min=0, max=604800)
 _wave('DUB_FANSUB_FONT', 'output', 'Match the fansub font', 'Reuse the font the original fansub track asked for on merged signs.', 'bool', True, 'merge', 'next_merge_pass')
@@ -186,7 +186,7 @@ _wave('GATE_FIX', 'output', 'Repair a gate refusal', 'On a publish-gate refusal,
 _wave('PRESENTATION_REPASS', 'output', 'Re-pass card structure', 'Rebuild a delivered episode card structure and display timing from its word timestamps, once per presentation epoch, before repair and mux skip it. Off leaves delivered files untouched.', 'bool', True, 'merge', 'next_merge_pass')
 _wave('RESTORATION_REPASS', 'output', 'Restore card presentation', 'Restore punctuation, capitalisation, spacing and house style on a delivered episode once per restoration epoch, before repair and mux skip it. Off leaves delivered files untouched.', 'bool', True, 'merge', 'next_merge_pass')
 _wave('RESTORATION_PASS', 'output', 'Restore card text', 'Run the punctuation, capitalisation, spacing and house-style pass itself. Off leaves every card as the source produced it.', 'bool', True, 'merge', 'next_merge_pass')
-_wave('SIDECAR_SUFFIX', 'output', 'Sidecar filename suffix', 'Sidecar mode only: the text between the episode name and the subtitle extension, e.g. ".dub.en" gives Episode.dub.en.srt.', 'string', '.eng.dubtitles', 'merge', 'next_merge_pass', pattern=r"[.A-Za-z0-9_-]{0,64}", pattern_help='use a filename suffix such as .dub.en')
+_wave('SIDECAR_SUFFIX', 'output', 'Sidecar filename suffix', 'Sidecar mode only: the text between the episode name and the subtitle extension, e.g. ".dub.en" gives Episode.dub.en.srt. The builder also reads it to park a delivered sidecar on a forced rebuild.', 'string', '.eng.dubtitles', ['gen', 'merge'], 'next_show', pattern=r"[.A-Za-z0-9_-]{0,64}", pattern_help='use a filename suffix such as .dub.en')
 _wave('ADOPT_DUB_EN', 'output', 'Adopt .dub.en sidecars', 'Feed an existing .dub.en.srt/.ass from another pipeline through repair and signs merge instead of ignoring it. Off: the pass never moves files it did not produce.', 'bool', False, 'merge', 'next_merge_pass')
 _wave('MUX_KEEP_ALL_SUBS', 'output', 'Keep all subtitle tracks', 'Keep every embedded subtitle track when muxing; off applies the KEEP_LANGS whitelist, which can drop a mislabeled English track.', 'bool', False, 'merge', 'next_merge_pass')
 _wave('MERGE_INTERVAL', 'output', 'Merge interval (s)', 'Seconds between merge passes.', 'int', 600, 'container', 'restart', min=1, max=604800)
@@ -328,8 +328,8 @@ REPAIR_REQUEST_DEADLINE^repair^int^300^merge^next_merge_pass^-^Request deadline 
 REPAIR_RETRY_SLEEP_BUDGET^repair^int^600^merge^next_merge_pass^-^Retry sleep budget (s)^Total back-off time per episode.
 REPAIR_TRANSPORT_RETRIES^repair^int^2^merge^next_merge_pass^-^Transport retries^Retries after a network failure.
 REPAIR_UNREACHABLE_REFUSE_PCT^repair^int^10^merge^next_merge_pass^-^Unreachable refusal percent^Share of unreachable calls that makes repair refuse the episode.
-RESTORE_MAX_TOKENS^repair^int^2048^merge^next_merge_pass^-^Restore token budget^Largest reply punctuation restoration asks for.
-RESTORE_MIN_RUN^repair^int^2^merge^next_merge_pass^-^Restore minimum run^Shortest unpunctuated run that is restored.
+RESTORE_MAX_TOKENS^repair^int^2048^gen,merge^next_show^-^Restore token budget^Largest reply punctuation restoration asks for.
+RESTORE_MIN_RUN^repair^int^2^gen,merge^next_show^-^Restore minimum run^Shortest unpunctuated run that is restored.
 LLM_TIMEOUT_CONNECT^connections^float^10^gen,merge^next_show^-^LLM connect timeout (s)^Connect timeout for the shared LLM client.
 LLM_TIMEOUT_READ^connections^float^120^gen,merge^next_show^-^LLM read timeout (s)^Read timeout for the shared LLM client.
 REPAIR_BACKEND^connections^enum^"llamacpp"^merge^next_merge_pass^connections^Repair backend^Derived from the repair Connection.

@@ -1236,14 +1236,24 @@ textarea {
   fill: none;
   opacity: 0.95;
 }
+.band-scrub {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  top: 6%;
+  height: 74%;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+}
 .band-playhead {
   position: absolute;
+  left: 4%;
   top: 6%;
   bottom: 18%;
   width: 2px;
   transform: translateX(-50%);
   pointer-events: none;
-  transition: left 0.12s linear;
 }
 .band-line {
   position: absolute;
