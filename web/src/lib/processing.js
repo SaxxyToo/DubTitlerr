@@ -3,7 +3,7 @@
 
 /** @typedef {{state?: string, by?: string | null, at?: string | null, default?: boolean, error?: string}} Processing */
 
-export const PROCESSING_STATES = /** @type {const} */ (['running', 'paused', 'stopped']);
+const PROCESSING_STATES = /** @type {const} */ (['running', 'paused', 'stopped']);
 
 /** @type {Record<'running' | 'paused' | 'stopped', string>} */
 const LABELS = {

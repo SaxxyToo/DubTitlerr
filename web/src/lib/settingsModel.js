@@ -40,7 +40,7 @@ export function readOnlyReason(entry, ctx) {
 
 // --- Show Advanced (S-10) ---------------------------------------------------------------------------------------------------
 
-export const SHOW_ADVANCED_KEY = 'dubtitlerr.settings.showAdvanced';
+const SHOW_ADVANCED_KEY = 'dubtitlerr.settings.showAdvanced';
 
 /**
  * @param {{ getItem(key: string): string | null } | null | undefined} storage
@@ -180,6 +180,7 @@ export function describeSaveError(status, payload) {
 
 // --- Restart (S-12) ---------------------------------------------------------------------------------------------------------
 
+// Exported so tests can drive the restart timeout without waiting ten minutes.
 export const RESTART_TIMEOUT_MS = 10 * 60 * 1000;
 export const RESTART_POLL_MS = 2000;
 
@@ -432,10 +433,10 @@ export function describeModelsResult(result) {
 // --- Notifications (Connect) -------------------------------------------------------------------------------------------------
 
 /** The triggers a brand-new provider turns on: everything except the per-episode one, which the design leaves off (verbose). */
-export const NOTIFICATION_OFF_BY_DEFAULT = ['episode.delivered'];
+const NOTIFICATION_OFF_BY_DEFAULT = ['episode.delivered'];
 
 /** The one write-only secret field a kind stores. */
-export const SECRET_FIELD = /** @type {Record<string, string>} */ ({
+const SECRET_FIELD = /** @type {Record<string, string>} */ ({
   discord: 'url',
   webhook: 'url',
   ntfy: 'token',

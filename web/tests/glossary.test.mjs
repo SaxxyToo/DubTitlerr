@@ -105,7 +105,7 @@ test('buildOp returns the POST body with expected_version', () => {
 });
 
 test('describeError says busy, conflict, unknown show, and invalid in plain sentences', () => {
-  assert.equal(describeError(503, {}), 'glossary busy, try again');
+  assert.equal(describeError(503, {}), 'Glossary busy; try again.');
   assert.match(describeError(409, { version: 'abc' }), /conflict/i);
   assert.match(describeError(404, { error: 'no such glossary' }), /no such glossary/);
   assert.match(describeError(400, { error: 'too long' }), /too long/);
@@ -201,7 +201,7 @@ test('filterTerms and sortTerms tolerate duplicates and non-string entries from 
   assert.deepEqual(messy, ['Luffy', 'Luffy', 5, null, 'zoro'], 'the input is not mutated');
 });
 
-// --- the flagged review queue ---------------------------------------------------------------
+// --- the flagged terms ---------------------------------------------------------------
 
 const ITEM = {
   term: 'Usop',

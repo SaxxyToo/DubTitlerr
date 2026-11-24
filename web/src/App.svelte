@@ -23,6 +23,8 @@
   } from '@lucide/svelte';
   import Sidebar from './lib/Sidebar.svelte';
   import StatusBadge from './lib/StatusBadge.svelte';
+  import Loading from './lib/Loading.svelte';
+  import Empty from './lib/Empty.svelte';
   import Dashboard from './pages/Dashboard.svelte';
   import Audit from './pages/Audit.svelte';
   import Glossary from './pages/Glossary.svelte';
@@ -35,6 +37,9 @@
   import AccountMenu from './lib/AccountMenu.svelte';
   import { apiFetch, logout as endSession, me as fetchMe } from './lib/session.js';
   import { canonicalHash, hashFor, parseHash, parseSettingsCategory } from './lib/route.js';
+  import { VIEW_LABELS, type View } from './lib/nav.js';
+  import { waveTrace } from './lib/waveform.js';
+  import { formatCount } from './lib/format.js';
   import { rememberFocus, restoreFocus } from './lib/focus.js';
   import { isSaveShortcut } from './lib/settingsModel.js';
   import { EPISODE_SORTS, LINE_SORTS, readSortPref, sortEpisodes, writeSortPref } from './lib/episodeSort.js';
@@ -50,16 +55,6 @@
     verdictLabels,
   } from './review';
 
-  type View = 'audit' | 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
-  const VIEW_TITLES: Record<View, string> = {
-    audit: 'Recent decisions',
-    inbox: 'Review inbox',
-    shared: 'Shared lines',
-    dashboard: 'Dashboard',
-    glossary: 'Glossary',
-    runs: 'Runs',
-    settings: 'Settings',
-  };
   // The location hash names the view, so a deep link and the back button both work; a deep link taken while
   // signed out keeps its hash because nothing below rewrites it until the operator navigates.
   const initialView = parseHash(typeof location === 'undefined' ? '' : location.hash);
@@ -97,22 +92,6 @@
   // accepted comp build); the playhead and timechip track the real preview element.
   let audioProgress = $state(0);
   let audioElapsed = $state('0:00');
-  function waveTrace(w: number, h: number, n: number): string {
-    const mid = h / 2;
-    let d = '';
-    for (let i = 0; i <= n; i++) {
-      const t = i / n;
-      const x = t * w;
-      const env =
-        0.16 + 0.74 * Math.abs(Math.sin(t * 8.3 + 0.4)) * (0.5 + 0.5 * Math.abs(Math.sin(t * 1.9 + 0.8)));
-      const j1 = 0.42 + 0.58 * Math.abs(Math.sin(i * 12.9898 + 4.1));
-      const j2 = 0.42 + 0.58 * Math.abs(Math.sin(i * 7.233 + 1.7));
-      const top = mid - env * j1 * mid * 0.98;
-      const bot = mid + env * j2 * mid * 0.98;
-      d += `M${x.toFixed(1)} ${top.toFixed(1)}L${x.toFixed(1)} ${bot.toFixed(1)}`;
-    }
-    return d;
-  }
   const bandWave = waveTrace(925, 290, 330);
   function onPreviewTime(): void {
     const el = player;
@@ -741,7 +720,7 @@
           bind:this={toggleBtn}
           onclick={() => (mobileNav = !mobileNav)}><Menu size={20} /></button
         >{#if authenticated}<span>Workspace</span><ChevronRight size={14} /><strong
-            >{VIEW_TITLES[view]}</strong
+            >{VIEW_LABELS[view]}</strong
           >{:else}<strong>Sign in</strong>{/if}
       </div>
       <div class="topbar-actions">
@@ -804,7 +783,7 @@
             ><RefreshCw size={16} class={loading ? 'spin' : ''} />Refresh queue</button
           >
         </header>
-        <p class="page-sub">{loading && !episodes.length ? 'Loading the review queue…' : queueSummary}</p>
+        <p class="page-sub">{loading && !episodes.length ? 'Loading the review inbox…' : queueSummary}</p>
         {#if message}<div class="notice success" role="status">
             <Check size={18} /><span>{message}</span><button
               class="icon-button"
@@ -883,19 +862,15 @@
               </h2>
               {#if view === 'inbox' && selected}<span class="badge neutral">{selected.season}</span>{/if}
             </div>
-            {#if loading}<div class="empty-state">
-                <LoaderCircle size={32} class="spin" />
-                <h3>Loading review evidence…</h3>
-                <p>Large media libraries can take a moment to discover.</p>
-              </div>
-            {:else if view === 'inbox' && !selected}<div class="empty-state">
-                <GitCompareArrows size={32} aria-hidden="true" />
-                <h3>No episode open</h3>
-                <p>
-                  Pick an episode from the list to compare its repairs with the original transcript, hear the
-                  dub, and stage your verdicts.
-                </p>
-              </div>
+            {#if loading}<Loading
+                label="Loading review evidence…"
+                detail="Large media libraries can take a moment to discover."
+              />
+            {:else if view === 'inbox' && !selected}<Empty
+                icon={GitCompareArrows}
+                title="No episode open"
+                detail="Pick an episode from the list to compare its repairs with the original transcript, hear the dub, and stage your verdicts."
+              />
             {:else}
               <div class="review-toolbar">
                 <label class="search-field"
@@ -1157,7 +1132,7 @@
 
 {#if showHelp}<dialog
     bind:this={helpDialog}
-    class="help-panel"
+    class="dialog-shell"
     aria-labelledby="help-title"
     onclose={closeHelp}
   >

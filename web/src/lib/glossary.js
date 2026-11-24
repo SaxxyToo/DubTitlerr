@@ -107,7 +107,7 @@ export function buildOp(show, op, key, term, value, expected_version) {
 export function describeError(status, payload) {
   const raw = typeof payload?.error === 'string' ? payload.error.trim() : '';
   const detail = raw.replace(/\.+$/, '');
-  if (status === 503) return 'glossary busy, try again';
+  if (status === 503) return 'Glossary busy; try again.';
   if (status === 409) return 'Version conflict — reloaded the latest version. Review and try again.';
   if (status === 404) return detail ? `Unknown show: ${detail}.` : 'Unknown show: no such glossary.';
   if (status === 400)
@@ -115,7 +115,7 @@ export function describeError(status, payload) {
   return detail ? `${detail}.` : `Request failed (${status}).`;
 }
 
-// --- the flagged review queue ---------------------------------------------------------------
+// --- the flagged terms ---------------------------------------------------------------------
 // The server sends what glossary_acquire.review_items() and accept_effect() produced: `effect` is the
 // CLI's own verdict on what accepting would do, so these helpers only label it -- they never re-decide.
 

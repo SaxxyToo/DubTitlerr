@@ -184,7 +184,7 @@
       <div class="field">
         {#if secretsWritable && canEdit}
           <label for={`notif-${i}-secret`}>
-            {p.kind === 'ntfy' ? 'Access token' : p.kind === 'discord' ? 'Webhook URL' : 'Webhook URL'}
+            {p.kind === 'ntfy' ? 'Access token' : 'Webhook URL'}
           </label>
           <input
             id={`notif-${i}-secret`}

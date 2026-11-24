@@ -14,6 +14,7 @@
     validateTerm,
   } from '../lib/glossary.js';
   import { isAdmin } from '../lib/roles.js';
+  import Loading from '../lib/Loading.svelte';
   import { Search } from '@lucide/svelte';
 
   type Key = 'names' | 'phrases' | 'hard_fixes' | 'review';
@@ -42,7 +43,7 @@
     names: 'Names',
     phrases: 'Phrases',
     hard_fixes: 'Hard fixes',
-    review: 'Review queue',
+    review: 'Flagged terms',
   };
 
   let shows = $state<string[]>([]);
@@ -61,7 +62,6 @@
   let query = $state('');
   let status = $state('');
   let errorMsg = $state('');
-  let note = $state('');
   let unanchored = $state<{ episodes?: number; targets?: number; last_episode?: string; last_at?: string }>(
     {},
   );
@@ -146,7 +146,6 @@
     if (tab === 'review') return false; // the queue decides through decide(), not the term editor
     errorMsg = '';
     status = '';
-    note = '';
     const problem = validateTerm(tab, term, value);
     if (problem) {
       errorMsg = problem;
@@ -159,7 +158,7 @@
         reapply_hint?: boolean;
       };
       await loadDetail({ quiet: true });
-      if (res.reapply_hint) note = 'Saved. Applies to episodes processed from now on.';
+      if (res.reapply_hint) status = 'Saved. Applies to episodes processed from now on.';
       else status = 'Saved.';
       return true;
     } catch (exc) {
@@ -186,7 +185,6 @@
     if (saving) return;
     errorMsg = '';
     status = '';
-    note = '';
     saving = true;
     try {
       await api('/api/glossary', {
@@ -198,7 +196,7 @@
         expected_version: version,
       });
       await loadDetail({ quiet: true });
-      note = accept
+      status = accept
         ? `Accepted “${item.term}”. Applies to episodes processed from now on.`
         : `“${item.term}” will not be proposed again.`;
     } catch (exc) {
@@ -223,7 +221,6 @@
     if (saving) return;
     errorMsg = '';
     status = '';
-    note = '';
     saving = true;
     try {
       await api('/api/glossary', {
@@ -234,7 +231,7 @@
         expected_version: version,
       });
       await loadDetail({ quiet: true });
-      note =
+      status =
         'Unanchored repair is on. It applies to episodes repaired from now on; re-run repair on the affected episodes to improve them.';
     } catch (exc) {
       if (exc instanceof ApiError) {
@@ -280,7 +277,6 @@
     if (saving || wikiBusy) return;
     errorMsg = '';
     status = '';
-    note = '';
     saving = true;
     try {
       const res = (await api('/api/glossary', {
@@ -289,7 +285,7 @@
         wiki: wikiDraft.trim(),
       })) as { reapply_hint?: boolean };
       await loadDetail({ quiet: true, clearForm: false }); // a half-typed term must survive a wiki save
-      if (res.reapply_hint) note = 'Saved. Applies to episodes processed from now on.';
+      if (res.reapply_hint) status = 'Saved. Applies to episodes processed from now on.';
       else status = 'Saved.';
     } catch (exc) {
       if (exc instanceof ApiError) {
@@ -355,7 +351,6 @@
 
   {#if errorMsg}<p class="notice failure" role="alert">{errorMsg}</p>{/if}
   {#if status}<p class="notice success" role="status">{status}</p>{/if}
-  {#if note}<p class="notice success" role="status">{note}</p>{/if}
 
   {#if !shows.length && !loading}
     <p class="page-sub">No deployed glossaries.</p>
@@ -380,9 +375,8 @@
               tab = key;
               editTerm = null;
             }}
-            >{TAB_LABELS[key]}{#if key === 'review' && flaggedTotal > 0}<span
-                class="count-badge"
-                aria-hidden="true">{flaggedTotal}</span
+            >{TAB_LABELS[key]}{#if key === 'review' && flaggedTotal > 0}<span class="count" aria-hidden="true"
+                >{flaggedTotal}</span
               >{/if}</button
           >{/each}
       </div>
@@ -413,7 +407,7 @@
     {/if}
 
     {#if loading}
-      <p class="page-sub">Loading glossary…</p>
+      <Loading label="Loading glossary…" />
     {:else if show}
       <div class="glossary-wiki">
         {#if isAdmin(role)}
@@ -490,7 +484,7 @@
       {/if}
 
       {#if tab === 'review'}
-        <section class="review-queue" aria-label="Flagged review queue">
+        <section class="review-queue" aria-label="Flagged terms">
           <p class="page-sub">
             {#if flaggedTotal === 0}
               No flagged entries to review.
@@ -534,7 +528,7 @@
               </li>
             {:else}
               <li class="empty-row">
-                {flaggedTotal === 0 ? 'Nothing is waiting in the review queue.' : 'No flagged entries match.'}
+                {flaggedTotal === 0 ? 'No flagged terms yet.' : 'No flagged terms match.'}
               </li>
             {/each}
           </ul>
@@ -723,18 +717,10 @@
   .glossary-table td input {
     width: 100%;
   }
-  /* A backlog number on the Review queue tab: visible at a glance, outside the button's accessible name. */
-  .count-badge {
-    display: inline-block;
+  .glossary-tabs .count {
     margin-left: 6px;
-    padding: 0 6px;
-    border-radius: 10px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    font-size: 0.75em;
-    line-height: 1.5;
   }
+  /* A backlog number on the Flagged terms tab: visible at a glance, outside the button's accessible name. */
   .review-list {
     display: grid;
     gap: 10px;

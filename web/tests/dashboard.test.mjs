@@ -4,7 +4,6 @@ import {
   MAX_WARMING_RETRIES,
   buildQuery,
   createLatest,
-  formatAge,
   pageWindow,
   stageClass,
   summarizeCounts,
@@ -23,17 +22,6 @@ test('stageClass maps each pipeline stage to its status token', () => {
 test('stageClass falls back to one token for unknown stages', () => {
   assert.equal(typeof stageClass('bogus'), 'string');
   assert.equal(stageClass('bogus'), stageClass(''));
-});
-
-test('formatAge renders seconds, minutes, hours, and unknown', () => {
-  assert.equal(formatAge(14.2), '14 s');
-  assert.equal(formatAge(0), '0 s');
-  assert.equal(formatAge(59.9), '59 s');
-  assert.equal(formatAge(180), '3 min');
-  assert.equal(formatAge(7200), '2 h');
-  assert.equal(formatAge(null), 'unknown');
-  assert.equal(formatAge(undefined), 'unknown');
-  assert.equal(formatAge(NaN), 'unknown');
 });
 
 test('summarizeCounts lists every stage in order, missing means zero', () => {

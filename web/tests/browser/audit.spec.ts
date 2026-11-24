@@ -48,9 +48,12 @@ test('the empty landing explains itself: zero decisions is a designed state, not
   await expectNoAxeViolations(page);
 });
 
-test('Review exceptions is the way to the pending queue, and Back returns to the audit', async ({ page }) => {
+test('Review inbox is the way to the pending queue, and Back returns to the audit', async ({ page }) => {
   await openSignedIn(page, '');
-  await page.getByRole('button', { name: /Review exceptions/ }).click();
+  await page
+    .locator('.page-actions')
+    .getByRole('button', { name: /Review inbox/ })
+    .click();
   await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
   expect(new URL(page.url()).hash).toBe('#/inbox');
   await page.goBack();

@@ -9,7 +9,7 @@
 /** @typedef {{ id: string, kind: string, decision: string, at: number, show?: string, term?: string, reason?: string, guard?: string | null, original_text?: string, detail?: Record<string, any>, undoable?: boolean, stem?: string }} AuditItem */
 
 /** @type {Record<string, string>} */
-export const DECISION_LABELS = {
+const DECISION_LABELS = {
   dismiss: 'Dismissed',
   apply: 'Applied',
   expire: 'Expired',
@@ -18,7 +18,7 @@ export const DECISION_LABELS = {
 };
 
 /** Tone tokens app.css already styles; an unknown decision reads as muted, never as success. @type {Record<string, string>} */
-export const DECISION_TONES = {
+const DECISION_TONES = {
   apply: 'ok',
   dismiss: 'info',
   expire: 'muted',
@@ -42,23 +42,13 @@ export function auditSummary(counts) {
   const parts = [];
   for (const key of order) {
     const n = Number(counts?.[key] ?? 0);
-    if (n > 0) parts.push(`${n} ${decisionLabel(key).toLowerCase()}`);
+    if (n > 0) parts.push(`${n.toLocaleString()} ${decisionLabel(key).toLowerCase()}`);
   }
   for (const [key, value] of Object.entries(counts ?? {})) {
-    if (!order.includes(key) && Number(value) > 0) parts.push(`${Number(value)} ${String(key)}`);
+    if (!order.includes(key) && Number(value) > 0)
+      parts.push(`${Number(value).toLocaleString()} ${String(key)}`);
   }
   return parts.length ? parts.join(' · ') : 'No automatic decisions recorded yet';
-}
-
-/** "2 h ago" from an epoch-seconds stamp; "just now" under a minute; '' when unreadable. @param {number} at @param {number} [now] */
-export function relativeTime(at, now = Date.now() / 1000) {
-  const t = Number(at);
-  if (!Number.isFinite(t) || t <= 0) return '';
-  const s = Math.max(0, now - t);
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
-  return `${Math.floor(s / 86400)} d ago`;
 }
 
 /** The one-line "why" for a feed row: what the policy guarded against, or what it applied. @param {AuditItem} item */

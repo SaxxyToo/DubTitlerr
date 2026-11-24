@@ -1,6 +1,7 @@
 // Hash routing for the review workspace: the location hash names a view, nothing else.
 // Pure, so node:test can import it without a browser.
 
+// The routes the page fetches; exported so tests can assert the vocabulary matches parseHash().
 export const VIEWS = /** @type {const} */ ([
   'audit',
   'inbox',

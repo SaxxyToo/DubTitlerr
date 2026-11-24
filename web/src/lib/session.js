@@ -4,6 +4,7 @@
 // No token is stored, read or sent from this module.
 import { ApiError } from './api.js';
 
+// Exported so tests can assert every request carries it; the module sets it itself.
 export const CSRF_HEADER = 'X-DubTitlerr-Request';
 
 /**
