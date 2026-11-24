@@ -1143,8 +1143,10 @@ def llm_chat(
     chat template, and a templated instruct model answers it with nothing but newlines.
     ``chat_template_kwargs.enable_thinking=false`` is required by this fork — with the
     template applied but thinking still on, the model spends its entire budget on
-    ``reasoning_content`` and returns an empty message. No model selector is sent; a
-    llama.cpp server has exactly one model loaded.
+    ``reasoning_content`` and returns an empty message. The model id is sent when one is
+    configured: a single-model llama.cpp server ignores it, but a multi-model
+    OpenAI-compatible proxy (llama-swap) routes BY model id and 404s a model-less request,
+    so omitting it breaks the restore/glossary stages on such a host.
 
     ``first_line`` suits a subtitle (one line, often quoted by the model). Adjudication
     returns a multi-line JSON object and must pass ``first_line=False`` or it is truncated
@@ -1165,6 +1167,10 @@ def llm_chat(
             "max_tokens": max_tokens,
             "chat_template_kwargs": {"enable_thinking": False},
         }
+        if model:
+            # llama-swap routes by model id; a model-less request is a 404 there. Omitted
+            # only when nothing is configured, which is the single-server shape.
+            body["model"] = model
     else:
         url = ollama_url
         body = {"model": model, "prompt": prompt, "stream": False, "think": False, "options": {"temperature": 0}}

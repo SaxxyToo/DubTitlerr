@@ -833,13 +833,42 @@ def _capture_post(monkeypatch, reply):
 
 def test_llm_chat_llamacpp_applies_the_template_and_disables_thinking(monkeypatch):
     seen = _capture_post(monkeypatch, {"choices": [{"message": {"content": " Answer "}}]})
-    out = common.llm_chat("PROMPT", backend="llamacpp", llamacpp_url="http://host:8090/v1/chat/completions")
+    out = common.llm_chat("PROMPT", backend="llamacpp", llamacpp_url="http://host:8090/v1/chat/completions", model="qwen3.5:4b")
     assert seen["url"] == "http://host:8090/v1/chat/completions"
     assert seen["body"]["messages"] == [{"role": "user", "content": "PROMPT"}]
     assert seen["body"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert seen["body"]["temperature"] == 0
-    assert "model" not in seen["body"]  # llama.cpp serves exactly one model
+    # llama-swap routes BY model id and 404s a model-less request; a single-model
+    # llama.cpp server ignores the field.
+    assert seen["body"]["model"] == "qwen3.5:4b"
     assert out == "Answer"
+
+
+def test_llm_chat_llamacpp_without_a_configured_model_keeps_the_single_server_shape(monkeypatch):
+    """No model configured means nothing to route by: keep the previous body, never send null."""
+    seen = _capture_post(monkeypatch, {"choices": [{"message": {"content": "x"}}]})
+    common.llm_chat("P", backend="llamacpp", llamacpp_url="http://h/v1/chat/completions")
+    assert "model" not in seen["body"]
+
+
+def test_llm_chat_llamacpp_routes_through_a_multimodel_proxy_over_a_real_socket():
+    """llama-swap answers a model-less request with 404 "no model id could be identified";
+    with the configured model the same call is a 200. This is the wire contract the
+    restoration/glossary stages depend on (they all go through llm_chat)."""
+    from fake_servers import FakeServer, chat_reply
+
+    def reply(req):
+        if not req["body"].get("model"):
+            return 404, {"error": "no model id could be identified"}
+        return 200, chat_reply(" Restored line. ")
+
+    srv = FakeServer(reply)
+    try:
+        out = common.llm_chat("PROMPT", backend="llamacpp", llamacpp_url=srv.url, model="qwen3.5:4b")
+        assert out == "Restored line."
+        assert srv.requests[0]["body"]["model"] == "qwen3.5:4b"
+    finally:
+        srv.close()
 
 
 def test_llm_chat_llamacpp_honours_max_tokens(monkeypatch):
