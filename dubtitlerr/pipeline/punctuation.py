@@ -25,7 +25,7 @@ this is an improvement pass and must never cost an episode.
 Env:
   RESTORE_PUNCTUATION   default "1"; "0" disables the pass entirely
   RESTORE_MIN_RUN       default "2" -- consecutive unpunctuated segments needed for a call
-  RESTORE_BACKEND / RESTORE_MODEL / RESTORE_LLAMACPP_URL / OLLAMA_URL
+  RESTORE_BACKEND / RESTORE_MODEL / RESTORE_LLAMACPP_URL / OLLAMA_URL / RESTORE_OPENAI_URL / RESTORE_OPENAI_KEY_ENV
                         default to the REPAIR_* values, as glossary_verify.py does
   RESTORE_MAX_TOKENS    default "2048" -- ceiling on the per-run answer budget
 Built with help of Claude (Anthropic).
@@ -57,9 +57,10 @@ RESTORE_MIN_RUN = int(os.environ.get("RESTORE_MIN_RUN", "2"))
 
 
 def resolve_restore_backend(env=None):
-    """(backend, problem) for the restoration pass. RESTORE_BACKEND, when set and non-empty, must be llamacpp or ollama (the
-    only request shapes this pass speaks). Unset, it follows REPAIR_BACKEND by the glossary stages' rule
-    (common.inherit_repair_backend): a repair `openai` or any other value is refused instead of being handed on."""
+    """(backend, problem) for the restoration pass. RESTORE_BACKEND, when set and non-empty, must be llamacpp, ollama or
+    openai (the request shapes this pass speaks; see _ask). Unset, it follows REPAIR_BACKEND by the glossary stages' rule
+    (common.inherit_repair_backend); a repair `openai` is legitimate here because this pass speaks the chat-completions
+    shape too, and any other value is refused instead of being handed on."""
     env = os.environ if env is None else env
     explicit = (env.get("RESTORE_BACKEND") or "").strip()
     fix = "set RESTORE_BACKEND to llamacpp, ollama or openai"

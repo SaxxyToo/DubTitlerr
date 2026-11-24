@@ -20,12 +20,19 @@ KINDS = ("llamacpp", "ollama", "openai")
 STAGES = ("repair", "restore", "verify", "decision", "acquire")
 STAGE_KINDS = {
     "repair": ("llamacpp", "ollama", "openai"),
-    "restore": ("llamacpp", "ollama"),
+    # restore speaks every wire the repair lane does: punctuation._ask passes RESTORE_OPENAI_URL and
+    # RESTORE_OPENAI_KEY_ENV to common.llm_chat's openai branch, and resolve_restore_backend accepts it.
+    "restore": ("llamacpp", "ollama", "openai"),
     "verify": ("llamacpp", "ollama", "openai"),
     "decision": ("openai",),
     "acquire": ("llamacpp", "ollama", "openai"),
 }
-KEY_ENV = {"repair": "DT_CONN_KEY_REPAIR", "verify": "DT_CONN_KEY_VERIFY", "decision": "DT_CONN_KEY_DECISION"}
+KEY_ENV = {
+    "repair": "DT_CONN_KEY_REPAIR",
+    "restore": "DT_CONN_KEY_RESTORE",
+    "verify": "DT_CONN_KEY_VERIFY",
+    "decision": "DT_CONN_KEY_DECISION",
+}
 VIA_DECISION = "@decision"  # verify stage value: adjudicate with the decision stage's Connection
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 EXTRA_BODY_MAX = 2048
@@ -223,8 +230,12 @@ def validate_stages(stages, connections):
             errors[stage] = "points at a connection that does not exist"
         elif by_name[name]["kind"] not in STAGE_KINDS[stage]:
             errors[stage] = "needs a " + " or ".join(STAGE_KINDS[stage]) + " connection"
-        elif stage in ("verify", "decision", "acquire") and by_name[name]["kind"] == "openai" and not by_name[name]["model"]:
-            errors[stage] = "needs a connection with a model (the hosted glossary stages have no default)"
+        elif (
+            stage in ("restore", "verify", "decision", "acquire")
+            and by_name[name]["kind"] == "openai"
+            and not by_name[name]["model"]
+        ):
+            errors[stage] = "needs a connection with a model (an OpenAI-compatible connection has no default)"
         elif stage == "decision":
             d_host = (urllib.parse.urlsplit(by_name[name]["url"]).hostname or "").lower()
             if d_host not in allowed_decision_hosts():
@@ -283,8 +294,16 @@ def _stage_env(stage, conn, key, stages):
         env += [("REPAIR_TIMEOUT_CONNECT", f"{conn['timeout_connect']:g}"), ("REPAIR_TIMEOUT_READ", f"{conn['timeout_read']:g}")]
         return env
     if stage == "restore":
-        env = [("RESTORE_BACKEND", kind), ("RESTORE_LLAMACPP_URL" if kind == "llamacpp" else "OLLAMA_URL", conn["url"])]
-        return env + ([("RESTORE_MODEL", conn["model"])] if conn["model"] else [])
+        url_var = {"llamacpp": "RESTORE_LLAMACPP_URL", "openai": "RESTORE_OPENAI_URL", "ollama": "OLLAMA_URL"}[kind]
+        env = [("RESTORE_BACKEND", kind), (url_var, conn["url"])]
+        if conn["model"]:
+            env.append(("RESTORE_MODEL", conn["model"]))
+        # Always set, empty when unused: a hosted key pointer inherited from the container environment
+        # must not outlive the choice (punctuation defaults RESTORE_OPENAI_KEY_ENV to REPAIR_OPENAI_KEY_ENV).
+        env.append(("RESTORE_OPENAI_KEY_ENV", KEY_ENV["restore"] if key else ""))
+        if key:
+            env.append((KEY_ENV["restore"], key))
+        return env
     if stage == "verify" or (stage == "acquire" and stages.get("verify") == VIA_DECISION):
         env = [("VERIFY_BACKEND", kind)] if stage == "verify" else []
         url_var = {"llamacpp": "VERIFY_LLAMACPP_URL", "openai": "VERIFY_OPENAI_URL", "ollama": "OLLAMA_URL"}[kind]
@@ -306,6 +325,9 @@ def _stage_env(stage, conn, key, stages):
 
 KEY_HOLDER_SCOPES = {
     "DT_CONN_KEY_REPAIR": ("merge",),
+    # restore runs in both loops: generate.py restores punctuation on the word list before reflow,
+    # and the merge pass's presentation restoration reuses the same resolved backend.
+    "DT_CONN_KEY_RESTORE": ("gen", "merge"),
     "DT_CONN_KEY_VERIFY": ("gen", "merge"),
     "DT_CONN_KEY_DECISION": ("gen", "merge"),
 }
