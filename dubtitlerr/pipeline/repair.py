@@ -764,11 +764,41 @@ def dub_vouches(orig, new, ref, ref_role=None) -> bool:
     added = [w for w in _words(new) if w not in had]
     return bool(added) and set(added) <= set(_words(ref))
 
+
+# Typographic glyphs a model swaps for their ASCII twins without changing a word. A proposal
+# that differs from the source ONLY here is churn, not a repair: the rendered subtitle is the
+# same text, so it must not count as one. On the 2026-11-23 CSM bake-off's saved per-line results
+# 6 of 1041 shipped repairs were exactly this (all ministral-3-8b); the report's larger
+# "apostrophe churn" shares are surface-only edits as a group (punctuation and case included),
+# which this check deliberately does NOT refuse -- adding a period or a capital is a real repair.
+_GLYPH_FOLD = str.maketrans(
+    {
+        "\u2018": "'",  # left single quotation mark
+        "\u2019": "'",  # right single quotation mark (the usual curly apostrophe)
+        "\u201b": "'",  # single high-reversed-9 quotation mark
+        "\u02bc": "'",  # modifier letter apostrophe
+        "\uff07": "'",  # fullwidth apostrophe
+        "`": "'",  # backtick used as an apostrophe
+        "\u201c": '"',  # left double quotation mark
+        "\u201d": '"',  # right double quotation mark
+        "\u201e": '"',  # double low-9 quotation mark
+        "\u201f": '"',  # double high-reversed-9 quotation mark
+    }
+)
+
 _WORD = re.compile(r"[a-z']+")
 
 
+def fold_glyphs(text):
+    """``text`` with typographic apostrophes and quotes folded to their ASCII twins ("You\u2019re" -> "You're").
+
+    The one normalisation the no-op check and the word-level guards below compare through:
+    these swaps render identically, so a proposal that only performs them is not an edit."""
+    return (text or "").translate(_GLYPH_FOLD)
+
+
 def _words(s):
-    return _WORD.findall((s or "").lower())
+    return _WORD.findall(fold_glyphs(s).lower())
 
 
 def borrowed_from_ref(orig, new, ref):
@@ -780,6 +810,146 @@ def borrowed_from_ref(orig, new, ref):
     hallucination, a different failure with its own guards."""
     had, have, in_ref = set(_words(orig)), _words(new), set(_words(ref))
     return [w for w in have if w not in had and w in in_ref]
+
+
+def borrowed_phrase_from_ref(orig, new, ref):
+    """The first run of added words the reference carries as the same consecutive run, or [].
+
+    ``borrowed_from_ref`` counts added words wherever they sit, and three of them trips
+    ``MAX_REF_BORROW``. A shorter borrow slips under that: ``It's not like I was asking to``
+    completed to ``It's not like I was asking to be rich`` imports a two-word TAIL from the
+    fansub, and the reference is still being used as the answer. So a two-word run counts when it
+    completes the line at either end (the model wrote the rest of the fansub's sentence), and a
+    run of three or more counts wherever it sits (a lifted clause). A two-word lift in the middle
+    of a line is deliberately not refused: ``gonna`` -> ``going to``, ``ain't`` -> ``I'm not`` and
+    other ordinary rewordings also match common bigrams in the reference, and refusing those
+    would refuse real repairs. Only words ABSENT from ``orig`` can form a run."""
+    if not ref:
+        return []
+    ref_words = _words(ref)
+    had = set(_words(orig))
+    new_words = _words(new)
+    new_set = set(new_words)
+    gone = [w for w in _words(orig) if w not in new_set]
+    for length in (3, 2):
+        if len(ref_words) < length:
+            continue
+        phrases = {tuple(ref_words[i : i + length]) for i in range(len(ref_words) - length + 1)}
+        for i in range(len(new_words) - length + 1):
+            run = new_words[i : i + length]
+            if any(w in had for w in run) or tuple(run) not in phrases:
+                continue
+            if length >= 3 or i == 0 or i + length == len(new_words):
+                # A contraction expanded at the edge ("We've" -> "We have") reproduces the
+                # reference's own phrasing without copying anything new.
+                if length == 2 and any(_letters(g).startswith(_letters(run[0])) for g in gone if _letters(g)):
+                    continue
+                return list(run)
+    return []
+
+
+MIN_CONTENT_DROP = 3  # letters; below this a token must be a dictionary word to count at all
+
+# Interjections are what ASR sprinkles ONTO a line; deleting one is a cleanup, not a meaning
+# change, whatever the word list says about it.
+_FILLERS = frozenset({"oh", "ah", "uh", "um", "hm", "mm", "eh", "huh", "hey", "wow"})
+
+# The words whose deletion leaves a line's proposition intact: the grammatical joints a rewrite
+# may shed. Deliberately NARROWER than reftracks.STOPWORDS, which is tuned for audio overlap and
+# counts intensifiers, adverbs, negation and quantifiers as stopwords -- dropping those IS the
+# meaning change this guard exists to catch ('Her face is so priceless.' -> 'Her face is
+# priceless.', 'I'll keep that one in mind for you, too.' -> '...in mind.').
+_DROP_SAFE = frozenset(
+    """a an the and or but if of to in on at for with from by as is are was were be been being
+    it its this these those i you he she they we me him her them us my your his their our
+    that what who how why when where than can could will would should may might
+    must do does did have has had""".split()
+)
+
+
+def _letters(word):
+    """The letters of a word, apostrophes/hyphens dropped, so 'that's' and 'thats' compare equal."""
+    return re.sub(r"[^a-z]", "", (word or "").lower())
+
+
+def _absorbed(word, new_words):
+    """True when ``word`` vanished into words that remain: a respelling or apostrophe restore ("thats" -> "that's"), a
+    fragment of a joined word ("shoun" + "en" -> "shounen", "Infrast ructure" -> "Infrastructures"), or a word
+    re-spaced into several ("Grandline" -> "Grand Line"). Those are the split/join repairs this stage exists to make,
+    so they are not the drop the guard refuses."""
+    core = _letters(word)
+    if not core:
+        return True
+    for w in new_words:
+        if core in _letters(w):  # a fragment of the word it was joined into
+            return True
+    for i in range(len(new_words)):
+        joined = ""
+        for w in new_words[i : i + 3]:
+            joined += _letters(w)
+            if joined == core:
+                return True
+            if len(joined) > len(core):
+                break
+    return False
+
+
+def _word_tokens(tokens):
+    """The tokens that are words rather than fragments: 2+ letters, and below ``MIN_CONTENT_DROP`` the word list must know
+    it ('th' in 'th warted' and the 's' in 'wrong s' are fragments, 'so' and 'go' are words)."""
+    out = []
+    for word in tokens:
+        letters = _letters(word)
+        if len(letters) < 2 or (len(letters) < MIN_CONTENT_DROP and not glossary.is_ordinary_word(word)):
+            continue
+        out.append(word)
+    return out
+
+
+def _content_tokens(tokens, ref_letters=()):
+    """The tokens that carry content: a word (``_word_tokens``) that is not a function word or interjection, and (when
+    ``ref_letters`` is given) not attested by the reference."""
+    return [
+        w
+        for w in _word_tokens(tokens)
+        if _letters(w) not in _DROP_SAFE and _letters(w) not in _FILLERS and _letters(w) not in ref_letters
+    ]
+
+
+def dropped_content_words(orig, new, ref):
+    """The CONTENT words ``new`` loses from ``orig`` when the proposal sheds more content than it gains.
+
+    A repair that deletes a clause changes what the line says, and neither the length band nor the card fit can see it:
+    ``Let's take turns guarding Arai and Kobeni.`` -> ``Let's guard Arai and Kobeni.`` is a 0.67 ratio and shipped
+    before this guard. The comparison is a multiset difference in both directions, filtered by ``_content_tokens``:
+    function words and interjections do not count, a short ASR fragment the word list does not know does not count, and
+    a word the reference carries is left alone (it attests the word, so the model is judging the audio). A drop
+    compensated by a word GAINED elsewhere is a substitution and is not refused -- that is what keeps
+    ``What you ain't`` -> ``What aren't you?`` and a contraction expansion (``It'd`` -> ``It would``) shipping,
+    alongside the split/join fixes ``_absorbed`` covers."""
+    import collections
+
+    src, dst = _words(orig), _words(new)
+    remaining = collections.Counter(dst)
+    gone = []
+    for word in src:
+        if remaining[word]:
+            remaining[word] -= 1
+        else:
+            gone.append(word)
+    remaining = collections.Counter(src)
+    gained = []
+    for word in dst:
+        if remaining[word]:
+            remaining[word] -= 1
+        else:
+            gained.append(word)
+    ref_letters = {_letters(w) for w in _words(ref)}
+    dropped = [w for w in _content_tokens(gone, ref_letters) if not _absorbed(w, dst)]
+    gained = [w for w in gained if len(_letters(w)) >= 2]  # any word-shaped gain compensates, function word or not
+    if len(dropped) > len(gained):
+        return dropped
+    return []
 
 
 def fits_card(text, dur, orig=None):
@@ -1226,7 +1396,17 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
     exactly ``rejecting_guard(...) is None``; the name is what the review queue records (key 'guard') so a human, and later
     measurements, can tell why a proposal was refused:
 
-        empty, unchanged, terminal_punct, invents_name, name_part, vouched_name, length_ratio, fits_card, ref_borrow
+        empty, unchanged, terminal_punct, invents_name, name_part, vouched_name, length_ratio,
+        fits_card, content_drop, ref_borrow
+
+    ``unchanged`` ignores typographic glyph swaps: a proposal equal to the source after
+    folding curly/straight quotes and apostrophes is not an edit (see ``fold_glyphs``).
+
+    ``content_drop`` refuses a proposal that deletes a content word the reference does not
+    carry (see ``dropped_content_words``); it is not applied when ``ref_role='dub'``, where
+    the reference is the audio's own transcript and a word absent from it is likelier ASR
+    noise. ``ref_borrow`` also fires on a short contiguous phrase lifted from the reference
+    (see ``borrowed_phrase_from_ref``), which used to slip under MAX_REF_BORROW.
 
     ``punct_case_ok`` (default: REPAIR_ACCEPT_PUNCT_CASE_ONLY=1) gives a proposal that changes only case and punctuation two
     allowances: it is not "unchanged" when the case differs (only for case changes that cannot change meaning: a sentence start,
@@ -1246,6 +1426,8 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
     """
     if not new:
         return "empty"
+    if fold_glyphs(new) == fold_glyphs(orig):
+        return "unchanged"  # a curly<->straight quote swap is not an edit: the rendered text is identical
     if punct_case_ok is None:
         punct_case_ok = _accept_punct_case_only()
     special = punct_case_ok and is_punct_case_only(orig, new, gloss, prev_text)
@@ -1268,7 +1450,12 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
         return "length_ratio"  # added or dropped a clause
     if not (_no_new_layout_fault(new, dur, orig) if special else fits_card(new, dur, orig)):
         return "fits_card"  # unreadable/undisplayable on THIS card
-    if not vouched and len(borrowed_from_ref(orig, new, ref)) >= MAX_REF_BORROW:
+    # A deleted clause changes the meaning of the line and neither the length band nor the card
+    # fit can see it. Under role=dub the reference IS the audio's transcript, so a word it lacks
+    # is likelier ASR noise than a deletion, and the drop is left to the other guards.
+    if ref_role != reftracks.ROLE_DUB and dropped_content_words(orig, new, ref):
+        return "content_drop"
+    if not vouched and (len(borrowed_from_ref(orig, new, ref)) >= MAX_REF_BORROW or borrowed_phrase_from_ref(orig, new, ref)):
         return "ref_borrow"
     return None
 
