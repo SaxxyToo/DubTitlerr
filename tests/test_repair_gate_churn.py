@@ -333,3 +333,97 @@ def test_a_fully_dub_vouched_reply_is_exempt_from_the_replacement_guard():
     new = "He ran home quickly, and he was happy."
     assert repair.replaced_line(orig, new)
     assert repair.rejecting_guard(orig, new, new, 6.0, GL, ref_role="dub") is None
+
+
+# ---- a proper-noun spelling fix must keep shipping ---------------------------
+#
+# Chainsaw Man S01E03/E04, byte-for-byte from the LIVE instance (2026-11-24): the card texts and
+# durations are the stored ``conf`` rows, the references are the windows the repair stage sent,
+# the four replies are what qwen3.5:4b and gemma-3-1b actually returned at temperature 0.
+#
+# Reported as "the #121 gate now refuses Meowie -> Meowy; the Nov 22 build shipped Meowy". It does
+# not. The gate admits the swap, with a reference and without one (the first three tests), and the
+# live run recorded the same admissions (``I hate them, too, since one took my pet cat, Meowie,
+# away.`` -> ``...Meowy, away.`` was in that episode's repair.csv, and the delivered sidecar
+# carried it). What it refuses is the LINE the name arrives on -- a reply that drops a word
+# (content_drop) or hands back the fansub's own sentence (ref_borrow) -- and the name goes with
+# it. Those two refusals are pinned below so the distinction cannot quietly change: the fix that
+# is allowed is the name ALONE, which is what an unusable reply has to be cut down to.
+#
+# Replayed over every one-token name-swap refusal the store holds (276 rows, 23 shows, 2026-11-24):
+# 0 are content_drop, 202 fits_card, 25 invents_name, 7 length_ratio, 4 ref_borrow -- the
+# content-word guard this gate was suspected of is not what refuses them.
+
+CSM = gl(names=["Meowy", "Makima", "Denji", "Power"])
+FANSUB_MEOWY = "And I hate devils too. Because one of them kidnapped my pet, Meowy."
+
+MEOWIE_SWAP_ROWS = [
+    # (orig, new, ref, dur) -- card 199.12-202.96 s on E03
+    (
+        "I hate them, too, since one took my pet cat, Meowie, away.",
+        "I hate them, too, since one took my pet cat, Meowy, away.",
+        FANSUB_MEOWY,
+        3.84,
+    ),
+    # the same swap with no reference at all: a no-ref episode must still be able to fix a name
+    # the glossary lists (refusal here would be the vouched_name guard over-reaching)
+    (
+        "I hate them, too, since one took my pet cat, Meowie, away.",
+        "I hate them, too, since one took my pet cat, Meowy, away.",
+        "",
+        3.84,
+    ),
+    # the reply that shipped on the live run: the name fix riding a genuine split fix
+    # (card 204.336-209.12 s)
+    (
+        "Before I was able to save Meowie, Makima caught me and th warted my plans.",
+        "Before I was able to save Meowy, Makima caught me and thwarted my plans.",
+        "Before I could Meowy get back, Makima caught me.",
+        4.784,
+    ),
+    # a NAME-ONLY reply on the line whose whole-line copy was refused (card 209.46-213.6 s):
+    # this is the shape that must keep working when the model offers nothing else
+    (
+        "Meowie may already be dead, but still, I can't give up.",
+        "Meowy may already be dead, but still, I can't give up.",
+        "Meowy might already be dead, but I cannot give up hope.",
+        4.14,
+    ),
+]
+
+
+@pytest.mark.parametrize("orig,new,ref,dur", MEOWIE_SWAP_ROWS)
+def test_a_one_token_glossary_name_fix_is_admitted(orig, new, ref, dur):
+    assert repair.rejecting_guard(orig, new, ref, dur, CSM, ref_role="translation") is None
+    assert repair.accept_repair(orig, new, ref, dur, CSM, ref_role="translation")
+
+
+def test_the_name_fix_is_not_what_the_gate_refuses_on_the_dead_line():
+    """The documented refusal path for the live rows where the name did NOT ship: the names are
+    identical in both refusals, so a refusal here is about the line, never the spelling."""
+    orig = "Meowie may already be dead, but still, I can't give up."
+    # gemma-3-1b handed back the fansub's sentence, name included
+    fansub_line = "Meowy might already be dead, but I cannot give up hope."
+    assert repair.rejecting_guard(orig, fansub_line, fansub_line, 4.14, CSM, ref_role="translation") == "ref_borrow"
+    # gemma-3-1b elided 'away' to bring the line closer to the fansub's wording
+    elided = "I hate them, too, since one took my pet cat, Meowy."
+    assert (
+        repair.rejecting_guard(
+            "I hate them, too, since one took my pet cat, Meowie, away.", elided, FANSUB_MEOWY, 3.84, CSM, ref_role="translation"
+        )
+        == "content_drop"
+    )
+    # ...while the name-only cut-down of each is admitted. That is the only shape that can carry a
+    # name out of a reply the gate refuses, and nothing cuts the reply down automatically today,
+    # so the card keeps the old spelling until a later run proposes the name on its own.
+    assert repair.accept_repair(
+        orig, "Meowy may already be dead, but still, I can't give up.", "", 4.14, CSM, ref_role="translation"
+    )
+    assert repair.accept_repair(
+        "I hate them, too, since one took my pet cat, Meowie, away.",
+        "I hate them, too, since one took my pet cat, Meowy, away.",
+        "",
+        3.84,
+        CSM,
+        ref_role="translation",
+    )

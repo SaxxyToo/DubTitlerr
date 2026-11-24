@@ -563,6 +563,46 @@ word is absent from the dub window, the proposal falls back to the classic gates
 `REPAIR_GATE_DUB_VOUCHED=0` restores classic semantics everywhere; like `REPAIR_REF_CLASSIC` it is
 a rollback switch, not a stored setting.
 
+### A refused reply loses the name it carried
+
+Every guard judges a whole proposal, and a refusal discards all of it -- so a reply whose only
+virtue is a correct proper noun ships nothing. Measured on Chainsaw Man S01E03 (`Meowie` ->
+`Meowy`, 2026-11-24), the gate does **not** refuse the spelling: the one-token swap is admitted
+with a reference, without one, and riding a split fix, and the live run recorded those admissions
+(`Meowie may already be dead, but still, I can't give up.` -> `Meowy may ...` was admitted by
+`accept_repair`). What gets refused is the line the name arrives on -- `ref_borrow` when the model
+hands back the fansub's own sentence, `content_drop` when it also drops a word -- and the corrected
+name goes with it. A later run that replies with the name alone ships the fix, so two builds of one
+episode can differ in a name with no gate change between them.
+
+Across the store (276 recorded one-token, glossary-name-only refusals over 23 shows, replayed
+against the current gate on 2026-11-24): 202 refuse on `fits_card` (the longer spelling does not fit
+a card already at or over the profile -- genuinely undisplayable, not misjudged), 25 on
+`invents_name`, 7 on `length_ratio`, 4 on `ref_borrow`, **0 on `content_drop`**. The content-drop
+guard does not over-match proper-noun corrections, and this class needs no gate change.
+
+Two consequences for measuring a build:
+
+- Never judge a build from `<stem>.eng.dubtitles.srt` while a pass is running. `generate` rewrites
+  that file from the raw ASR card list at the start of every pass and `repair` edits it afterwards,
+  so mid-run it holds unrepaired spellings (measured 2026-11-24 12:56: the srt carried `Meowie`
+  eight times for an episode whose delivered sidecar carried `Meowy` where the gate had admitted
+  it). Compare the finished sidecar, or wait for the pass to end.
+- `glossary.correct` will not snap a one-letter name variant (`Meowie` -> `Meowy`: 0 changes). The
+  names list only matches on exact, hard-fix or fuzzy tiers and this pair is below the fuzzy tier,
+  so the LLM repair is the only route to the correct spelling -- which is why a refused reply
+  costs it.
+
+Second reported instance, `Yet there's no escaping, Mishima.` -> `Makima` (same show, S01E05): the
+gate **admits** it with the card's translation reference, and the live run recorded no proposal for
+that line at all -- it was one of 56 `unchanged` replies out of 100 targets, so there was nothing
+to refuse. The gate refuses that swap only on a card with no reference (`vouched_name`, S-14, older
+than #121), and an unreferenced card on a show without `unanchored_repair` is not sent to the model
+in the first place. Its cause is glossary coverage: this show lists **both** `Mishima` and `Makima`
+as canonical names (`Mishima` is right in S01E09), so the prompt vouches for the wrong spelling on
+the S01E05 card. Fix the glossary, not the gate. For the same reason S01E09's `Shuzo Mishima.` ->
+`Shuuzou Mishima.` is refused as `invents_name` on every run: `Shuuzou` is not listed.
+
 ### Recording
 
 | Where                                   | Fields                                                                                                                                  |
