@@ -121,7 +121,11 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Apply saved decisions' }).click();
   await expect(page.getByRole('status')).toContainText('subtitles rebuilt and remux queued');
-  await page.getByLabel('Keyboard shortcuts').click();
+  // The app offers two triggers (topbar icon, footer button); mobile renders
+  // both, desktop one. Target the visible one — it is also the element the
+  // focus-restore path returns focus to.
+  const shortcutsTrigger = page.getByLabel('Keyboard shortcuts').and(page.locator(':visible')).first();
+  await shortcutsTrigger.click();
   const help = page.getByRole('dialog');
   await expect(help).toBeVisible();
   // C2: the overlay documents every bound key, including the one that opens it.
@@ -129,7 +133,7 @@ test('human review workspace keeps real workflow semantics', async ({ page, requ
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   // G1: closing the overlay hands focus back to the button that opened it.
-  await expect(page.getByLabel('Keyboard shortcuts')).toBeFocused();
+  await expect(shortcutsTrigger).toBeFocused();
 
   async function nav(name: string | RegExp) {
     if (testInfo.project.name === 'mobile')
