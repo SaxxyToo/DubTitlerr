@@ -77,9 +77,14 @@ An unreachable model, an empty answer, an unparseable numbered line or a rejecte
 guard leaves the card exactly as it was. ``apply_file`` writes through
 ``presentation._render`` (only the Dubtitles events change), then re-runs the
 publish gate on the bytes it wrote and restores the previous file on a refusal.
-An episode whose model was unreachable is NOT stamped, so the next pass retries it;
-the sweep stops after two consecutive unreachable episodes rather than timing out
-against every episode in the library.
+An episode whose model did not produce usable text is NOT stamped, so the next pass
+retries it; the sweep stops after two consecutive unusable episodes rather than
+timing out against every episode in the library, and names why (empty answer,
+unparsable reply, refused edit) instead of calling all three a transport failure.
+
+The one place the number is not trusted is a single-card batch: the model renumbers
+it (``[1]`` for card 18) and the reply's only answer is taken, then guarded like any
+other. :func:`sole_candidate` states the limit -- two numbered lines stay ambiguous.
 
 IN-APP RE-PASS
 --------------
@@ -111,7 +116,7 @@ import time
 from dubtitlerr.core.atomic_file import MODE_KEEP, atomic_write
 from dubtitlerr.pipeline import presentation, punctuation
 
-RESTORATION_EPOCH = 2  # 1 = punctuation/caps/spacing/house style (P31); 2 = same inherited-refusal rule
+RESTORATION_EPOCH = 3  # 1 = P31; 2 = inherited-refusal rule; 3 = one-card renumbered answers
 STAMP_KIND = "restoration"
 MAX_BATCH = 12  # cards per model call
 MAX_REJECT_EVENTS = 20
@@ -127,6 +132,16 @@ _LINE_BREAK = re.compile(r"(?:\\N|\\n|\n)")
 _TURN = re.compile(r"^\s*-\s+")
 _ALNUM = re.compile(r"[^0-9A-Za-z\u00C0-\u024F]+")
 _REPLY_LINE = re.compile(r"^\s*(?:\[(\d+)\]|(\d+)[.)])\s*(.+?)\s*$")
+# Why an episode finished ``llm-unavailable``. The sweep used to print "model unreachable"
+# for all of them, which sent two debugging sessions down the network path when the real
+# cause was a renumbered or guard-refused line (live, 2026-11-24: 86 S01E09 had ONE
+# deficient card at index 18 and the model answered "[1] ...").
+_STALL_CAUSES = (
+    ("llm_empty", "the model returned nothing (transport failure or empty answer)"),
+    ("llm_missing", "no usable answer from the model (unparsable reply)"),
+    ("rejected_guard", "the content guard refused the model's edit"),
+    ("layout_rejected", "the model's edit did not fit the card's layout"),
+)
 
 
 # --- the invariant ------------------------------------------------------------------
@@ -451,6 +466,23 @@ def parse_reply(reply: str, wanted: set[int]) -> dict[int, str]:
     return out
 
 
+def sole_candidate(reply: str) -> str | None:
+    """The text of the one numbered line in ``reply``, whatever number it carries.
+
+    A one-card batch is the only case where the number cannot disambiguate: the model
+    renumbers the batch it was given (measured live 2026-11-24: wanted ``{18}``, answered
+    ``'[1] You know I would have fought with you,'`` -- the same words, correct
+    punctuation) and a strict index match throws the answer away. Two or more numbered
+    lines are ambiguous, and an unnumbered reply is not an answer, so both return None.
+    """
+    hits = []
+    for raw in (reply or "").splitlines():
+        m = _REPLY_LINE.match(raw)
+        if m:
+            hits.append(m.group(3))
+    return hits[0] if len(hits) == 1 else None
+
+
 def _count_punct(text: str) -> int:
     return sum(1 for ch in text if not ch.isalnum() and not ch.isspace())
 
@@ -493,6 +525,7 @@ def restore_cards(cards: list[dict], ask=None, stem: str | None = None) -> tuple
         "layout_rejected": 0,
         "llm_empty": 0,
         "llm_missing": 0,
+        "llm_renumbered": 0,
         "invariant_violations": 0,
         "words_preserved": True,
     }
@@ -534,6 +567,15 @@ def restore_cards(cards: list[dict], ask=None, stem: str | None = None) -> tuple
                 )
             continue
         parsed = parse_reply(reply, set(batch))
+        if len(batch) == 1 and not parsed:
+            # A one-card batch is where the model renumbers: the card was index 18 in the
+            # episode, so it answers "[1] ...". The reply holds exactly one answer, so it
+            # is taken by shape and put through the same house-style, invariant and layout
+            # guards as a correctly numbered one -- they still protect the words.
+            only = sole_candidate(reply)
+            if only is not None:
+                parsed = {batch[0]: only}
+                report["llm_renumbered"] += 1
         for i in batch:
             candidate = parsed.get(i)
             if candidate is None:
@@ -750,6 +792,19 @@ def apply_episode(stem: str, dry_run: bool = False, force: bool = False, ask=Non
     return report
 
 
+def stall_cause(report: dict) -> str:
+    """Why an episode ended ``llm-unavailable``, in words the operator can act on.
+
+    The sweep reported every one of these as "model unreachable", so a renumbered answer
+    or a guard refusal read as a network fault. Only ``llm_empty`` can be a transport
+    failure; the others are answers that arrived and were unusable.
+    """
+    for key, label in _STALL_CAUSES:
+        if report.get(key):
+            return label
+    return "cards stayed deficient (the model proposed no change)"
+
+
 def sweep(roots: list[str], dry_run: bool = False, limit: int | None = None, ask=None) -> dict:
     """Restore every delivered episode under ``roots`` whose stamp is stale."""
     from dubtitlerr.core import artifact_store, common
@@ -769,6 +824,7 @@ def sweep(roots: list[str], dry_run: bool = False, limit: int | None = None, ask
         ordered = ordered[:limit]
     out = {"scanned": len(ordered), "stale": 0, "restored": 0, "noop": 0, "skipped": 0, "failed": 0, "results": []}
     unreachable = 0
+    causes: list[str] = []
     for stem in ordered:
         if not is_stale(stem):
             continue
@@ -786,15 +842,22 @@ def sweep(roots: list[str], dry_run: bool = False, limit: int | None = None, ask
             out["noop"] += 1
         else:
             out["skipped"] += 1
+        entry = {"stem": os.path.basename(stem), "outcome": oc, "counters": rep}
         if oc == "llm-unavailable":
+            cause = stall_cause(rep)
+            entry["stall"] = cause
             unreachable += 1
+            causes.append(cause)
             if unreachable >= 2:
-                out["results"].append({"stem": os.path.basename(stem), "outcome": oc})
-                out["aborted"] = "model unreachable: retried next pass"
+                out["results"].append(entry)
+                # Name what actually happened. "model unreachable" was printed for parse
+                # misses and guard refusals too, and cost two sessions chasing the network.
+                out["aborted"] = f"{'; '.join(dict.fromkeys(causes))}: retried next pass"
                 break
         else:
             unreachable = 0
-        out["results"].append({"stem": os.path.basename(stem), "outcome": oc, "counters": rep})
+            causes.clear()
+        out["results"].append(entry)
     return out
 
 

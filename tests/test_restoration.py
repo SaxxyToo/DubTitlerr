@@ -156,6 +156,51 @@ def test_a_missing_or_empty_answer_never_costs_a_card():
     assert report["cards_restored_lm"] == 0
 
 
+# --- a one-card batch the model renumbers (live 86 S01E09) --------------------------
+
+
+def _one_deficient_card_at(index, text):
+    """A card list whose only deficiency sits at ``index`` -- the live 86 E09 shape."""
+    cards = _cards(*(["I don't think any of you are coming back alive."] * index), text)
+    assert list(restoration.findings(cards)) == [index]
+    return cards
+
+
+def test_a_single_card_batch_the_model_renumbers_is_still_restored():
+    """The model answered '[1] ...' for the batch's only card, index 18, with the right
+    words. The strict index match dropped the reply's only answer, the card stayed
+    deficient and the episode ended llm-unavailable -- which aborted the sweep."""
+    cards = _one_deficient_card_at(18, "you know i would have fought with you")
+    new, report = restoration.restore_cards(cards, ask=lambda p, n: "[1] You know I would have fought with you.")
+
+    assert new[18]["text"] == "You know I would have fought with you."
+    assert report["llm_missing"] == 0
+    assert report["llm_renumbered"] == 1
+    assert report["cards_restored_lm"] == 1
+    assert report["words_preserved"] is True
+
+
+def test_a_renumbered_answer_still_goes_through_the_word_guard():
+    cards = _one_deficient_card_at(18, "you know i would have fought with you")
+    new, report = restoration.restore_cards(cards, ask=lambda p, n: "[1] You know I would have fought alongside you.")
+
+    assert "alongside" not in new[18]["text"]
+    assert restoration.word_tokens(new[18]["text"]) == restoration.word_tokens(cards[18]["text"])
+    assert report["rejected_guard"] == 1
+    assert report["cards_restored_lm"] == 0
+
+
+def test_two_numbered_lines_in_a_one_card_batch_are_ambiguous_and_not_used():
+    cards = _one_deficient_card_at(18, "you know i would have fought with you")
+    new, report = restoration.restore_cards(
+        cards, ask=lambda p, n: "[1] You know I would have fought with you.\n[2] Someone else entirely."
+    )
+
+    assert report["llm_missing"] == 1
+    assert report["llm_renumbered"] == 0
+    assert restoration.word_tokens(new[18]["text"]) == restoration.word_tokens(cards[18]["text"])
+
+
 def test_a_well_formed_card_is_never_sent_to_the_model():
     cards = _cards("I don't think any of you are coming back alive.")
 
@@ -285,6 +330,68 @@ def test_a_refusal_the_input_already_carried_keeps_the_restoration(tmp_path, mon
     assert report["pre_existing_fails"] == fails_before
     assert report["changed_cards"] > 0
     assert publish_gate.evaluate(publish_gate.load_cues(stem)[1]) == fails_before
+
+
+# --- the sweep's abort label --------------------------------------------------------
+
+
+def _sweep_with(monkeypatch, reports):
+    """Run the sweep over canned per-episode reports, in the order given."""
+    stems = [f"/library/{name}" for name in reports]
+    monkeypatch.setattr(artifact_store, "stems", lambda **kw: stems)
+    monkeypatch.setattr(restoration, "is_stale", lambda stem: True)
+    monkeypatch.setattr(
+        restoration,
+        "apply_episode",
+        lambda stem, dry_run=False, force=False, ask=None: reports[os.path.basename(stem)],
+    )
+    return restoration.sweep(["/library"])
+
+
+def test_the_sweep_abort_names_the_answer_instead_of_the_network(monkeypatch):
+    """Live 2026-11-24: 86 S01E09 was a parse miss and Afro Samurai S01E02 a guard
+    refusal, and the sweep called both "model unreachable" -- two sessions went
+    looking for a network fault that was never there."""
+    out = _sweep_with(
+        monkeypatch,
+        {
+            "86 S01E09": {"outcome": "llm-unavailable", "cards_deficient": 1, "llm_missing": 1},
+            "Afro S01E02": {"outcome": "llm-unavailable", "cards_deficient": 1, "rejected_guard": 1},
+        },
+    )
+
+    assert "unreachable" not in out["aborted"]
+    assert out["aborted"] == (
+        "no usable answer from the model (unparsable reply); the content guard refused the model's edit: retried next pass"
+    )
+    assert [r["stall"] for r in out["results"]] == [
+        "no usable answer from the model (unparsable reply)",
+        "the content guard refused the model's edit",
+    ]
+
+
+def test_a_true_transport_failure_keeps_its_own_wording(monkeypatch):
+    out = _sweep_with(
+        monkeypatch,
+        {
+            "Show S01E01": {"outcome": "llm-unavailable", "llm_empty": 3},
+            "Show S01E02": {"outcome": "llm-unavailable", "llm_empty": 1},
+        },
+    )
+    assert out["aborted"] == "the model returned nothing (transport failure or empty answer): retried next pass"
+
+
+def test_one_recovered_episode_resets_the_abort_counter(monkeypatch):
+    out = _sweep_with(
+        monkeypatch,
+        {
+            "A": {"outcome": "llm-unavailable", "llm_missing": 1},
+            "B": {"outcome": "restored"},
+            "C": {"outcome": "llm-unavailable", "llm_missing": 1},
+        },
+    )
+    assert "aborted" not in out
+    assert (out["restored"], out["skipped"]) == (1, 2)
 
 
 # --- live bytes ---------------------------------------------------------------------
