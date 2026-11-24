@@ -952,6 +952,73 @@ def dropped_content_words(orig, new, ref):
     return []
 
 
+# A model that answers with unrelated text -- an instruction fragment, boilerplate -- has not
+# repaired the line, it has REPLACED it. ``dropped_content_words`` above cannot see this: it
+# fires only when the drops OUTNUMBER the gains, and a replacement gains as many words as it
+# loses. Measured 2026-11-24 on the round-4 replay (Chainsaw Man S01, 406 anchored lines):
+# SmolLM-FT-CoEdIT (135M, the only llama.cpp-viable CoEdIT fine-tune) answered the literal
+# prompt fragment "Return ONLY the corrected line - no quotes, no notes, no rule text." on
+# nearly every line, discarded all nine of a line's content words, gained nine of its own, and
+# the gate admitted every one -- the cleanest-looking profile in the whole round (0 glyph,
+# 7 borrows) until the rows were read.
+#
+# So the question is what SURVIVES. A repair keeps most of its line -- a one-for-one
+# substitution, a name fix, a split/join (the substitution and respelling cases pinned in
+# tests/test_repair_gate_churn.py) -- and only a replacement loses nearly all of it. This is
+# deliberately not a general similarity score: the count is over the ORIGINAL's content words,
+# and a line needs REPLACED_MIN_WORDS of them before the guard can fire at all, which is what
+# keeps 'What you ain't' -> 'What aren't you?' (one content word, substituted) out of scope.
+REPLACED_MIN_WORDS = 3  # the shortest line that can lose REPLACED_MIN_LOST words and still carry content
+REPLACED_MIN_LOST = 2  # one lost word is a substitution or a rename, not a replacement
+REPLACED_FRACTION = 0.8  # ...and what a replacement loses is nearly ALL of the line's content
+# A line built from ONE word repeated ('Woah, woah, woah, woah!') has no proposition to lose, and
+# the commonest reply to it is the same interjection respelled ('Whoa, whoa, whoa, whoa!' -- seven
+# models in the same replay, every one a real if trivial spelling fix). Refusing that would be a
+# false positive, so such a line is out of scope for this guard; every other guard still applies.
+REPLACED_MIN_DISTINCT = 2
+
+
+def kept_content_words(orig, new):
+    """The original's content words that survive in ``new``, as a multiset -- so a duplicate collapse
+    (``You've You've``) counts as one lost word rather than two kept ones.
+
+    A word survives on its own spelling, or absorbed into the word it was joined into
+    (``th warted`` -> ``warted``, ``shoun en`` -> ``shounen``, ``thats`` -> ``that's``) -- the
+    split/join repairs this stage exists to make. ``_absorbed`` is the same test
+    ``dropped_content_words`` uses, so the two guards cannot drift apart on what "kept" means.
+    """
+    import collections
+
+    content = collections.Counter(_content_tokens(_words(orig)))
+    new_words = _words(new)
+    have = collections.Counter(new_words)
+    kept = collections.Counter()
+    for word, count in content.items():
+        kept[word] = min(count, have[word])
+        # The absorbed fallback is for a word that did NOT survive as a whole word at all -- the
+        # fragments of 'th warted' -> 'thwarted'. It must not top up a word that survived SOME of
+        # its occurrences: 'You've You've' -> 'You've' has one of the pair gone, not both kept.
+        if not have[word] and _absorbed(word, new_words):
+            kept[word] = count
+    return kept
+
+
+def replaced_line(orig, new):
+    """True when ``new`` discards the line instead of repairing it: it loses at least
+    ``REPLACED_MIN_LOST`` of the original's content words having kept less than
+    ``1 - REPLACED_FRACTION`` of them.
+
+    A line carrying fewer than ``REPLACED_MIN_WORDS`` content words -- or fewer than
+    ``REPLACED_MIN_DISTINCT`` distinct ones -- cannot be judged this way and is never refused here,
+    and neither is a fully dub-vouched proposal (its added words are attested by the audio's own
+    transcript -- the same exemption ``ref_borrow`` takes)."""
+    content = _content_tokens(_words(orig))
+    if len(content) < REPLACED_MIN_WORDS or len(set(content)) < REPLACED_MIN_DISTINCT:
+        return False
+    lost = len(content) - sum(kept_content_words(orig, new).values())
+    return lost >= REPLACED_MIN_LOST and lost / len(content) >= REPLACED_FRACTION
+
+
 def fits_card(text, dur, orig=None):
     """Whether ``text`` can be DISPLAYED legally on a card lasting ``dur`` seconds (C4).
 
@@ -1397,7 +1464,7 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
     measurements, can tell why a proposal was refused:
 
         empty, unchanged, terminal_punct, invents_name, name_part, vouched_name, length_ratio,
-        fits_card, content_drop, ref_borrow
+        fits_card, content_drop, replaced, ref_borrow
 
     ``unchanged`` ignores typographic glyph swaps: a proposal equal to the source after
     folding curly/straight quotes and apostrophes is not an edit (see ``fold_glyphs``).
@@ -1405,7 +1472,10 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
     ``content_drop`` refuses a proposal that deletes a content word the reference does not
     carry (see ``dropped_content_words``); it is not applied when ``ref_role='dub'``, where
     the reference is the audio's own transcript and a word absent from it is likelier ASR
-    noise. ``ref_borrow`` also fires on a short contiguous phrase lifted from the reference
+    noise. ``replaced`` refuses a proposal that discards nearly all of the line's content
+    words whether or not it gains as many of its own -- the prompt-fragment/boilerplate case
+    that ``content_drop``'s drop-versus-gain count lets through (see ``replaced_line``).
+    ``ref_borrow`` also fires on a short contiguous phrase lifted from the reference
     (see ``borrowed_phrase_from_ref``), which used to slip under MAX_REF_BORROW.
 
     ``punct_case_ok`` (default: REPAIR_ACCEPT_PUNCT_CASE_ONLY=1) gives a proposal that changes only case and punctuation two
@@ -1455,6 +1525,8 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
     # is likelier ASR noise than a deletion, and the drop is left to the other guards.
     if ref_role != reftracks.ROLE_DUB and dropped_content_words(orig, new, ref):
         return "content_drop"
+    if not vouched and replaced_line(orig, new):
+        return "replaced"  # the line was discarded, not repaired: an instruction fragment or boilerplate
     if not vouched and (len(borrowed_from_ref(orig, new, ref)) >= MAX_REF_BORROW or borrowed_phrase_from_ref(orig, new, ref)):
         return "ref_borrow"
     return None

@@ -270,7 +270,7 @@ TRACK_NAME = "Dubtitles"
 # gap being fixed. Budget it as a one-off redo of episodes transcribed by a previous model,
 # in watch-gated order.
 TRANSCRIBE_VERSION = 4
-TEXT_VERSION = 12
+TEXT_VERSION = 13
 # GRANDFATHER_VERSION: fixed constant, never changes. The version assumed for a stamp
 # written before versioning existed (no "version" key). At introduction it equalled
 # the pipeline version, so that rollout regenerated nothing.
