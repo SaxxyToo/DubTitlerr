@@ -847,10 +847,10 @@ Click **Test** in Sonarr or Radarr to confirm the connection.
 
 - Enter a name and select a kind (`llama.cpp`, `Ollama`, or `OpenAI-compatible`).
 - Set the endpoint URL and model name.
-- For OpenAI-compatible providers, enter the API key in the write-only key field. Keys are stored in `secrets.json` (mode 0600) and never returned to the browser.
+- For OpenAI-compatible providers, enter the API key in the write-only key field. Keys are stored in `secrets.json` (mode 0600) and never returned to the browser. An OpenAI-compatible connection needs a key; if your server requires none (llama-swap, vLLM with `--api-key` off), add it as the **llama.cpp** kind, which speaks the same `/v1/chat/completions` API and sends no key.
 - Click **Test** to send a probe completion and verify the endpoint.
 
-**3. Assign stages.** Pick which connection runs each stage (Repair, Restore, Verify, Decision, and Acquire). Stages without an assigned connection keep their container environment defaults.
+**3. Assign stages.** Pick which connection runs each stage (Repair, Restore, Verify, Decision, and Acquire). Restore accepts llama.cpp, Ollama or an OpenAI-compatible connection; an OpenAI-compatible one needs a model. Stages without an assigned connection keep their container environment defaults.
 
 ---
 

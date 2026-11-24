@@ -342,11 +342,11 @@ REPAIR_EXTRA_BODY^connections^string^""^merge^next_merge_pass^connections^Repair
 REPAIR_TIMEOUT_CONNECT^connections^float^10^merge^next_merge_pass^connections^Repair connect timeout (s)^Derived from the repair Connection.
 REPAIR_TIMEOUT_READ^connections^float^120^merge^next_merge_pass^connections^Repair read timeout (s)^Derived from the repair Connection.
 OLLAMA_URL^connections^url^"http://127.0.0.1:11434/api/generate"^gen,merge^next_merge_pass^connections^Ollama URL^Derived from an Ollama Connection.
-RESTORE_BACKEND^connections^string^""^merge^next_merge_pass^connections^Restore backend^Derived from the restore Connection.
-RESTORE_MODEL^connections^string^""^merge^next_merge_pass^connections^Restore model^Derived from the restore Connection.
-RESTORE_LLAMACPP_URL^connections^url^""^merge^next_merge_pass^connections^Restore llama.cpp URL^Derived from the restore Connection.
-RESTORE_OPENAI_URL^connections^url^""^merge^next_merge_pass^connections^Restore hosted URL^Derived from the restore Connection.
-RESTORE_OPENAI_KEY_ENV^connections^string^""^merge^next_merge_pass^connections^Restore key variable^Name of the variable holding the restore key.
+RESTORE_BACKEND^connections^string^""^gen,merge^next_show^connections^Restore backend^Derived from the restore Connection.
+RESTORE_MODEL^connections^string^""^gen,merge^next_show^connections^Restore model^Derived from the restore Connection.
+RESTORE_LLAMACPP_URL^connections^url^""^gen,merge^next_show^connections^Restore llama.cpp URL^Derived from the restore Connection.
+RESTORE_OPENAI_URL^connections^url^""^gen,merge^next_show^connections^Restore hosted URL^Derived from the restore Connection.
+RESTORE_OPENAI_KEY_ENV^connections^string^""^gen,merge^next_show^connections^Restore key variable^Name of the variable holding the restore key.
 VERIFY_BACKEND^connections^enum^""^gen,merge^next_show^connections^Verify backend^Derived from the verify Connection.
 VERIFY_MODEL^connections^string^"qwen3:8b"^gen,merge^next_show^connections^Verify model^Derived from the verify Connection.
 VERIFY_LLAMACPP_URL^connections^url^""^gen,merge^next_show^connections^Verify llama.cpp URL^Derived from the verify Connection.

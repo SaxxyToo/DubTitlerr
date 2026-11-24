@@ -256,6 +256,20 @@ def test_keys_for_scope_hands_a_merge_pass_the_gen_keys_too():
     assert "REVIEW_PORT" in reg.keys_for_scope("server") and "MERGE_INTERVAL" in reg.keys_for_scope("container")
 
 
+def test_the_restore_connection_rows_reach_the_generate_loop():
+    """punctuation.restore runs inside generate.py, which only receives gen-scope keys. A restore
+    Connection that stayed merge-only would never be applied where the generate-side pass reads it."""
+    restore_rows = {
+        "RESTORE_BACKEND",
+        "RESTORE_MODEL",
+        "RESTORE_LLAMACPP_URL",
+        "RESTORE_OPENAI_URL",
+        "RESTORE_OPENAI_KEY_ENV",
+    }
+    assert restore_rows <= set(reg.keys_for_scope("gen"))
+    assert restore_rows <= set(reg.keys_for_scope("merge"))
+
+
 def test_anime_order_is_read_only_and_not_first_wave():
     assert "ANIME_ORDER" in reg.REGISTRY
     entry = reg.REGISTRY["ANIME_ORDER"]

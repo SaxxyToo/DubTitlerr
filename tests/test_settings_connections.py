@@ -81,13 +81,15 @@ def test_stage_rules_name_the_stage_and_the_reason():
     ok = {"repair": "cloud", "restore": "local", "verify": "local", "decision": "cloud", "acquire": "local"}
     assert conns.validate_stages(ok, connections) == {}
     assert conns.validate_stages({"repair": "gone"}, connections) == {"repair": "points at a connection that does not exist"}
-    assert "llamacpp or ollama" in conns.validate_stages({"restore": "cloud"}, connections)["restore"]
+    # restore speaks the openai wire too (punctuation._ask has an openai branch)
+    assert conns.validate_stages({"restore": "cloud"}, connections) == {}
     assert "openai" in conns.validate_stages({"decision": "local"}, connections)["decision"]
     assert "same connection" in conns.validate_stages({"verify": "local", "acquire": "oll"}, connections)["acquire"]
     assert "Ollama" in conns.validate_stages({"repair": "oll", "restore": "oll2"}, connections)["restore"]
     assert conns.validate_stages({"verify": "@decision", "decision": "cloud", "acquire": "local"}, connections) == {}
     nomodel = [conn(name="bare", kind="openai", url="https://openrouter.ai/api/alpha/decisions", model="")]
     assert "model" in conns.validate_stages({"verify": "bare"}, nomodel)["verify"]
+    assert "model" in conns.validate_stages({"restore": "bare"}, nomodel)["restore"]
     assert conns.validate_stages({"repair": "bare"}, nomodel) == {}
     assert "decision connection first" in conns.validate_stages({"verify": "@decision"}, connections)["verify"]
 
@@ -212,6 +214,25 @@ def test_restore_and_repair_both_ollama_use_one_address_and_repair_comes_last():
     merge = conns.expand(state_with({"restore": "oll", "repair": "oll"}, [ollama]), "merge")
     assert dict(merge)["OLLAMA_URL"] == ollama["url"] and dict(merge)["RESTORE_BACKEND"] == "ollama"
     assert [n for n, _ in merge].index("RESTORE_BACKEND") < [n for n, _ in merge].index("REPAIR_BACKEND")
+
+
+def test_a_restore_connection_reaches_both_loops_and_a_hosted_key_goes_through_a_holder():
+    """generate.py runs punctuation.restore on the word list, and the merge pass reuses the same resolved
+    backend, so the restore Connection must expand in both scopes."""
+    state = state_with({"restore": "cloud"}, [CLOUD], {"cloud": "«redacted:sk-…»"})
+    for scope in ("gen", "merge"):
+        env = dict(conns.expand(state, scope))
+        assert env["RESTORE_BACKEND"] == "openai" and env["RESTORE_OPENAI_URL"] == CLOUD["url"]
+        assert env["RESTORE_MODEL"] == "gpt-x"
+        assert env["RESTORE_OPENAI_KEY_ENV"] == "DT_CONN_KEY_RESTORE"
+        assert env["DT_CONN_KEY_RESTORE"] == "«redacted:sk-…»"
+    assert "REPAIR_BACKEND" not in dict(conns.expand(state, "gen")), "the generate loop never gets the repair endpoint"
+
+
+def test_a_llamacpp_restore_connection_clears_the_previous_key_pointer():
+    env = dict(conns.expand(state_with({"restore": "local"}, [conn()]), "gen"))
+    assert env["RESTORE_BACKEND"] == "llamacpp" and env["RESTORE_LLAMACPP_URL"] == conn()["url"]
+    assert env["RESTORE_OPENAI_KEY_ENV"] == "" and "DT_CONN_KEY_RESTORE" not in env
 
 
 def test_an_unset_stage_or_a_dangling_name_adds_nothing():

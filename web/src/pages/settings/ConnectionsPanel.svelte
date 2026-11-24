@@ -216,7 +216,8 @@
             {#if c.key === CLEAR}<span class="hint">The key is cleared when you save.</span>{/if}
             <p class="hint">
               A key travels over https, or to a loopback host only. It is sent to the server, never shown
-              back.
+              back. An OpenAI-compatible connection needs a key: a keyless self-hosted server (llama-swap,
+              vLLM with auth off) belongs on the llama.cpp kind, which sends no key.
             </p>
           {:else}
             <p class="field-label">API key: {c.api_key?.set ? 'Set' : 'Not set'}</p>
