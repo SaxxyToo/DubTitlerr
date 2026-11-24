@@ -9,7 +9,6 @@ import {
   decisionTone,
   isUndoable,
   queueHeadline,
-  relativeTime,
 } from '../src/lib/audit.js';
 
 test('decisionLabel and decisionTone cover every decision the server emits', () => {
@@ -27,16 +26,6 @@ test('auditSummary counts what happened, omitting zeros', () => {
   assert.equal(auditSummary({ dismiss: 12, apply: 3, expire: 0 }), '3 applied · 12 dismissed');
   assert.equal(auditSummary({}), 'No automatic decisions recorded yet');
   assert.equal(auditSummary({ apply: 1, 'custom-class': 2 }), '1 applied · 2 custom-class');
-});
-
-test('relativeTime says how old a decision is, and nothing when unreadable', () => {
-  const now = 1_800_000_000;
-  assert.equal(relativeTime(now - 30, now), 'just now');
-  assert.equal(relativeTime(now - 300, now), '5 min ago');
-  assert.equal(relativeTime(now - 7200, now), '2 h ago');
-  assert.equal(relativeTime(now - 3 * 86400, now), '3 d ago');
-  assert.equal(relativeTime(null, now), '');
-  assert.equal(relativeTime(NaN, now), '');
 });
 
 test('a row says what it decided and why', () => {

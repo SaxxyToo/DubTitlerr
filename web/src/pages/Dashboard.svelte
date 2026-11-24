@@ -4,11 +4,12 @@
   import {
     buildQuery,
     createLatest,
-    formatAge,
     pageWindow,
     summarizeCounts,
     warmingRetryDelay,
   } from '../lib/dashboard.js';
+  import { formatAge, formatAgo, formatCount, formatTime } from '../lib/format.js';
+  import Loading from '../lib/Loading.svelte';
   import StatusBadge, { STAGE_STATUS } from '../lib/StatusBadge.svelte';
 
   // Plain words for the pipeline stages (review_status.STAGES); an unknown stage shows as sent.
@@ -89,16 +90,6 @@
   const counts = $derived(summarizeCounts(header ?? {}));
   const pages = $derived(header?.pages ?? 1);
   const window_ = $derived(pageWindow(page, pages));
-
-  function formatTime(ts: number | null) {
-    return typeof ts === 'number' && Number.isFinite(ts) ? new Date(ts * 1000).toLocaleString() : '—';
-  }
-  // "3 min ago" with the full time on hover; a time in the future (clock skew) falls back to the full time.
-  function formatAgo(ts: number | null) {
-    if (typeof ts !== 'number' || !Number.isFinite(ts)) return '—';
-    const age = formatAge(Date.now() / 1000 - ts);
-    return age === 'unknown' ? formatTime(ts) : `${age} ago`;
-  }
 
   // `auto` marks a retry or timer refresh; a click, a filter or a page change starts the retry budget over.
   async function load(auto = false) {
@@ -232,7 +223,7 @@
     <div class="dashboard-counts">
       {#each counts as { stage, count } (stage)}<StatusBadge
           status={STAGE_STATUS[stage]}
-          label={`${stageLabel(stage)}: ${count}`}
+          label={`${stageLabel(stage)}: ${formatCount(count)}`}
         />{/each}
     </div>
     <small class="dashboard-scope">Counts cover the current page only.</small>
@@ -257,7 +248,7 @@
   </form>
 
   {#if loading && !episodes.length}
-    <p class="page-sub">Loading episode status…</p>
+    <Loading label="Loading episode status…" />
   {:else}
     <!-- Ten columns do not fit a phone: the table scrolls inside this region (focusable, so the keyboard can too;
          axe's scrollable-region-focusable rule requires it). -->

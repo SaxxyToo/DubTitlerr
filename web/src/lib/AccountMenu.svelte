@@ -96,8 +96,8 @@
     gap: 0.6rem;
     min-width: 17rem;
     padding: 1rem;
-    background: var(--surface, #fff);
-    border: 1px solid var(--border, #ccc);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 0.5rem;
   }
   .account-role {

@@ -2,6 +2,7 @@
   import { onDestroy, onMount, untrack } from 'svelte';
   import { ApiError } from '../lib/api.js';
   import { SETTINGS_CATEGORIES, settingsHash } from '../lib/route.js';
+  import Loading from '../lib/Loading.svelte';
   import {
     CLEAR,
     RESET,
@@ -355,7 +356,7 @@
   {/if}
 
   {#if !schema || !loaded}
-    {#if loading}<p class="page-sub">Loading settings…</p>{/if}
+    {#if loading}<Loading label="Loading settings…" />{/if}
   {:else if !meta}
     <ul class="settings-grid" aria-label="Settings categories">
       {#each SETTINGS_CATEGORIES as c (c.id)}
@@ -527,13 +528,5 @@
   .setting-note a {
     color: var(--focus);
     text-decoration: underline;
-  }
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
   }
 </style>

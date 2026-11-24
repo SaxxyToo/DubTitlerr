@@ -24,7 +24,7 @@
   onDestroy(restoreFocus);
 </script>
 
-<dialog bind:this={dialog} class="help-panel" aria-labelledby="restart-title" onclose={onlater}>
+<dialog bind:this={dialog} class="dialog-shell" aria-labelledby="restart-title" onclose={onlater}>
   <div class="panel-title"><h2 id="restart-title">Restart required</h2></div>
   <p>Saved. These settings take effect only after the builder restarts: {labels.join(', ')}.</p>
   {#if portChanged}
@@ -42,12 +42,3 @@
     <button class="primary" type="button" onclick={onnow}>Restart Now</button>
   </div>
 </dialog>
-
-<style>
-  .dialog-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-    margin-top: 12px;
-  }
-</style>

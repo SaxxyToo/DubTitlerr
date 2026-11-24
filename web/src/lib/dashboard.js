@@ -16,25 +16,13 @@ const STAGE_ORDER = ['transcribed', 'repaired', 'muxed', 'failed', 'stale', 'pen
 /**
  * The status token for a pipeline stage; unknown stages share one muted token
  * so the badge text (never colour alone) carries the meaning.
+ * Exported so tests can pin the vocabulary; the page uses it through this module.
  * @param {string} stage
  * @returns {StatusToken}
  */
 export function stageClass(stage) {
   const known = /** @type {Partial<Record<string, StatusToken>>} */ (STAGE_TOKENS)[stage];
   return known ?? 'muted';
-}
-
-/**
- * A heartbeat/cache age in seconds as "14 s", "3 min" or "2 h"; anything missing as "unknown".
- * @param {unknown} seconds
- * @returns {string}
- */
-export function formatAge(seconds) {
-  const s = typeof seconds === 'number' ? seconds : NaN;
-  if (!Number.isFinite(s) || s < 0) return 'unknown';
-  if (s < 60) return `${Math.floor(s)} s`;
-  if (s < 3600) return `${Math.floor(s / 60)} min`;
-  return `${Math.floor(s / 3600)} h`;
 }
 
 /**

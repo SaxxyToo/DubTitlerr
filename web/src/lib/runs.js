@@ -12,6 +12,7 @@ const STATUS_TOKENS = {
 /**
  * The status token for a request status; unknown statuses share one muted token
  * so the badge text (never colour alone) carries the meaning.
+ * Exported so tests can pin the vocabulary; the page uses it through this module.
  * @param {string} status
  * @returns {StatusToken}
  */
@@ -113,18 +114,6 @@ export function shortId(id) {
   const cut = id.lastIndexOf('-');
   if (cut >= 0 && cut < id.length - 1) return id.slice(cut + 1);
   return id.slice(0, 8);
-}
-
-/**
- * An ISO timestamp as local date and time; anything missing or unreadable as "—".
- * @param {unknown} iso
- * @returns {string}
- */
-export function formatWhen(iso) {
-  if (typeof iso !== 'string' || iso === '') return '—';
-  const stamp = new Date(iso).getTime();
-  if (Number.isNaN(stamp)) return '—';
-  return new Date(iso).toLocaleString();
 }
 
 const TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;

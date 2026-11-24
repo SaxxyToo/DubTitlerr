@@ -3,6 +3,12 @@
   // Boxes and colours bind the measured scaffold (layout.css) and the comp's
   // sampled pixels: exact values for a 1024x576 frame.
   // Words are the approved comp's, verbatim where the comp's words are real words.
+  //
+  // FROZEN CAPTURE. This page is a screenshot artifact (hero.html), not product copy: it is not
+  // routed to, it does not import app.css, and its palette/vocabulary are measured from the comp.
+  // The live source of truth is App.svelte + app.css; when the design moves, re-capture this file
+  // rather than editing it to match. The waveform generator is shared either way (lib/waveform.js).
+  import { waveTrace } from '../lib/waveform.js';
 
   // The comp shows one garbled extra label before Dashboard; it is rendered here
   // as its most plausible word. Integration swaps in the real section list.
@@ -10,27 +16,8 @@
   const scaleLabels = ['1.0', '0.8', '0.6', '0.4', '0.2', '0.0', '0.2', '0.4', '0.6', '0.8', '1.0'];
   const tickLabels = ['00:00', '00:02', '00:04', '00:06', '00:08', '00:10', '00:12', '00:14', '00:16'];
 
-  // Deterministic dub-audio waveform: dense vertical strokes from an amplitude
-  // envelope. Real builds draw this from the line's audio; the hero uses a fixed
-  // generator so the capture is reproducible.
-  function waveformPath(w: number, h: number, n: number): string {
-    const mid = h / 2;
-    let d = '';
-    for (let i = 0; i <= n; i++) {
-      const t = i / n;
-      const x = t * w;
-      const env =
-        0.16 + 0.74 * Math.abs(Math.sin(t * 8.3 + 0.4)) * (0.5 + 0.5 * Math.abs(Math.sin(t * 1.9 + 0.8)));
-      const j1 = 0.42 + 0.58 * Math.abs(Math.sin(i * 12.9898 + 4.1));
-      const j2 = 0.42 + 0.58 * Math.abs(Math.sin(i * 7.233 + 1.7));
-      const top = mid - env * j1 * mid * 0.98;
-      const bot = mid + env * j2 * mid * 0.98;
-      d += `M${x.toFixed(1)} ${top.toFixed(1)}L${x.toFixed(1)} ${bot.toFixed(1)}`;
-    }
-    return d;
-  }
-
-  const wave = waveformPath(924.7, 290.3, 330);
+  // The hero's own pixel-measured band, drawn by the shared generator.
+  const wave = waveTrace(924.7, 290.3, 330);
 </script>
 
 <div class="frame">

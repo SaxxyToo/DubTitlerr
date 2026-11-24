@@ -18,7 +18,7 @@
      Once the wait has timed out, Escape closes it like the Close button. -->
 <dialog
   bind:this={dialog}
-  class="help-panel"
+  class="dialog-shell"
   aria-labelledby="restarting-title"
   oncancel={(e) => {
     e.preventDefault();

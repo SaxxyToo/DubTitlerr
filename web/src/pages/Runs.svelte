@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { ApiError } from '../lib/api.js';
+  import { formatWhen } from '../lib/format.js';
+  import Loading from '../lib/Loading.svelte';
   import {
     buildRequestBody,
     checkShowPick,
     commonZones,
     describeError,
     describeSchedule,
-    formatWhen,
     scheduleBody,
     shortId,
     validateForm,
@@ -280,7 +281,7 @@
 
   <h2 class="runs-heading">Queue</h2>
   {#if loading && requests.length === 0}
-    <p class="page-sub">Loading requests…</p>
+    <Loading label="Loading requests…" />
   {:else}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div class="table-scroll" role="region" aria-label="Request queue" tabindex="0">
@@ -330,7 +331,7 @@
         {describeSchedule({ enabled: schedEnabled, open: schedOpen, close: schedClose, tz: schedTz })}
       </p>
       {#if schedLoading}
-        <p class="page-sub">Loading schedule…</p>
+        <Loading label="Loading schedule…" />
       {:else}
         <form
           class="runs-form form-narrow"

@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-# Deployed glossaries the page edits. One carries a flagged review queue so the Review queue tab has
+# Deployed glossaries the page edits. One carries flagged terms so the Flagged terms tab has
 # something real to decide: a respelling (accept -> hard fix), an additive expansion, a bare-string
 # verifier entry and a tier-B no-match with no canonical.
 GLOSSARIES = {

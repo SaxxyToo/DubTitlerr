@@ -14,8 +14,10 @@
     decisionTone,
     isUndoable,
     queueHeadline,
-    relativeTime,
   } from '../lib/audit.js';
+  import { formatCount, relativeTime } from '../lib/format.js';
+  import Empty from '../lib/Empty.svelte';
+  import Loading from '../lib/Loading.svelte';
 
   let {
     api,
@@ -92,7 +94,9 @@
     <button class="secondary" onclick={load} disabled={loading}
       ><RefreshCw size={16} class={loading ? 'spin' : ''} />Refresh</button
     >
-    <button class="secondary" onclick={onopeninbox}>Review exceptions{pending ? ` (${pending})` : ''}</button>
+    <button class="secondary" onclick={onopeninbox}
+      >Review inbox{pending ? ` (${formatCount(pending)})` : ''}</button
+    >
   </div>
 </header>
 <p class="page-sub">
@@ -110,13 +114,13 @@
 <section class="queue-health" aria-label="Queue health">
   <div class="panel-title">
     <h2>Queues</h2>
-    <span class="badge neutral">{headline.queued} open</span>
+    <span class="count">{formatCount(headline.queued)} open</span>
   </div>
   <p class="page-sub">{headline.note}</p>
   {#if classes.length}
     <ul class="class-list">
       {#each classes as row (row.cls)}
-        <li><span class="class-name">{row.cls}</span><span class="badge neutral">{row.count}</span></li>
+        <li><span class="class-name">{row.cls}</span><span class="count">{formatCount(row.count)}</span></li>
       {/each}
     </ul>
   {:else}
@@ -126,16 +130,13 @@
 
 <section class="audit-feed" aria-label="Recent auto decisions">
   {#if loading}
-    <div class="empty-state">
-      <History size={32} />
-      <h3>Reading the audit…</h3>
-    </div>
+    <Loading label="Reading the audit…" />
   {:else if !decisions.length}
-    <div class="empty-state">
-      <History size={32} aria-hidden="true" />
-      <h3>No automatic decisions yet</h3>
-      <p>When the pipeline dismisses noise or applies a corroborated fix, it lands here first.</p>
-    </div>
+    <Empty
+      icon={History}
+      title="No automatic decisions yet"
+      detail="When the pipeline dismisses noise or applies a corroborated fix, it lands here first."
+    />
   {:else}
     <ul class="audit-list">
       {#each decisions as item (item.id)}

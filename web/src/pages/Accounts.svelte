@@ -54,7 +54,14 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div class="table-scroll" role="region" aria-label="Account list" tabindex="0">
     <table class="data-table">
-      <thead><tr><th>Name</th><th>Role</th><th>Password</th><th></th></tr></thead>
+      <thead
+        ><tr
+          ><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Password</th><th
+            scope="col"
+            aria-label="Actions"></th
+          ></tr
+        ></thead
+      >
       <tbody>
         {#each users as u (u.name)}
           <tr>

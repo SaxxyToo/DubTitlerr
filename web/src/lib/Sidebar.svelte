@@ -1,6 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import type { Component } from 'svelte';
   import { SETTINGS_CATEGORIES, settingsHash } from './route.js';
+  import { VIEW_LABELS, type View } from './nav.js';
   import {
     AudioLines,
     BookOpen,
@@ -12,7 +14,15 @@
     Settings,
   } from '@lucide/svelte';
 
-  type View = 'audit' | 'inbox' | 'shared' | 'dashboard' | 'glossary' | 'runs' | 'settings';
+  const ICONS: Record<View, Component> = {
+    audit: History,
+    inbox: Inbox,
+    shared: Layers,
+    dashboard: LayoutDashboard,
+    glossary: BookOpen,
+    runs: ListChecks,
+    settings: Settings,
+  };
 
   let {
     view,
@@ -45,15 +55,12 @@
     onpick?: () => void;
   } = $props();
 
-  const ITEMS = [
-    { key: 'audit', label: 'Recent decisions', icon: History },
-    { key: 'inbox', label: 'Review inbox', icon: Inbox },
-    { key: 'shared', label: 'Shared lines', icon: Layers },
-    { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { key: 'glossary', label: 'Glossary', icon: BookOpen },
-    { key: 'runs', label: 'Runs', icon: ListChecks },
-    { key: 'settings', label: 'Settings', icon: Settings },
-  ] as const;
+  // Labels and order come from nav.js: one list, so the sidebar and the breadcrumb cannot disagree.
+  const ITEMS = (Object.keys(VIEW_LABELS) as View[]).map((key) => ({
+    key,
+    label: VIEW_LABELS[key],
+    icon: ICONS[key],
+  }));
 
   // A closed drawer sits off-screen, so it must not be reachable by Tab or a screen reader: `inert` removes it from both.
   // An opened one takes focus, so the keyboard user lands inside it.
@@ -76,7 +83,7 @@
         aria-current={view === item.key ? 'page' : undefined}
         onclick={() => onnavigate(item.key)}
         disabled={!authenticated}
-        ><Icon size={18} aria-hidden="true" />{item.label}{#if item.key === 'inbox'}<span class="nav-count"
+        ><Icon size={18} aria-hidden="true" />{item.label}{#if item.key === 'inbox'}<span class="count"
             >{authenticated ? count : '—'}</span
           >{/if}</button
       >

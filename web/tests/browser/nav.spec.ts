@@ -43,7 +43,7 @@ test('the bare workspace opens on Recent decisions, and its header opens the exc
     'aria-current',
     'page',
   );
-  await page.getByRole('button', { name: /Review exceptions/ }).click();
+  await page.locator('.page-actions').getByRole('button', { name: /Review inbox/ }).click();
   await expect(page.getByRole('heading', { name: 'Review inbox', level: 1 })).toBeVisible();
   expect(new URL(page.url()).hash).toBe('#/inbox');
 });

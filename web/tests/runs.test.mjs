@@ -6,7 +6,6 @@ import {
   crossesMidnight,
   describeError,
   describeSchedule,
-  formatWhen,
   scheduleBody,
   shortId,
   statusClass,
@@ -65,13 +64,10 @@ test('describeError names the admin-only refusal and the 409 id', () => {
   assert.equal(typeof describeError(500, {}), 'string');
 });
 
-test('shortId keeps the trailing hex and formatWhen reads ISO time', () => {
+test('shortId keeps the trailing hex', () => {
   assert.equal(shortId('20261012T140000Z-a1b2c3d4'), 'a1b2c3d4');
   assert.equal(shortId('abc'), 'abc');
   assert.equal(shortId(''), '');
-  assert.ok(formatWhen('2026-10-12T14:00:00+00:00').includes('2026'));
-  assert.equal(formatWhen(null), '—');
-  assert.equal(formatWhen('not a date'), '—');
 });
 
 test('validateSchedule accepts a full window and rejects bad fields', () => {

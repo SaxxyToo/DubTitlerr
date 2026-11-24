@@ -22,10 +22,10 @@
   const view = $derived(describeProcessing(processing));
 </script>
 
-<section class="settings-section processing" aria-label="Processing">
+<section class="settings-section" aria-label="Processing">
   <header class="processing-head">
     <h2>Processing</h2>
-    <span class="processing-state state-{view.state}" role="status" aria-live="polite">{view.label}</span>
+    <span class="count state-{view.state}" role="status" aria-live="polite">{view.label}</span>
   </header>
   <p class="page-sub">{view.detail}</p>
   {#if canEdit}
@@ -71,21 +71,17 @@
     gap: 12px;
     flex-wrap: wrap;
   }
-  .processing-state {
-    border-radius: 999px;
-    padding: 2px 10px;
-    font-size: 0.85em;
-    font-weight: 600;
-    border: 1px solid currentColor;
-  }
   .state-running {
     color: var(--ok);
+    border-color: currentColor;
   }
   .state-paused {
     color: var(--warn);
+    border-color: currentColor;
   }
   .state-stopped {
     color: var(--bad);
+    border-color: currentColor;
   }
   .processing-actions {
     display: flex;

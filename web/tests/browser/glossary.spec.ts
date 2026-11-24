@@ -30,7 +30,7 @@ test('a 409 version conflict is a red alert, not a green success notice', async 
 test('400, 404 and 503 answers read as plain sentences', async ({ page }) => {
   await openGlossary(page);
   const cases: Array<[number, object, RegExp]> = [
-    [503, { error: 'glossary busy' }, /glossary busy, try again/],
+    [503, { error: 'glossary busy' }, /Glossary busy; try again\./],
     [400, { error: 'term already exists' }, /Invalid request: term already exists/],
     [404, { error: 'no such glossary' }, /Unknown show: no such glossary/],
   ];
@@ -328,12 +328,12 @@ test('a non-admin sees the wiki as text with no Test or Save', async ({ page, re
   await expect(page.getByRole('button', { name: 'Save wiki' })).toHaveCount(0);
 });
 
-// --- the flagged review queue: the CLI's queue, decided from the page ---------------------------------------
+// --- the flagged terms: the CLI's queue, decided from the page --------------------------------------------
 
-test.describe('glossary review queue', () => {
+test.describe('glossary flagged terms', () => {
   test.beforeEach(async ({ request }) => reset(request));
 
-  const queueTab = (page: Page) => page.getByRole('button', { name: 'Review queue', exact: true });
+  const queueTab = (page: Page) => page.getByRole('button', { name: 'Flagged terms', exact: true });
   const card = (page: Page, term: string) => page.locator('.review-card').filter({ hasText: term });
 
   test('the tab carries the backlog count and each card carries reason and evidence', async ({ page }) => {
@@ -341,7 +341,7 @@ test.describe('glossary review queue', () => {
     await expect(queueTab(page)).toContainText('4');
     await queueTab(page).click();
 
-    await expect(page.getByRole('region', { name: 'Flagged review queue' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Flagged terms' })).toBeVisible();
     await expect(page.getByLabel('New term')).toHaveCount(0, 'the term form belongs to the editing tabs');
     await expect(page.getByText('4 of 4 flagged entries shown.')).toBeVisible();
 
@@ -390,7 +390,7 @@ test.describe('glossary review queue', () => {
     await expect(dwarfs.getByRole('button', { name: 'Keep as correct' })).toBeVisible();
   });
 
-  test('the review queue has no accessibility violations', async ({ page }) => {
+  test('the flagged terms have no accessibility violations', async ({ page }) => {
     await openGlossary(page);
     await queueTab(page).click();
     await expect(card(page, 'Usop')).toBeVisible();

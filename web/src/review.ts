@@ -17,14 +17,15 @@ export const verdictLabels = {
  * role wins, then the presence of reference TEXT (there was an anchor, we just cannot name
  * its role -- every entry queued before R2), and otherwise no anchor at all.
  */
+// Exported because refClassOf() returns it: an un-exported type cannot appear in an exported signature.
 export type RefClass = 'dub' | 'translation' | 'unanchored' | 'unclassified';
-export const refClassLabels: Record<RefClass, string> = {
+const refClassLabels: Record<RefClass, string> = {
   dub: 'Dub-anchored',
   translation: 'Translation-anchored',
   unanchored: 'Unanchored',
   unclassified: 'Unclassified',
 };
-export const refClassHints: Record<RefClass, string> = {
+const refClassHints: Record<RefClass, string> = {
   dub: "Checked against the release's own dub captions, so this wording is near-certain.",
   translation: 'Anchored on a separate translation: a strong hint, but the dub words it differently.',
   unanchored: 'No independent subtitle reference. Nothing downstream can repair this line again.',
@@ -32,7 +33,7 @@ export const refClassHints: Record<RefClass, string> = {
 };
 // The badge tones app.css already styles, so the chips need no new colour vocabulary:
 // near-certain reads as ok, a judgement call as info, no anchor as warn, unknown as muted.
-export const refClassTones: Record<RefClass, string> = {
+const refClassTones: Record<RefClass, string> = {
   dub: 'ok',
   translation: 'info',
   unanchored: 'warn',
@@ -40,7 +41,7 @@ export const refClassTones: Record<RefClass, string> = {
 };
 // The sentence under the reference text. An unclassified entry knows it HAS a reference but
 // not which track it came from, so it must not be described as a different translation.
-export const refClassNotes: Record<RefClass, string> = {
+const refClassNotes: Record<RefClass, string> = {
   dub: 'Captions of the dub itself: the closest available record of the dub wording. Follow the audio.',
   translation: 'A different translation, not the answer. Follow the dub audio.',
   unanchored: 'No subtitle reference was kept for this line.',
