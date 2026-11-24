@@ -1312,9 +1312,12 @@ def llm_llamacpp(prompt, model):
     "no repair" -- never as text to embed, which would put the model's monologue in a
     subtitle.
 
-    No "model" selector is sent (the server has exactly one model loaded); ``model`` is
-    accepted for signature parity with llm_ollama and the two-pass dispatch."""
+    ``model`` is sent like llm_ollama/llm_openai do. A single-model llama.cpp server
+    ignores the value, but a multi-model OpenAI-compatible proxy (llama-swap) routes BY
+    model id and answers a model-less request with 404 "no model id could be identified";
+    the configured REPAIR_MODEL is what makes that sweep work."""
     body = {
+        "model": model or MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
         "max_tokens": 80,

@@ -279,13 +279,37 @@ def test_llm_llamacpp_request_shape_and_response_parsing(monkeypatch):
     out = repair.llm_llamacpp("the prompt", "some-model")
     assert captured["url"] == repair.LLAMACPP_URL
     assert captured["body"]["messages"] == [{"role": "user", "content": "the prompt"}]
-    assert "model" not in captured["body"]  # llama.cpp serves one loaded model
+    assert captured["body"]["model"] == "some-model"
     assert out == "quoted fix"
 
 
 def test_llm_llamacpp_signals_a_transport_failure_rather_than_swallowing_it(monkeypatch):
     monkeypatch.setattr(repair, "_post_json", lambda url, body: (_ for _ in ()).throw(OSError("down")))
     assert repair.llm_llamacpp("p", "m") == repair.LLM_UNREACHABLE
+
+
+def test_llm_llamacpp_sends_the_model_so_a_multimodel_proxy_can_route(monkeypatch):
+    """A llama-swap host routes BY model id and answers a model-less request with
+    ``404 {"error": "no model id could be identified"}`` -- the live failure this change
+    fixes. Exercised over a real socket, so the wire body (not just a dict) is what the
+    proxy sees. A single-model llama.cpp server ignores the extra field."""
+    from fake_servers import FakeServer, chat_reply
+
+    def reply(req):
+        if not req["body"].get("model"):
+            return 404, {"error": "no model id could be identified"}
+        return 200, chat_reply(" Fixed line. ")
+
+    srv = FakeServer(reply)
+    try:
+        monkeypatch.setattr(repair, "LLAMACPP_URL", srv.url)
+        assert repair.llm_llamacpp("PROMPT", "qwen3.5:4b") == "Fixed line."
+        assert srv.requests[0]["body"]["model"] == "qwen3.5:4b"
+        # model=None falls back to REPAIR_MODEL, which is the value the deployment has
+        assert repair.llm_llamacpp("PROMPT", None) == "Fixed line."
+        assert srv.requests[1]["body"]["model"] == repair.MODEL
+    finally:
+        srv.close()
 
 
 # --- A2: explicit connect/read timeouts + latency ----------------------------
@@ -785,7 +809,7 @@ def test_llm_llamacpp_uses_chat_endpoint_with_thinking_disabled(monkeypatch):
     assert seen["body"]["messages"] == [{"role": "user", "content": "PROMPT"}]
     assert seen["body"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert seen["body"]["temperature"] == 0
-    assert "model" not in seen["body"]  # llama.cpp serves one loaded model
+    assert seen["body"]["model"] == repair.MODEL  # None -> REPAIR_MODEL, so llama-swap can route
     assert out == "Zoro drew his blade."
 
 
