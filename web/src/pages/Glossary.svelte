@@ -449,7 +449,10 @@
         <p id="glossary-wiki-help" class="page-sub">
           Fandom or MediaWiki site URL, e.g. https://yugioh.fandom.com. Empty = auto-detect.
         </p>
-        {#if wikiResult}<p class="notice {wikiResult.ok ? 'success' : 'failure'}" role="status">
+        {#if wikiResult}<p
+            class="notice {wikiResult.ok ? 'success' : 'failure'}"
+            role={wikiResult.ok ? 'status' : 'alert'}
+          >
             {wikiResult.text}
           </p>{/if}
       </div>

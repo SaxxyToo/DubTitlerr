@@ -1,9 +1,16 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
+  import { rememberFocus, restoreFocus } from './focus.js';
+
   let { onstay, ondiscard }: { onstay: () => void; ondiscard: () => void } = $props();
   let dialog = $state<HTMLDialogElement>();
   $effect(() => {
-    if (dialog && !dialog.open) dialog.showModal();
+    if (dialog && !dialog.open) {
+      rememberFocus();
+      dialog.showModal();
+    }
   });
+  onDestroy(restoreFocus);
 </script>
 
 <dialog bind:this={dialog} class="help-panel" aria-labelledby="unsaved-title" onclose={onstay}>

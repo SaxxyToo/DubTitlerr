@@ -30,7 +30,8 @@
     e.preventDefault();
     return run('Account added.', async () => {
       await request('/api/users', { method: 'POST', body: { username, password, role } });
-      username = password = '';
+      username = '';
+      password = '';
       role = 'user';
     });
   };

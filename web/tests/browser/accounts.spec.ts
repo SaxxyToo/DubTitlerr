@@ -39,12 +39,19 @@ test('an admin sees Security and Accounts, adds a user, and that user sees neith
   await openSignedIn(page, '#/settings/general');
   await expect(page.getByRole('heading', { name: 'Security' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Accounts' })).toBeVisible();
+  // B4: the section rhythm is a global rule now, so the panels rendered from child components get the
+  // same margin as the ones Settings.svelte renders itself (the scoped rule never reached them).
+  for (const name of ['Processing', 'Security', 'Accounts'])
+    await expect(page.locator(`section[aria-label="${name}"]`)).toHaveCSS('margin-top', '28px');
   await expectNoAxeViolations(page);
   const name = `pat${Date.now() % 100000}`;
   await page.getByLabel('New username').fill(name);
   await page.getByLabel('New password', { exact: true }).fill('pat has a password');
   await page.getByRole('button', { name: 'Add account' }).click();
   await expect(page.getByRole('row', { name: new RegExp(name) })).toBeVisible();
+  // B1: the form clears both fields, so the next add does not propose the old username (or `***`).
+  await expect(page.getByLabel('New username')).toHaveValue('');
+  await expect(page.getByLabel('New password', { exact: true })).toHaveValue('');
   await signOut(page);
   await signIn(page, name, 'pat has a password');
   await page.goto('/review#/settings/general');
