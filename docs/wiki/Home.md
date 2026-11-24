@@ -85,6 +85,9 @@ third "fork overlay" image: both images ship this repository's code.
 
 ## Roadmap
 
+See **[Roadmap](Roadmap.md)** for the fork's detailed plan: what's in flight, a status
+line for every item below, the model/accuracy track and the watch items.
+
 - **Arr API and poster library view** - connect directly to Sonarr and Radarr APIs to present a poster grid with status bars, replacing filesystem walks and letting you set a show's wiki URL before its glossary exists.
 - **Run a show again from the Runs page** - a show that already ran is skipped. Queueing it again
   will ask whether you want to run it again or cancel, so you don't redo one by mistake. Run again
