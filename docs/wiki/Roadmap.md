@@ -56,6 +56,10 @@
    (see table below); both are cheap ports whenever the Runs page next gets attention.
 5. **Community glossaries** — adopt the upstream `DubTitlerr-glossaries` repo into
    `GLOSSARY_DIR` for the shows that have entries.
+6. **Arr link (scoped)** — read-only Sonarr/Radarr consumption: dub-availability
+   detection (feeds the fillable-gap workflow directly), a coverage view joining arr
+   statistics with the artifacts store, and wiki-URL setup before a glossary exists.
+   Design the surface (a Shows view vs. additions to the Runs page) before building.
 
 ---
 
@@ -63,7 +67,7 @@
 
 | Upstream item | Status here |
 | --- | --- |
-| **Arr API and poster library view** | Not planned for this fork. The library source of truth here is the filesystem + the Jellyfin watch source; a poster grid is upstream's UX direction, not ours. Revisit only if the library workflow moves to the arrs. |
+| **Arr API and poster library view** | ⭐ **Worth a look (owner, 2026-11-23).** Live probe: Sonarr 148 series (145 with files), Radarr 782 movies (758) — and every episodeFile carries **`mediaInfo.audioLanguages`** (`jpn/eng`, `eng/eng/jpn/jpn`, …) plus subtitle-language lists. Concrete uses for this fork: **dub-availability detection** (jpn-only files are exactly the "fillable gap" class — e.g. 2 such files in Apothecary), **coverage view** (join arr statistics with the artifacts store — 881/918 at a glance), setting a show's wiki URL before its glossary exists, and poster art in the review surface. Caveats: mediaInfo is as-of-the-last-arr-scan (stale after external edits — AoT S02E07 still shows its pre-EAC3-fix streams); scope = read-only API consumption, no writes. |
 | **Run a show again from the Runs page** | Half-buried: `force` in a run request already carries through the queue into generate (P36), which is the plumbing the feature needs. The UI affordance ("this already ran — run again or cancel?") is not built. |
 | **Season ranges in run requests** | Not built here. Low pressure (the queue is drained and new seasons self-queue), but a cheap port if wanted. |
 | **Remove a queued request** | Not built here. Same assessment. |
