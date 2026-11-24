@@ -118,3 +118,112 @@ def test_the_scan_finds_reads_in_python_and_shell():
 
 def test_non_settings_are_not_also_registry_keys():
     assert not set(NON_SETTINGS) & set(reg.REGISTRY)
+
+
+# --- scope vs the code that reads it --------------------------------------------------------------------------------------
+# `scope` is the process that reads a setting (settings_registry's module docstring), and the exporter hands a process only
+# the keys `keys_for_scope` returns. A plain merge-only row whose reader runs in the generate loop is therefore silent: the
+# Settings row saves, the generate loop never receives it, and its help promises a change nothing makes.
+def _package_modules():
+    """{dotted.module: path} for every module inside the package (not tests, tools or web)."""
+    found = {}
+    package = os.path.join(ROOT, "dubtitlerr")
+    for directory, _dirs, files in os.walk(package):
+        for name in files:
+            if name.endswith(".py"):
+                path = os.path.join(directory, name)
+                found[os.path.relpath(path, ROOT)[:-3].replace(os.sep, ".")] = path
+    return found
+
+
+def _module_imports(path):
+    """The dubtitlerr modules this file loads at import time (top level, plus top-level try/if arms).
+
+    In-function imports are deliberately not followed: they run only on a path the process may never take, and following
+    them drags repair.py into the generate closure through a lazy glossary_decision -> decision_client import.
+    """
+    with open(path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+    names, pending = set(), list(tree.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module)
+            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, (ast.Try, ast.If, ast.With)):
+            pending.extend(node.body)
+            pending.extend(getattr(node, "orelse", []))
+            pending.extend(getattr(node, "finalbody", []))
+            for handler in getattr(node, "handlers", []):
+                pending.extend(handler.body)
+    return names
+
+
+def _generate_side_modules():
+    """Every module a generate-loop child runs, plus everything they load at import time.
+
+    generate.py is not the only generate-side entry: gen_loop.sh also runs the glossary stages and the queue helpers. That is
+    why REPAIR_BACKEND and REPAIR_LLAMACPP_URL have generate-side readers (the legacy fallback in glossary_verify.py and
+    punctuation.py), not just repair.py.
+    """
+    modules = _package_modules()
+    with open(os.path.join(ROOT, "gen_loop.sh"), encoding="utf-8") as handle:
+        shell = handle.read()
+    pending = {match.group(1) for match in re.finditer(r"-m\s+(dubtitlerr(?:\.\w+)+)", shell)}
+    pending.add("dubtitlerr.pipeline.generate")
+    seen = set()
+    while pending:
+        name = pending.pop()
+        if name in seen or name not in modules:
+            continue
+        seen.add(name)
+        pending.update(_module_imports(modules[name]))
+    return {name: modules[name] for name in seen}
+
+
+def _generate_side_readers():
+    """{registry key: {module, ...}} for every environment read in a generate-side module."""
+    readers = {}
+    for name, path in _generate_side_modules().items():
+        for key in _python_reads(path):
+            if key in reg.REGISTRY:
+                readers.setdefault(key, set()).add(name)
+    return readers
+
+
+def test_a_plain_merge_only_setting_read_by_the_generate_loop_is_scoped_to_gen():
+    """The bug this pins: a plain row whose reader runs in gen but whose scope is merge-only never reaches that reader.
+
+    Only merge-only rows are checked. A container row reaches every child through container_run.sh's boot export, and a
+    server row is the review server's choice, so neither is the generate loop losing a value. Connection-managed rows are
+    excluded on purpose: a Connection expands only into the scopes its rows allow, and the repair endpoint/key must not
+    reach the generate loop (settings_connections' KEY_HOLDER_SCOPES and expand()).
+    """
+    stranded = {
+        key: sorted(names)
+        for key, names in _generate_side_readers().items()
+        if reg.REGISTRY[key]["scope"] == ["merge"] and reg.REGISTRY[key]["managed_by"] is None
+    }
+    assert not stranded, "plain merge-only settings read inside the generate loop (scope needs 'gen' too): " + ", ".join(
+        f"{key} <- {', '.join(names)}" for key, names in sorted(stranded.items())
+    )
+
+
+def test_the_generate_side_rows_are_pinned_to_the_module_that_reads_them():
+    """The rows this scope audit moved, and the reader each one's scope answers for."""
+    modules = _generate_side_modules()
+    for key, reader in {
+        "RESTORE_PUNCTUATION": "dubtitlerr.pipeline.punctuation",
+        "RESTORE_MIN_RUN": "dubtitlerr.pipeline.punctuation",
+        "RESTORE_MAX_TOKENS": "dubtitlerr.pipeline.punctuation",
+        "REPAIR_AUTO_DISMISS_WORDS": "dubtitlerr.core.unresolved",
+        "SIDECAR_SUFFIX": "dubtitlerr.pipeline.generate",
+    }.items():
+        assert reader in modules, f"{key} is pinned to {reader}, which is no longer generate-side"
+        assert key in _python_reads(modules[reader]), f"{key} is pinned to {reader}, which no longer reads it"
+        entry = reg.REGISTRY[key]
+        assert set(entry["scope"]) == {"gen", "merge"}, key
+        assert entry["applies"] == "next_show", key
+        assert key in reg.keys_for_scope("gen"), key
