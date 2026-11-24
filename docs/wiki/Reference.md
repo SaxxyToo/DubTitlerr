@@ -747,6 +747,14 @@ you approved. It does not make a stamped episode repair again: the `.dubtitles.d
 version numbers and never the prompt. Only an episode repaired again for another reason sees the
 new wording. Set `REPAIR_KEEP_NAME_PARTS=0` to restore the old prompt.
 
+The same blindness applies to the model, with one addition: a repair **Connection** switch cannot
+invalidate a delivered episode either (repair is a text stage; `TEXT_VERSION` describes the code,
+not the weights), so a request issued to exercise the new model reports its text-tier work and
+`repair_stale=N` — the episodes whose `repair-summary` still names the previous model. The merge
+pass runs repair on any episode a forced request un-delivered, so a forced request is the way to
+re-run the stage under a new model; a request that rebuilds nothing at all is filed failed rather
+than "done, 12 delivered".
+
 ### Punctuation restore
 
 | Var                   | Default                            | Meaning                                    |
@@ -1412,7 +1420,15 @@ renames, moves or changes them. The two surfaces share one role table and one au
   request. `force: true` means *start over*: every in-scope episode is rebuilt from its cached ASR
   words (the stored `.dubtitles.words.json`; no re-transcription unless the words are missing),
   overriding the freshness stamps, and the run's summary line reports `forced=1 rebuilt=N`. A forced
-  request that rebuilds nothing is filed as failed. `system.restart` writes the soft-stop flag. `system.start`, `system.pause` and
+  request that rebuilds nothing is filed as failed. A repair-model switch is reported separately:
+  repair is the only text stage that calls a model, and no tier version sees which weights ran, so
+  the report compares each episode's recorded repair identity (`repair-summary`'s `model` /
+  `model_secondary`) with today's and adds `repair_stale=N (repair model <recorded> -> <current>)`.
+  A forced request that rebuilt the text tier but left the stage behind that switch is filed **done
+  with that advisory** (the merge pass re-runs repair); a request that rebuilt nothing because every
+  episode is current is filed **failed**, naming the remedy (`force=true`). Without this a model
+  experiment finished green with `rebuilt: 12` while the stage under test never ran (2026-11-24,
+  Chainsaw Man S01). `system.restart` writes the soft-stop flag. `system.start`, `system.pause` and
   `system.stop` persist the same processing state the Settings panel controls (start clears a
   stale stop flag; stop also writes it). `notification.test` needs `params.name`.
 - **History paging.** `limit` defaults to 25 and must be 1 to 200; `offset` is 0 or more. A value out

@@ -1230,6 +1230,53 @@ def _rebuilt_since(stem, since):
     return written is not None and written >= since
 
 
+def _repair_model_drift(stem):
+    """``(recorded, current)`` model labels when an episode's last repair is not today's -- else None.
+
+    None when the recorded identity IS today's, and also when the summary records no ``model`` at
+    all: that is UNKNOWN, not stale, because the population that predates the field must not read
+    as "the model changed" on every request.
+
+    Labels rather than a boolean, because the run report has to name which model ran and which one
+    is configured now -- "12 repair stale" without the two names is the same puzzle in a new place.
+
+    WHY THE REPORT NEEDS IT. No tier version can see a repair-model change (see
+    ``common.repair_stamp_identity``), the delivered stamp does not carry one, and repair is the
+    only text stage that calls a model -- so a request issued to exercise a newly selected
+    Connection reports a full text-tier rebuild while the stage under test has not run. Measured
+    2026-11-24 on Chainsaw Man S01: five forced requests green with ``rebuilt=12``, twelve
+    summaries still naming the previous model. Counting them here is what lets the run report and
+    the request verdict say so instead of reading as a successful experiment.
+    """
+    try:
+        doc = artifact_store.get_json(stem, "repair-summary")
+    except Exception:  # noqa: BLE001 - an unreadable summary is "unknown", never an exception
+        return None
+    if not isinstance(doc, dict):
+        return None
+    recorded = doc.get("model")
+    if not isinstance(recorded, str) or not recorded.strip():
+        return None
+    recorded = recorded.strip()
+    raw_secondary = doc.get("model_secondary")
+    recorded_secondary = raw_secondary.strip() if isinstance(raw_secondary, str) else ""
+    current = common.repair_stamp_identity()
+    # The settings catalog scopes REPAIR_MODEL_SECONDARY to the merge process, so this one may not
+    # carry it at all. Compare the retry model ONLY when the value was actually supplied here: the
+    # `or model` fallback would otherwise make every configured second model read as drift on
+    # every request, on every episode, forever.
+    configured_secondary = (os.environ.get("REPAIR_MODEL_SECONDARY") or "").strip()
+    if recorded == current["model"] and (not configured_secondary or recorded_secondary == configured_secondary):
+        return None
+    if recorded != current["model"]:
+        return recorded, current["model"]
+    # Same primary, different retry model -- name both sides so the line is not "X -> X".
+    return (
+        f"{recorded} (2nd: {recorded_secondary or 'none'})",
+        f"{current['model']} (2nd: {configured_secondary})",
+    )
+
+
 def scope_report(files, since, statuses):
     """What a request's scope looks like on disk after this pass.
 
@@ -1238,7 +1285,11 @@ def scope_report(files, since, statuses):
     that the merge loop has not published yet), or not done -- counted by reason. The
     request's done/failed decision is made from this (review_requests.verdict), never from
     generate's exit code alone: measured 2026-11-18, a forced request finished "done" in nine
-    minutes having produced nothing."""
+    minutes having produced nothing.
+
+    ``repair_stale`` rides alongside those buckets instead of inside them: it is not a work
+    bucket but the reason a green request can still be a no-op for the stage the operator meant
+    to exercise (see _repair_model_drift)."""
     rep = {
         "scope": len(files),
         "forced": _force_redo(),
@@ -1246,14 +1297,23 @@ def scope_report(files, since, statuses):
         "rebuilt": 0,
         "delivered": 0,
         "awaiting_merge": 0,
+        # Episodes whose repair-summary names another model than today's -- the stage has not
+        # run under the current Connection. 0 for an absent summary (unknown, not stale).
+        "repair_stale": 0,
         # The episodes a .dubtitles.fail marker blocked, in full: review_requests.verdict
         # turns this into the failed request's remedy ("clear-crash <episode>"), and the
         # listing here is the only place that names them for that message.
         "crash_marked": [],
     }
     not_done = {}
+    stale_models, current_models = set(), set()
     for v in files:
         stem = os.path.splitext(v)[0]
+        drift = _repair_model_drift(stem)
+        if drift is not None:
+            rep["repair_stale"] += 1
+            stale_models.add(drift[0])
+            current_models.add(drift[1])
         if _rebuilt_since(stem, since):
             rep["rebuilt"] += 1
             continue
@@ -1277,6 +1337,11 @@ def scope_report(files, since, statuses):
             reason = statuses.get(v) or "not attempted"
         not_done[reason] = not_done.get(reason, 0) + 1
     rep["not_done"] = not_done
+    if rep["repair_stale"]:
+        rep["repair_models"] = {
+            "recorded": ", ".join(sorted(stale_models)),
+            "current": ", ".join(sorted(current_models)),
+        }
     return rep
 
 
@@ -1294,12 +1359,23 @@ def _write_run_report(rep):
 def _log_scope(rep):
     """One log line carrying the evidence the run report holds: what force asked for and
     what the disk shows. `forced=1 rebuilt=N` is how an operator tells a real rebuild from
-    the 2026-11-22 no-op, which looked like a clean run in the old summary."""
+    the 2026-11-22 no-op, which looked like a clean run in the old summary.
+
+    `repair_stale=N` answers the second half of that question -- whether the work included the
+    repair stage, or only the tier below it (see _repair_model_drift). It names both models and
+    says which way the run goes, so "rebuilt=12" cannot read as "the new model's repairs shipped"."""
     not_done = sum((rep.get("not_done") or {}).values())
     line = (
         f"scope: forced={int(bool(rep.get('forced')))} rebuilt={rep.get('rebuilt', 0)} "
         f"delivered={rep.get('delivered', 0)} awaiting_merge={rep.get('awaiting_merge', 0)}"
     )
+    if rep.get("repair_stale"):
+        models = rep.get("repair_models") or {}
+        outcome = "re-runs at the next merge pass" if rep.get("forced") else "force=true re-runs it"
+        line += (
+            f" repair_stale={rep['repair_stale']}"
+            f" (repair model {models.get('recorded', '?')} -> {models.get('current', '?')}; {outcome})"
+        )
     if not_done:
         line += f" not_done={not_done}"
     log(line)

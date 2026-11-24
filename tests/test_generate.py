@@ -1999,6 +1999,28 @@ def test_common_and_generate_agree_on_the_decoder_identity(monkeypatch):
     assert ident["asr_model"] == generate.MODEL
 
 
+def test_common_and_repair_agree_on_the_repair_identity(monkeypatch):
+    """The repair identity is READ in one process (generate, to report drift) and WRITTEN in
+    another (repair, into its summary). A drift between the two derivations would report a
+    model switch on every request, or hide a real one -- the same failure mode the decoder
+    identity has, and pinned the same way: on defaults, with no env set."""
+    from dubtitlerr.pipeline import repair
+
+    for name in ("REPAIR_MODEL", "REPAIR_MODEL_SECONDARY"):
+        monkeypatch.delenv(name, raising=False)
+    ident = common.repair_stamp_identity()
+    assert ident == {"model": common.REPAIR_DEFAULT_MODEL, "model_secondary": common.REPAIR_DEFAULT_MODEL}
+    assert ident["model"] == repair.MODEL
+    assert ident["model_secondary"] == repair.MODEL_SECONDARY
+
+    monkeypatch.setenv("REPAIR_MODEL", "r4-gemma-3-1b-q4")
+    monkeypatch.setenv("REPAIR_MODEL_SECONDARY", "")  # the exporter's "no second model" value
+    assert common.repair_stamp_identity() == {"model": "r4-gemma-3-1b-q4", "model_secondary": "r4-gemma-3-1b-q4"}
+
+    monkeypatch.setenv("REPAIR_MODEL_SECONDARY", "second")
+    assert common.repair_stamp_identity()["model_secondary"] == "second"
+
+
 def test_a_poison_marked_episode_is_in_neither_queue(tmp_path):
     """The .fail marker wins over everything, as it does in needs_work()."""
     v = _stamped(tmp_path, "ep.mkv", version=4)

@@ -152,6 +152,118 @@ def test_a_forced_rebuild_only_transcribes_the_episodes_without_words(tmp_path, 
     assert (rep["scope"], rep["rebuilt"]) == (2, 2)
 
 
+# --- a repair-model switch must not read as a successful run -------------------------------
+#
+# Measured 2026-11-24 on Chainsaw Man S01: the repair Connection was switched, the request was
+# forced, and five runs finished green in 3-15s with `rebuilt: 12` -- the text tier had been
+# replayed, but every repair-summary still named the previous model, so the stage under test had
+# not run. Nothing in the stamp or the tier versions can see a model change (TEXT_VERSION
+# describes what the CODE did), so the run report now carries the comparison and the verdict
+# refuses to call a no-op a success.
+
+
+def _seed_repair_summary(tmp_path, n, model=None, secondary=None):
+    for i in range(1, n + 1):
+        doc = {"targets": 10, "repaired": 3}
+        if model is not None:
+            doc["model"] = model
+        if secondary is not None:
+            doc["model_secondary"] = secondary
+        artifact_store.put_json(str(tmp_path / f"Show - S01E{i:02d}"), "repair-summary", doc)
+
+
+def test_a_forced_rebuild_after_a_model_switch_reports_the_stage_has_not_run(tmp_path, monkeypatch, capsys):
+    """The rebuild is real (the tier ran) but the stage the operator switched did not -- so the
+    report names both models instead of leaving `rebuilt: 3` to be read as the experiment."""
+    monkeypatch.setenv("REPAIR_MODEL", "r4-gemma-3-1b-q4")
+    _show(tmp_path, 3, delivered=True)
+    _seed_repair_summary(tmp_path, 3, model="qwen3.5:4b")
+
+    calls, rep = _run(tmp_path, monkeypatch, force=True)
+
+    assert len(calls) == 3, "the text tier still rebuilds; that part was never in question"
+    assert (rep["rebuilt"], rep["repair_stale"]) == (3, 3)
+    assert rep["repair_models"] == {"recorded": "qwen3.5:4b", "current": "r4-gemma-3-1b-q4"}
+    out = capsys.readouterr().out
+    assert "rebuilt=3" in out
+    assert "repair_stale=3 (repair model qwen3.5:4b -> r4-gemma-3-1b-q4" in out
+    ok, why = rr.verdict(rep, 0)
+    assert ok, "the request itself was served; the merge pass re-runs the stage"
+    assert why and "r4-gemma-3-1b-q4" in why and "merge pass" in why
+
+
+def test_an_unforced_request_after_a_model_switch_fails_instead_of_reading_delivered(tmp_path, monkeypatch):
+    """The silent no-op: every episode is current, so generate does nothing, and the only thing
+    that changed is the model. 'done: 3 delivered' is the misread this check closes."""
+    monkeypatch.setenv("REPAIR_MODEL", "r4-gemma-3-1b-q4")
+    _show(tmp_path, 3, delivered=True)
+    _seed_repair_summary(tmp_path, 3, model="qwen3.5:4b")
+
+    calls, rep = _run(tmp_path, monkeypatch, force=False)
+
+    assert calls == []
+    assert (rep["rebuilt"], rep["delivered"], rep["repair_stale"]) == (0, 3, 3)
+    ok, why = rr.verdict(rep, 0)
+    assert not ok
+    assert why
+    assert "nothing re-ran" in why and "qwen3.5:4b" in why and "force=true" in why
+    assert "3 repair stale" in why
+
+
+def test_a_repair_summary_from_the_current_model_is_not_stale(tmp_path, monkeypatch):
+    monkeypatch.setenv("REPAIR_MODEL", "qwen3.5:4b")
+    _show(tmp_path, 2, delivered=True)
+    _seed_repair_summary(tmp_path, 2, model="qwen3.5:4b")
+
+    _calls, rep = _run(tmp_path, monkeypatch, force=False)
+
+    assert rep["repair_stale"] == 0 and "repair_models" not in rep
+    assert rr.verdict(rep, 0) == (True, None)
+
+
+def test_a_repair_summary_without_a_model_is_unknown_not_stale(tmp_path, monkeypatch):
+    """Every summary that predates the field must not read as 'the model changed' -- that is a
+    permanent warning on a real library, not a signal."""
+    monkeypatch.setenv("REPAIR_MODEL", "r4-gemma-3-1b-q4")
+    _show(tmp_path, 2, delivered=True)
+    _seed_repair_summary(tmp_path, 2)
+
+    _calls, rep = _run(tmp_path, monkeypatch, force=False)
+
+    assert rep["repair_stale"] == 0
+    assert rr.verdict(rep, 0) == (True, None)
+
+
+def test_a_changed_second_model_is_the_same_kind_of_drift(tmp_path, monkeypatch):
+    monkeypatch.setenv("REPAIR_MODEL", "qwen3.5:4b")
+    monkeypatch.setenv("REPAIR_MODEL_SECONDARY", "qwen3.5:7b")
+    _show(tmp_path, 1, delivered=True)
+    _seed_repair_summary(tmp_path, 1, model="qwen3.5:4b", secondary="qwen3.5:4b")
+
+    _calls, rep = _run(tmp_path, monkeypatch, force=False)
+
+    assert rep["repair_stale"] == 1
+    # Both sides name the retry model, so the line is not the useless "qwen3.5:4b -> qwen3.5:4b".
+    assert rep["repair_models"] == {
+        "recorded": "qwen3.5:4b (2nd: qwen3.5:4b)",
+        "current": "qwen3.5:4b (2nd: qwen3.5:7b)",
+    }
+
+
+def test_a_second_model_this_process_was_not_told_about_is_not_drift(tmp_path, monkeypatch):
+    """REPAIR_MODEL_SECONDARY is scoped to the merge exporter, so the generate process does not
+    carry it. Falling back to the primary model would make every configured second model read as
+    drift on every episode of every request -- a permanent false alarm, not a signal."""
+    monkeypatch.setenv("REPAIR_MODEL", "qwen3.5:4b")
+    monkeypatch.delenv("REPAIR_MODEL_SECONDARY", raising=False)
+    _show(tmp_path, 1, delivered=True)
+    _seed_repair_summary(tmp_path, 1, model="qwen3.5:4b", secondary="qwen3.5:7b")
+
+    _calls, rep = _run(tmp_path, monkeypatch, force=False)
+
+    assert rep["repair_stale"] == 0
+
+
 def test_a_resumed_forced_request_does_not_rebuild_an_episode_twice(tmp_path, monkeypatch):
     # gen_loop re-runs generate after a crash; the request's start time is the same across
     # those passes, so an episode rebuilt in pass one is not parked and rebuilt again.
