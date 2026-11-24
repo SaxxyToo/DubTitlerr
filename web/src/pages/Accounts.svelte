@@ -58,8 +58,8 @@
         ><tr
           ><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Password</th><th
             scope="col"
-            aria-label="Actions"></th
-          ></tr
+            aria-label="Actions"
+          ></th></tr
         ></thead
       >
       <tbody>
