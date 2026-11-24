@@ -1,4 +1,5 @@
-"""The gate must not ship churn: glyph-only no-ops, deleted content, or short reference borrows.
+"""The gate must not ship churn: glyph-only no-ops, deleted content, short reference borrows, or a
+reply that discards the line entirely and answers with something else (a prompt fragment included).
 
 Measured on the 2026-11-23 Chainsaw Man S01 bake-off (406 anchored lines, 12 models, every model
 judged by this same ``accept_repair``) by replaying its saved per-line outputs:
@@ -10,6 +11,11 @@ judged by this same ``accept_repair``) by replaying its saved per-line outputs:
   only in the fansub line) was recorded ``admitted=True`` by the gate (cand-phi3-grammar and
   r2-phi-3.5-mini, saved per-line results);
 * clause deletions the length band cannot see shipped too (the round-1 hand-judge).
+
+The round-4 replay (2026-11-24) added the replaced-line class: a model answering with unrelated
+text -- SmolLM-FT-CoEdIT returned a sentence of its own prompt on nearly every line -- gained as
+many words as it dropped, so ``dropped_content_words`` (which weighs drops against gains) admitted
+every one. See the replaced-line section at the end of this file.
 
 The fixtures that carry a ``ref``/duration are the saved bake-off rows byte-for-byte. The wanted
 fixes in the same sample -- split words, duplicate collapse, casing, name order -- must keep
@@ -225,3 +231,105 @@ def test_a_contraction_expanded_at_the_line_start_is_not_a_borrow():
 def test_the_wanted_asr_garbage_fixes_still_ship(orig, new, ref, gloss):
     assert repair.rejecting_guard(orig, new, ref, 6.0, gloss) is None
     assert repair.accept_repair(orig, new, ref, 6.0, gloss)
+
+
+# ---- a reply that replaces the line instead of repairing it ------------------
+#
+# Measured 2026-11-24 by replaying every saved row of the round-4 bake-off through the chain with
+# this guard disabled and enabled: of the 2295 rows the CURRENT chain admits, 108 are refused by
+# this guard and nothing else -- 104 of them SmolLM-FT-CoEdIT (135M) parroting a sentence of its
+# own prompt, and 4 where a model answered with unrelated text. Read by hand, every one is a
+# refusal; there is no false positive in the sample. The fixtures below are those rows.
+#
+# WHICH GUARD RECORDS the refusal can depend on the word list: this suite deliberately runs without
+# the production list (conftest points WORDLIST_PATH at an empty file), so is_english() falls back
+# to a 228-word bundle and a gained capitalised word like 'Ghost' counts as an invented name. Both
+# guards refuse the row either way. The assertions below therefore pin what THIS guard owns -- its
+# predicate -- for every row, and pin its recorded NAME only for the rows that gain no capitalised
+# token, so no name guard can claim them first in either environment.
+
+REPLACED_ROWS = [
+    # the prompt fragment, on nearly every line that model answered (S01E01)
+    (
+        "Though his worthless dead dad accrued it, Denji's the one stuck with the bill.",
+        "Return ONLY the corrected line - no quotes, no notes, no rule text.",
+        "He's repaying his debt to us. Well, really it's the debt his piece-of-shit father left when he died.",
+    ),
+    # and three from models that are not the parroting one: unrelated text, not a repair
+    (
+        "It's just a pathetic attempt at self-comfort.",
+        "Nothing lives in your heart, so spare me.",
+        "is nothing but a pitiful attempt at self-consolation.",
+    ),
+    ("You're better than you were before.", "Ghost, kill this guy.", "You're fighting better than last time."),
+    (
+        "Soon I'll get my hookup night with Ms.",
+        "So now I can kill all kinds of devils.",
+        "And that'll help me get together with Makima.",
+    ),
+]
+
+
+@pytest.mark.parametrize("orig,new,ref", REPLACED_ROWS)
+def test_a_reply_that_discards_the_line_is_refused(orig, new, ref):
+    assert repair.replaced_line(orig, new)
+    assert not repair.accept_repair(orig, new, ref, 6.0, GL)
+
+
+@pytest.mark.parametrize("orig,new,ref", [REPLACED_ROWS[1], REPLACED_ROWS[3]])
+def test_the_replaced_guard_is_the_recorded_reason(orig, new, ref):
+    """'replaced' is what the review queue records for these two -- neither reply gains a
+    capitalised token, so no name guard competes for them -- which is what shows the guard is
+    wired into the chain and not merely a predicate sitting beside it."""
+    assert repair.rejecting_guard(orig, new, ref, 6.0, GL) == "replaced"
+
+
+def test_a_line_made_of_one_repeated_word_is_out_of_scope():
+    """``Woah, woah, woah, woah!`` -> ``Whoa, whoa, whoa, whoa!`` is the same interjection
+    respelled -- seven models in the replay, every one a real if trivial spelling fix. A line of
+    one repeated word carries no proposition whose loss could be detected, so this guard stays out
+    of it. (Some word lists make 'Whoa' an invented name and refuse the row anyway; that is a
+    different guard's call, and not pinned here.)"""
+    assert not repair.replaced_line("Woah, woah, woah, woah!", "Whoa, whoa, whoa, whoa!")
+
+
+def test_a_substitution_on_a_short_line_is_not_a_replacement():
+    """One content word traded for another, on a line below REPLACED_MIN_WORDS besides."""
+    assert not repair.replaced_line("What you ain't", "What aren't you?")
+    assert not repair.replaced_line("Aki's still a punk.", "Aki's still weak.")
+
+
+@pytest.mark.parametrize(
+    "orig,new",
+    [
+        ("th warted", "warted"),
+        ("tim id", "timid"),
+        ("shoun en", "shounen"),
+        ("You've You've got to go.", "You've got to go."),
+        ("thats right.", "that's right."),
+        ("i saw zorro today", "I saw Zoro today."),
+        ("Spondum drew his blade.", "Spandam drew his blade."),
+        ("Vanderdecken and Vanderdecken are here.", "Van der Decken and Van der Decken are here."),
+    ],
+)
+def test_the_wanted_fixes_are_outside_the_replacement_guard(orig, new):
+    assert not repair.replaced_line(orig, new)
+
+
+def test_kept_content_words_absorbs_a_rejoined_fragment():
+    kept = repair.kept_content_words("th warted my plans", "thwarted my plans")
+    assert kept["warted"] == 1  # absorbed into the word it was joined into
+
+
+def test_kept_content_words_counts_a_duplicate_collapse_as_one_lost_word():
+    kept = repair.kept_content_words("You've You've got to go.", "You've got to go.")
+    assert kept["you've"] == 1  # not two kept ones: one of the pair went
+
+
+def test_a_fully_dub_vouched_reply_is_exempt_from_the_replacement_guard():
+    """Under role=dub the reference is a transcript of the audio, so a reply whose added words it
+    attests is evidence -- the same exemption ref_borrow takes."""
+    orig = "The old man walked to the market slowly."
+    new = "He ran home quickly, and he was happy."
+    assert repair.replaced_line(orig, new)
+    assert repair.rejecting_guard(orig, new, new, 6.0, GL, ref_role="dub") is None
