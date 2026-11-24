@@ -38,7 +38,7 @@
   import { apiFetch, logout as endSession, me as fetchMe } from './lib/session.js';
   import { canonicalHash, hashFor, parseHash, parseSettingsCategory } from './lib/route.js';
   import { VIEW_LABELS, type View } from './lib/nav.js';
-  import { waveTrace } from './lib/waveform.js';
+  import { waveFractionAt, waveLeft, waveTrace } from './lib/waveform.js';
   import { formatCount } from './lib/format.js';
   import { rememberFocus, restoreFocus } from './lib/focus.js';
   import { isSaveShortcut } from './lib/settingsModel.js';
@@ -89,16 +89,95 @@
   // open would read as work lost.
   let refFilter = $state('all');
   // Audio Deck: the band's trace is generated deterministically (the same generator as the
-  // accepted comp build); the playhead and timechip track the real preview element.
-  let audioProgress = $state(0);
+  // accepted comp build); the playhead follows the real preview element and the wave is a seek
+  // surface. `audioFraction` is 0..1 through the clip, so the playhead and a click share one
+  // coordinate system (lib/waveform.js owns the geometry of the trace's inset span).
+  let audioFraction = $state(0);
   let audioElapsed = $state('0:00');
+  let band = $state<HTMLElement>();
+  let scrubbing = $state(false);
+  let pendingSeek: number | null = null;
+  let frameHandle = 0;
   const bandWave = waveTrace(925, 290, 330);
+  function clock(seconds: number): string {
+    const s = Math.max(0, Math.floor(seconds));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
   function onPreviewTime(): void {
     const el = player;
     if (!el || !el.duration || !Number.isFinite(el.duration)) return;
-    audioProgress = (el.currentTime / el.duration) * 100;
-    const s = Math.max(0, Math.floor(el.currentTime));
-    audioElapsed = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    audioFraction = el.currentTime / el.duration;
+    audioElapsed = clock(el.currentTime);
+  }
+  // `timeupdate` fires about four times a second, which reads as a stuttering playhead. While the
+  // clip runs, follow it per frame instead; pause, end and unmount stop the loop.
+  function followPlayhead(): void {
+    if (frameHandle) return;
+    frameHandle = requestAnimationFrame(() => {
+      frameHandle = 0;
+      const el = player;
+      if (!el) return;
+      onPreviewTime();
+      if (!el.paused && !el.ended) followPlayhead();
+    });
+  }
+  function stopFollowing(): void {
+    if (frameHandle) cancelAnimationFrame(frameHandle);
+    frameHandle = 0;
+  }
+  function bandFraction(e: PointerEvent): number {
+    const rect = band?.getBoundingClientRect();
+    if (!rect || !rect.width) return 0;
+    return waveFractionAt(e.clientX, rect.left, rect.width);
+  }
+  function seekTo(fraction: number): void {
+    audioFraction = fraction;
+    const el = player;
+    if (el && el.duration && Number.isFinite(el.duration)) {
+      el.currentTime = fraction * el.duration;
+      audioElapsed = clock(el.currentTime);
+      return;
+    }
+    // The clip is a blob and is not fetched until someone asks to hear it. Remember where the click
+    // landed, pull it, and land the seek as soon as the element reports its duration.
+    pendingSeek = fraction;
+    audioElapsed = clock(0);
+    void loadClip().then((loaded) => {
+      // A failed fetch must not leave the playhead parked where there is no audio.
+      if (loaded || audioUrl || audioLoading) return;
+      if (pendingSeek === fraction) pendingSeek = null;
+      audioFraction = 0;
+      audioElapsed = clock(0);
+    });
+  }
+  function startScrub(e: PointerEvent): void {
+    if (e.button !== 0 || !(e.currentTarget instanceof HTMLElement)) return;
+    e.preventDefault(); // no text selection while dragging
+    scrubbing = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    seekTo(bandFraction(e));
+  }
+  function moveScrub(e: PointerEvent): void {
+    if (scrubbing) seekTo(bandFraction(e));
+  }
+  function endScrub(e: PointerEvent): void {
+    if (!scrubbing) return;
+    scrubbing = false;
+    if (e.currentTarget instanceof HTMLElement && e.currentTarget.hasPointerCapture(e.pointerId))
+      e.currentTarget.releasePointerCapture(e.pointerId);
+  }
+  function onClipMetadata(): void {
+    const el = player;
+    if (!el) return;
+    if (pendingSeek !== null && el.duration && Number.isFinite(el.duration)) {
+      const fraction = pendingSeek;
+      pendingSeek = null;
+      el.currentTime = fraction * el.duration;
+      audioFraction = fraction;
+      audioElapsed = clock(el.currentTime);
+      return;
+    }
+    onPreviewTime();
   }
   // Both sort choices are remembered per browser; a stored value this build does not know falls back to the default.
   const EPISODE_SORT_KEY = 'dubtitlerr_episode_sort';
@@ -267,12 +346,17 @@
   }
   function stopAudio() {
     audioRequest++;
+    stopFollowing();
+    scrubbing = false;
+    pendingSeek = null;
     player?.pause();
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     audioUrl = '';
     audioError = '';
     audioLoading = false;
     occurrence = 0;
+    audioFraction = 0;
+    audioElapsed = '0:00';
   }
   // The glossary page reports unsaved add-form/edit-row text through bind:dirty.
   let glossaryDirty = $state(false);
@@ -553,15 +637,11 @@
       saving = false;
     }
   }
-  async function playClip() {
-    if (!current || !('index' in current) || !selected) return;
-    if (audioUrl && player) {
-      if (player.paused) {
-        player.currentTime = 0;
-        void player.play().catch(report);
-      } else player.pause();
-      return;
-    }
+  // One fetch path for the Listen button and for a click on the wave: a seek before the clip exists
+  // loads it and lands the seek on metadata instead of starting playback.
+  async function loadClip(): Promise<boolean> {
+    if (audioUrl) return true;
+    if (audioLoading || !current || !('index' in current) || !selected) return false;
     audioLoading = true;
     audioError = '';
     const requestId = ++audioRequest;
@@ -578,15 +658,29 @@
         throw new Error(data.error || 'Audio preview failed');
       }
       const blob = await res.blob();
-      if (requestId !== audioRequest) return;
+      if (requestId !== audioRequest) return false;
       audioUrl = URL.createObjectURL(blob);
       await tick();
-      await player?.play();
+      return true;
     } catch (exc) {
       if (requestId === audioRequest) audioError = exc instanceof Error ? exc.message : 'Audio unavailable';
+      return false;
     } finally {
       if (requestId === audioRequest) audioLoading = false;
     }
+  }
+  async function playClip() {
+    if (!current || !('index' in current) || !selected) return;
+    if (audioUrl && player) {
+      if (player.paused) {
+        // A resume keeps the position the operator scrubbed to; only a finished clip rewinds.
+        if (player.ended) player.currentTime = 0;
+        void player.play().catch(report);
+      } else player.pause();
+      return;
+    }
+    if (!(await loadClip())) return;
+    await player?.play().catch(report);
   }
   function keydown(e: KeyboardEvent) {
     // A modal owns the keyboard while it is open: no review shortcut and no Ctrl+S may fire behind
@@ -953,7 +1047,19 @@
                         preserveAspectRatio="none"
                         aria-hidden="true"><path d={bandWave} /></svg
                       >
-                      <div class="band-playhead" aria-hidden="true" style="left: {audioProgress}%">
+                      <!-- Pointer-only seek surface over the trace. The native player below is the
+                           keyboard-accessible seek path, so this stays out of the tab order. -->
+                      <div
+                        class="band-scrub"
+                        data-testid="band-wave-seek"
+                        aria-hidden="true"
+                        bind:this={band}
+                        onpointerdown={startScrub}
+                        onpointermove={moveScrub}
+                        onpointerup={endScrub}
+                        onpointercancel={endScrub}
+                      ></div>
+                      <div class="band-playhead" aria-hidden="true" style="left: {waveLeft(audioFraction)}">
                         <i class="band-line"></i><i class="band-handle"></i>
                       </div>
                       <span class="band-timechip">{audioElapsed}</span>
@@ -968,9 +1074,14 @@
                             bind:this={player}
                             src={audioUrl}
                             controls
-                            preload="none"
+                            preload="metadata"
                             aria-label="English dub preview"
+                            onplay={followPlayhead}
+                            onpause={stopFollowing}
+                            onended={stopFollowing}
                             ontimeupdate={onPreviewTime}
+                            onloadedmetadata={onClipMetadata}
+                            onseeked={onPreviewTime}
                           ></audio>{/if}<span class="timecode"
                           >{timecode(current.starts[occurrence] ?? current.starts[0])}</span
                         >{#if current.starts.length > 1}<select
