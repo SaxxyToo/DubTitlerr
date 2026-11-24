@@ -22,8 +22,14 @@ fixes in the same sample -- split words, duplicate collapse, casing, name order 
 shipping, and they are pinned here beside the refusals.
 """
 
-import pytest
+import csv
+import io
 
+import pytest
+import repair_ref_stub
+import store_seed
+
+from dubtitlerr.core import artifact_store, unresolved
 from dubtitlerr.glossary import glossary
 from dubtitlerr.pipeline import repair
 
@@ -414,8 +420,9 @@ def test_the_name_fix_is_not_what_the_gate_refuses_on_the_dead_line():
         == "content_drop"
     )
     # ...while the name-only cut-down of each is admitted. That is the only shape that can carry a
-    # name out of a reply the gate refuses, and nothing cuts the reply down automatically today,
-    # so the card keeps the old spelling until a later run proposes the name on its own.
+    # name out of a reply the gate refuses; the stage now cuts the reply down to it and offers the
+    # cut-down to the same gate as its own candidate (see the salvage section at the end of this
+    # file), rather than leaving the card on the old spelling until a later run proposes the name.
     assert repair.accept_repair(
         orig, "Meowy may already be dead, but still, I can't give up.", "", 4.14, CSM, ref_role="translation"
     )
@@ -427,3 +434,110 @@ def test_the_name_fix_is_not_what_the_gate_refuses_on_the_dead_line():
         CSM,
         ref_role="translation",
     )
+
+
+# ---- salvaging a name fix out of a refused reply ------------------------------
+#
+# The passenger case (FINDINGS.md §6): a reply refused for its LINE can carry a correct
+# glossary-name spelling fix down with it, and the card keeps the old spelling until another run
+# proposes the name alone (4 of the 8 `Meowie` occurrences in CSM S01E03). The stage now cuts the
+# refused reply down to just the same-length, glossary-name word replacement and offers that to
+# the SAME gate as its own candidate -- every guard still judges it, it queues as an ordinary
+# proposal, and no guard is loosened. These fixtures are the two live refusal rows from above.
+
+SALVAGE_DROP_ORIG = "I hate them, too, since one took my pet cat, Meowie, away."
+SALVAGE_DEAD_ORIG = "Meowie may already be dead, but still, I can't give up."
+
+SALVAGE_ROWS = [
+    # (orig, refused reply, ref, dur, guard, the cut-down that must be offered)
+    # the reply elided 'away' -> content_drop; the cut-down restores both the name and the word
+    (
+        SALVAGE_DROP_ORIG,
+        "I hate them, too, since one took my pet cat, Meowy.",
+        FANSUB_MEOWY,
+        3.84,
+        "content_drop",
+        "I hate them, too, since one took my pet cat, Meowy, away.",
+    ),
+    # the reply handed back the fansub's sentence -> ref_borrow; same single-name cut-down
+    (
+        SALVAGE_DEAD_ORIG,
+        "Meowy might already be dead, but I cannot give up hope.",
+        "Meowy might already be dead, but I cannot give up hope.",
+        4.14,
+        "ref_borrow",
+        "Meowy may already be dead, but still, I can't give up.",
+    ),
+]
+
+
+@pytest.mark.parametrize("orig,reply,ref,dur,guard,cut", SALVAGE_ROWS)
+def test_a_refused_reply_is_cut_down_to_the_name_fix_it_carried(orig, reply, ref, dur, guard, cut):
+    assert repair.rejecting_guard(orig, reply, ref, dur, CSM, ref_role="translation") == guard
+    assert repair.salvage_name_fixes(orig, reply, CSM) == cut
+    # The cut-down is a CANDIDATE, not an acceptance: the same gate judges it, and here it passes.
+    assert repair.accept_repair(orig, cut, ref, dur, CSM, ref_role="translation")
+
+
+@pytest.mark.parametrize(
+    "orig,reply",
+    [
+        # a same-length swap whose destination is not a listed name: nothing to salvage
+        (SALVAGE_DROP_ORIG, "I hate them, too, since one took my pet cat, Muffy, away."),
+        # the spelling is unchanged and a word was ADDED: an insert never becomes a candidate
+        (SALVAGE_DROP_ORIG, "I hate them, too, since one took my pet cat, Meowie, away, okay."),
+        # the reply drops the name instead of fixing it
+        (SALVAGE_DROP_ORIG, "I hate them, too, since one took my pet cat away."),
+        # a whole-line fansub rewrite that does not carry the listed spelling
+        ("Both Meowie and the devil are within.", "Both Muffy and the devil are in there."),
+    ],
+)
+def test_salvage_yields_nothing_without_a_listed_name_replacement(orig, reply):
+    assert repair.salvage_name_fixes(orig, reply, CSM) == ""
+
+
+def _run_salvage(tmp_path, monkeypatch, orig, reply, dur):
+    """Drive one card through process() with a canned reply and a reference carrying the fansub."""
+    stem = str(tmp_path / "ep_salvage")
+    open(stem + repair.SRT_SUFFIX, "w").close()
+    store_seed.conf(
+        stem + repair.CONF_SUFFIX,
+        [{"start": 0.0, "end": dur, "text": orig, "avg_logprob": -0.6, "no_speech_prob": 0.1}],
+    )
+    monkeypatch.setattr(repair, "find_video", lambda s: str(tmp_path / "ep_salvage.mkv"))
+    monkeypatch.setattr(repair, "glossary_for", lambda video: CSM)
+    monkeypatch.setattr(repair, "reference_tracks", repair_ref_stub.stub([(0.0, dur, FANSUB_MEOWY)]))
+    monkeypatch.setattr(repair, "llm", lambda prompt, model=None: reply)
+    assert repair.process(stem + repair.CONF_SUFFIX) == "repaired"
+    return stem
+
+
+def test_a_refused_reply_ships_its_name_fix_as_an_ordinary_proposal(tmp_path, monkeypatch):
+    stem = _run_salvage(tmp_path, monkeypatch, SALVAGE_DROP_ORIG, "I hate them, too, since one took my pet cat, Meowy.", 3.84)
+
+    shipped = open(stem + repair.SRT_SUFFIX).read()
+    assert "Meowy, away." in shipped and "Meowie" not in shipped
+
+    summary = artifact_store.get_json(stem, "repair-summary")
+    assert summary["repaired"] == 1 and summary["salvaged"] == 1
+    assert summary["rejected_guard"] == 0  # counted once, as the repair that shipped
+
+    rows = list(csv.reader(io.StringIO(artifact_store.get_text(stem, "repair.csv"), newline="")))
+    assert rows[1][0] == SALVAGE_DROP_ORIG
+    assert rows[1][1] == "I hate them, too, since one took my pet cat, Meowy, away."
+
+    entries = unresolved.items(stem)
+    # The raw reply's refusal stays recorded (it is why the reply was cut), and the cut-down is
+    # queued as the line's ordinary question, flagged so a reviewer can see where it came from.
+    assert any(e["reason"] == "rejected_guard" and e.get("proposed_text", "").endswith("Meowy.") for e in entries)
+    (queued,) = [e for e in entries if e["stage"] == "repair_applied"]
+    assert queued["proposed_text"] == "I hate them, too, since one took my pet cat, Meowy, away."
+    assert queued.get("salvaged") is True
+
+
+def test_a_refused_reply_without_a_name_fix_stays_refused(tmp_path, monkeypatch):
+    reply = "I hate them, too, since one took my pet cat, Muffy, away."
+    stem = _run_salvage(tmp_path, monkeypatch, SALVAGE_DROP_ORIG, reply, 3.84)
+    summary = artifact_store.get_json(stem, "repair-summary")
+    assert summary["repaired"] == 0 and summary["salvaged"] == 0 and summary["rejected_guard"] == 1
+    assert "Meowie" in open(stem + repair.SRT_SUFFIX).read()
