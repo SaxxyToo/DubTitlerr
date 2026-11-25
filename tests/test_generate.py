@@ -2909,6 +2909,137 @@ def test_whispercpp_verbose_json_fixture_maps_to_whole_words():
     assert "text" not in segments[0] and "avg_logprob" not in segments[0]
 
 
+def test_a_missing_leading_space_between_two_words_does_not_fuse_them():
+    """The live CSM S01E03 shape, pinned as a test.
+
+    whisper.cpp emitted `" them"` then `"straight."` with no leading space on the second
+    piece. Treating that as a word-internal boundary welded them into `" themstraight"`,
+    and the delivered line was only correct because the repair model split it back -- a
+    model miss ships the fused word. The segment's own `text` carries the real boundary,
+    so the pieces must stay separate words and reflow's space join must render them apart.
+
+    The base text is asserted THROUGH reflow: that is the text repair targets are computed
+    from, and the place the fused word used to surface.
+    """
+    segs = [
+        {
+            "start": 269.92,
+            "end": 272.36,
+            "text": " I'll murderize them straight.",
+            "no_speech_prob": 0.0,
+            "words": [
+                {"word": " I'll", "start": 269.92, "end": 270.3, "probability": 0.7},
+                {"word": " murderize", "start": 270.3, "end": 271.18, "probability": 0.99},
+                {"word": " them", "start": 271.18, "end": 271.57, "probability": 0.57},
+                {"word": "straight.", "start": 271.57, "end": 272.36, "probability": 0.99},
+            ],
+        }
+    ]
+
+    segments, words = generate._map_endpoint_doc(segs, [])
+
+    assert [w["text"] for w in words] == [" I'll", " murderize", " them", "straight."]
+    assert "themstraight" not in reflow._text(words)
+    cards = reflow.reflow(words, segments, audio_duration=600.0)
+    assert [c["text"] for c in cards] == ["I'll murderize them straight."]
+
+
+def test_a_genuine_compound_in_the_segment_text_still_merges():
+    """A word the decoder really heard as one unit is one word in the segment text too.
+
+    "themstraight" as a segment word is the compound case the guard must NOT split: the
+    pieces have not run past the segment's word, so the boundary is inside it.
+    """
+    segs = [
+        {
+            "start": 0.0,
+            "end": 1.0,
+            "text": " themstraight",
+            "words": [
+                {"word": " them", "start": 0.0, "end": 0.5, "probability": 0.9},
+                {"word": "straight", "start": 0.5, "end": 1.0, "probability": 0.8},
+            ],
+        }
+    ]
+
+    _segments, words = generate._map_endpoint_doc(segs, [])
+
+    assert [w["text"] for w in words] == [" themstraight"]
+    assert words[0]["end"] == pytest.approx(1.0)
+
+
+def test_punctuation_and_number_boundaries_keep_their_join():
+    """The joins that ARE word-internal stay: punctuation ("them" + ",") and a thousands
+    separator (" 2" + ",000", the break every thousands separator used to suffer). Both
+    are visible in the segment text as one token, so the prefix test admits them.
+    """
+    segs = [
+        {
+            "start": 0.0,
+            "end": 2.0,
+            "text": " them, 2,000",
+            "words": [
+                {"word": " them", "start": 0.0, "end": 0.5, "probability": 0.9},
+                {"word": ",", "start": 0.5, "end": 0.6, "probability": 0.9},
+                {"word": " 2", "start": 0.6, "end": 0.8, "probability": 0.9},
+                {"word": ",000", "start": 0.8, "end": 1.4, "probability": 0.99},
+            ],
+        }
+    ]
+
+    _segments, words = generate._map_endpoint_doc(segs, [])
+
+    assert [w["text"] for w in words] == [" them,", " 2,000"]
+
+
+def test_a_split_contraction_merges_across_apostrophe_shapes():
+    """A server may render the apostrophe either way; the comparison must not care.
+
+    Pinned because the key deliberately keeps the apostrophe (so "I'll" cannot become
+    "Ill"), which leaves the straight and the curly form unequal unless they are
+    normalised first -- and an unequal key would split a contraction the decoder
+    genuinely emitted as one word.
+    """
+    segs = [
+        {
+            "start": 0.0,
+            "end": 1.0,
+            "text": " Don't",
+            "words": [
+                {"word": " Don", "start": 0.0, "end": 0.3, "probability": 0.9},
+                {"word": "\u2019t", "start": 0.3, "end": 0.5, "probability": 0.9},
+            ],
+        }
+    ]
+
+    _segments, words = generate._map_endpoint_doc(segs, [])
+
+    assert [w["text"] for w in words] == [" Don\u2019t"]
+
+
+def test_without_segment_text_the_token_merge_is_unchanged():
+    """No segment text means no evidence about where the words are; the old merge stands.
+
+    This guard may only remove fusions the endpoint's own text contradicts. Turning an
+    unreadable shape into new splits would be a different bug, and a worse one for the
+    compounds (Gas-Gas, Gum-Gum) the merge exists to protect.
+    """
+    segs = [
+        {
+            "start": 0.0,
+            "end": 1.0,
+            "words": [
+                {"word": " them", "start": 0.0, "end": 0.5, "probability": 0.9},
+                {"word": "straight", "start": 0.5, "end": 1.0, "probability": 0.9},
+            ],
+        }
+    ]
+
+    _segments, words = generate._map_endpoint_doc(segs, [])
+
+    assert [w["text"] for w in words] == [" themstraight"]
+
+
 def test_the_endpoint_request_asks_for_segments_as_well_as_words(tmp_path, monkeypatch):
     """`no_speech_prob` lives only on SEGMENTS, and OpenRouter omits `segments` entirely
     when word granularity is the only thing asked for.

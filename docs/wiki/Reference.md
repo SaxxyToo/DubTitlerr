@@ -741,6 +741,33 @@ model to point an endpoint at.
 > `no_speech_prob`; [Choosing an ASR model](Choosing-an-ASR-Model.md#hosted-endpoints-and-a-date-worth-knowing)
 > compares the hosted options field by field.
 
+#### Word tokens must reconstruct with sane spacing
+
+The `words` artifact is the text tier's input, and reflow rebuilds every card from it: each
+word's text is stripped and joined with a single space (the hyphen, dash and `,N` / `.N`
+number cases in `reflow._text` are the only exceptions). That join is where every space
+between two words comes from, so each word record must hold what the segment text holds —
+one entry per word, neither a token piece nor two words welded together. A fused word here
+reaches the delivered subtitle unless the repair model happens to split it, and repair may
+miss or "fix" it by dropping one of the words.
+
+The endpoint adapter (`generate._map_endpoint_doc`) is where the invariant is easiest to
+break. A whisper.cpp token stream marks a word start with a leading space, and the adapter
+merges pieces without one into the previous word. That signal alone is not proof of a
+word-internal boundary: whisper also drops the space when the boundary falls between two
+words it heard separately, and merging those shipped `themstraight` on Chainsaw Man S01E03.
+The adapter therefore consults the segment's own `text`: pieces merge only while the
+accumulated text is still a prefix of the segment word at the cursor. A genuine compound is
+one word there and keeps merging; two words the segment text separates stay separate, as do
+the punctuation and thousands-separator joins (`them`+`,`, `2`+`,000`) the segment text
+shows as one token. With no segment text there is no evidence either way and the merge
+behaves exactly as before.
+
+Consequence for debugging: a fused word in a delivered subtitle is a word-list defect, not
+a repair defect — inspect the `words` row first. The normalisation runs during
+transcription, so records already written keep their text; a stored fused word needs a
+re-transcription, not a text-tier rebuild.
+
 ### Repair
 
 | Var                                  | Default                                            | Meaning                                                                                                                                                                                                                                                                                                             |
