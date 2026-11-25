@@ -1786,6 +1786,61 @@ def _seg_conf(seg):
         return None
 
 
+def _word_key(s):
+    """Comparison key for a token piece or a segment word.
+
+    Case and punctuation are dropped so ``" them,"`` and ``"them"`` compare equal; the
+    apostrophe is kept (both shapes normalised to one) so ``"I'll"`` cannot collapse onto
+    ``"Ill"``. Digits stay, because a thousands separator is the other thing a token
+    boundary lands inside.
+    """
+    return re.sub(r"[^\w']", "", (s or "").replace("\u2019", "'")).lower()
+
+
+def _segment_word_keys(seg_text):
+    return [_word_key(t) for t in str(seg_text or "").split()]
+
+
+def _piece_continues(prev_text, piece, seg_keys, at):
+    """True when ``piece`` continues the word being built rather than starting one.
+
+    A whisper.cpp token stream marks a word start with a leading space, so a piece
+    without one reads as a continuation. That signal is not reliable: the tokenizer
+    also drops the space when the boundary falls between two words the decoder heard
+    separately, and merging those ships "themstraight" -- measured live on Chainsaw
+    Man S01E03, where only the repair model split it back, and a model miss leaves the
+    fused word in the delivered subtitle.
+
+    The segment's OWN text settles it, when the endpoint sends one. If the pieces so
+    far are still a PREFIX of the segment word at ``at``, the boundary falls inside
+    that word ("Tree"+"cut"+"ting" over "Treecutting") and the merge is right. If they
+    have run past it, the pieces are two words and the segment text shows the boundary
+    ("them" | "straight"), so they stay separate and reflow's space join renders them
+    with a space. A genuine compound the decoder heard as ONE word is in the segment
+    text as one word too, so it keeps merging; numbers ("2",",000" over "2,000") and
+    punctuation-boundary pieces ("them","," over "them,") do the same.
+
+    With no segment text there is no evidence either way, and the merge stands: this
+    must never turn a shape it cannot read into new splits.
+    """
+    if not seg_keys:
+        return True
+    if at >= len(seg_keys):
+        return True  # the pieces ran past the segment's word list: no evidence left
+    merged = _word_key(prev_text + piece)
+    return bool(merged) and seg_keys[at].startswith(merged)
+
+
+def _advance_segment_word(seg_keys, at, piece):
+    """Move the segment-word cursor onto the word ``piece`` starts, never backwards."""
+    key = _word_key(piece)
+    if not seg_keys or not key:
+        return at
+    while at < len(seg_keys) and not seg_keys[at].startswith(key):
+        at += 1
+    return at
+
+
 def _map_endpoint_doc(segs, top_words):
     """Map a verbose_json document onto the local decoder's shapes.
 
@@ -1796,6 +1851,9 @@ def _map_endpoint_doc(segs, top_words):
         reflow strips and space-joins each word and would ship "Tree cut ting";
       * whole words at the TOP level of the document (OpenAI's documented shape), assigned to
         the segment whose span holds their start.
+    The token merge consults the segment's own ``text`` (see _piece_continues): a missing
+    leading space is not by itself proof of a word-internal boundary, and guessing wrong in
+    that direction fuses two words into one the pipeline can only lose.
     A word with no probability takes its segment's exp(avg_logprob), as the local path does,
     never a flat 1.0: card confidence is what selects repair targets and drives the
     hallucination gate."""
@@ -1815,6 +1873,8 @@ def _map_endpoint_doc(segs, top_words):
         segments.append({"start": start, "end": end, "no_speech_prob": float(s.get("no_speech_prob") or 0.0)})
         conf = _seg_conf(s)
         fallback = conf if conf is not None else 1.0
+        seg_keys = _segment_word_keys(s.get("text"))
+        at = 0  # index into seg_keys of the word currently being built
         mine = []
         for w in nested[si]:
             text = str(w.get("word") or w.get("text") or "")
@@ -1823,13 +1883,14 @@ def _map_endpoint_doc(segs, top_words):
             p = w.get("probability")
             prob = float(p) if isinstance(p, (int, float)) and p > 0 else fallback
             ws, we = float(w.get("start", start)), float(w.get("end", end))
-            if token_mode and mine and not text[:1].isspace():
+            if token_mode and mine and not text[:1].isspace() and _piece_continues(mine[-1]["text"], text, seg_keys, at):
                 prev = mine[-1]
                 prev["text"] += text
                 prev["end"] = max(prev["end"], we)
                 prev["prob"] = min(prev["prob"], prob)
                 continue
             mine.append({"text": text, "start": ws, "end": we, "prob": prob, "seg": si})
+            at = _advance_segment_word(seg_keys, at, text)
         if not mine:
             mine = [{"text": s.get("text") or "", "start": start, "end": end, "prob": fallback, "seg": si}]
         words.extend(mine)
