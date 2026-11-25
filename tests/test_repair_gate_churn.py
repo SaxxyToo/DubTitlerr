@@ -299,10 +299,35 @@ def test_a_line_made_of_one_repeated_word_is_out_of_scope():
     assert not repair.replaced_line("Woah, woah, woah, woah!", "Whoa, whoa, whoa, whoa!")
 
 
-def test_a_substitution_on_a_short_line_is_not_a_replacement():
-    """One content word traded for another, on a line below REPLACED_MIN_WORDS besides."""
+def test_a_short_line_replaced_by_a_constant_string_is_refused():
+    """The round-5 sweep's find: a model answered the single string `Thinking Process:` (its own
+    reasoning header) on line after line. Every row it got admitted on replaced a SHORT line, and
+    REPLACED_MIN_WORDS was 3, so the guard could not fire. These are the measured rows.
+
+    Which guard RECORDS the refusal depends on the word list -- with the suite's fallback bundle
+    'Thinking' reads as a proper name and `invents_name` claims the row first; with the production
+    list it is an ordinary word and this guard is what fires. Both refuse it, so what is pinned
+    here is the predicate, which is what this change owns."""
+    for orig in ("Where's the exit?", "Here's an idea.", "What's the rush, crazy?"):
+        assert repair.replaced_line(orig, "Thinking Process:"), orig
+        assert not repair.accept_repair(orig, "Thinking Process:", "", 6.0, GL), orig
+
+
+def test_a_single_content_word_line_stays_out_of_the_short_line_rule():
+    """Lowering the floor to 2 must not reach a line whose whole content is one word -- that is the
+    substitution shape the guard has always excluded, and `What's that?` is the measured partner of
+    the rows above (same model, same constant reply, one content word)."""
     assert not repair.replaced_line("What you ain't", "What aren't you?")
-    assert not repair.replaced_line("Aki's still a punk.", "Aki's still weak.")
+    assert not repair.replaced_line("What's that?", "Thinking Process:")
+    assert not repair.replaced_line("th warted", "warted")
+    assert not repair.replaced_line("tim id", "timid")
+
+
+def test_a_two_word_line_must_lose_BOTH_words_to_be_refused():
+    """The other direction of the same floor: a two-content-word line whose reply keeps one of them
+    is a substitution, not a replacement."""
+    assert not repair.replaced_line("Spondum drew", "Spandam drew")  # one word kept
+    assert repair.replaced_line("Spondum drew", "Nothing lives here")  # both gone
 
 
 @pytest.mark.parametrize(

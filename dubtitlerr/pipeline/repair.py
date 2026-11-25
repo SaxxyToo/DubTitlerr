@@ -969,7 +969,14 @@ def dropped_content_words(orig, new, ref):
 # deliberately not a general similarity score: the count is over the ORIGINAL's content words,
 # and a line needs REPLACED_MIN_WORDS of them before the guard can fire at all, which is what
 # keeps 'What you ain't' -> 'What aren't you?' (one content word, substituted) out of scope.
-REPLACED_MIN_WORDS = 3  # the shortest line that can lose REPLACED_MIN_LOST words and still carry content
+# REPLACED_MIN_WORDS was 3, and that was one short. The round-5 OpenRouter sweep (2026-11-25)
+# caught a model answering the single string 'Thinking Process:' on line after line; every one of
+# its 76 admitted rows replaced a SHORT line -- `Where's the exit?` (2 content words), `Here's an
+# idea.` (2) -- below the floor, so the guard could not fire and the gate took all 76. At 2 those
+# fire and the pinned substitution cases still do not: `What you ain't` -> `What aren't you?` and
+# `What's that?` each carry ONE content word. MIN_LOST is what keeps a two-word line safe in the
+# other direction -- both of its content words must go before this fires at all.
+REPLACED_MIN_WORDS = 2  # a replacement loses REPLACED_MIN_LOST words, so the line must carry at least two
 REPLACED_MIN_LOST = 2  # one lost word is a substitution or a rename, not a replacement
 REPLACED_FRACTION = 0.8  # ...and what a replacement loses is nearly ALL of the line's content
 # A line built from ONE word repeated ('Woah, woah, woah, woah!') has no proposition to lose, and
