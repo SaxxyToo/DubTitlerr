@@ -993,13 +993,14 @@ def test_adoption_constants_do_not_retranscribe_the_library():
     and only text-stale, so they migrate at watch-gated pace. Setting both to 8 would
     re-transcribe them all -- roughly two GPU-days for a bookkeeping change. Asserted on
     the real constants so that mistake cannot land quietly. TEXT_VERSION rises with every
-    text-tier change (13 = the replaced-line refusal; 12 = the repair-gate churn fix;
-    11 = the declared-coordinate-space fix); TRANSCRIBE_VERSION must NOT follow it.
+    text-tier change (14 = the replaced-line guard reaching short lines; 13 = the replaced-line
+    refusal; 12 = the repair-gate churn fix; 11 = the declared-coordinate-space fix);
+    TRANSCRIBE_VERSION must NOT follow it.
 
     Updating TEXT_VERSION here is expected and is what this test is for -- the assertion
     that matters is the one below it, which must stay at 4 through every text bump."""
     assert common.TRANSCRIBE_VERSION == 4
-    assert common.TEXT_VERSION == 13
+    assert common.TEXT_VERSION == 14
 
 
 def test_a_v2_stamp_is_stale_in_both_tiers(tmp_path):
