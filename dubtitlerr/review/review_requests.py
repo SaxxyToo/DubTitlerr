@@ -781,7 +781,16 @@ def verdict(report: dict | None, rc: int) -> tuple[bool, str | None]:
     measured 2026-11-18, a forced season request finished "done" in nine minutes having
     produced nothing. So the request is done only when every in-scope episode is rebuilt by
     this request, delivered (unforced) or waiting for the merge pass -- and a forced request
-    must have rebuilt something."""
+    must have rebuilt something.
+
+    A repair-model switch is the second way a green request can serve nothing. The stage is
+    the only text one that calls a model and nothing in the stamp or the tier versions sees a
+    model change, so its staleness arrives here as ``repair_stale`` (generate's scope report).
+    Two outcomes, both honest:
+      * nothing was rebuilt at all -> FAILED, naming both models and the remedy (force=true);
+      * a forced rebuild ran, but under the OLD model's repairs -> done, with the advisory as
+        the reason, so the log line and the request record do not read as "the new model shipped".
+    """
     if rc != 0:
         return False, f"generate failed (rc={rc})" + (f"; {_report_line(report)}" if report else "")
     if not isinstance(report, dict):
@@ -790,8 +799,12 @@ def verdict(report: dict | None, rc: int) -> tuple[bool, str | None]:
     if scope == 0:
         return False, "no episode matched this request"
     not_done = report.get("not_done") or {}
+    repair_stale = _repair_stale_note(report)
     if report.get("forced") and not report.get("rebuilt"):
-        return False, f"forced run rebuilt nothing ({_report_line(report)})"
+        reason = f"forced run rebuilt nothing ({_report_line(report)})"
+        if repair_stale:
+            reason += f"; {repair_stale}, so force=true re-runs the stage"
+        return False, reason
     missing = sum(not_done.values())
     if missing:
         reason = f"{missing} of {scope} episodes not done ({_report_line(report)})"
@@ -799,6 +812,13 @@ def verdict(report: dict | None, rc: int) -> tuple[bool, str | None]:
         if remedy:
             reason += f"; {remedy}"
         return False, reason
+    if repair_stale and not report.get("rebuilt"):
+        # Nothing was rebuilt and nothing was missing: every episode is still delivered from an
+        # earlier run, and the only thing that changed is the model. Saying "done" here is the
+        # silent no-op this check exists for -- the request asked for a run and got none.
+        return False, f"nothing re-ran: {repair_stale}; force=true rebuilds them under it ({_report_line(report)})"
+    if repair_stale:
+        return True, f"{repair_stale}; the next merge pass re-runs it"
     return True, None
 
 
@@ -812,8 +832,37 @@ _REASON_GLOSS = {
 }
 
 
+def _repair_stale_note(report: dict) -> str | None:
+    """The advisory a repair-model switch earns, or None when the stage is current.
+
+    The count comes from generate's scope report, which compares each episode's recorded repair
+    identity to today's (see generate._repair_model_drift). Measured 2026-11-24 on Chainsaw Man
+    S01: five forced requests finished green with ``rebuilt: 12`` after the repair Connection had
+    been switched, and not one of them ran the stage under the new model. A green request must
+    not read as "the new model's repairs shipped", so this is what the request says instead.
+    """
+    try:
+        n = int(report.get("repair_stale") or 0)
+    except (TypeError, ValueError):
+        # A hand-edited or truncated report is "no signal", never an exception: this runs inside
+        # the CLI that files the request, and a crash here would leave the request running.
+        n = 0
+    if n <= 0:
+        return None
+    models = report.get("repair_models") or {}
+    recorded = models.get("recorded") or "unknown"
+    current = models.get("current") or "unknown"
+    return f"the repair stage has not run under {current} for {n} episode(s) (last repair: {recorded})"
+
+
 def _report_line(report: dict) -> str:
     parts = [f"{report.get(k, 0)} {k.replace('_', ' ')}" for k in ("rebuilt", "delivered", "awaiting_merge") if report.get(k)]
+    if report.get("repair_stale"):
+        models = report.get("repair_models") or {}
+        parts.append(
+            f"{report['repair_stale']} repair stale"
+            f" (repair model {models.get('recorded') or 'unknown'} -> {models.get('current') or 'unknown'})"
+        )
     for why, n in sorted((report.get("not_done") or {}).items(), key=lambda kv: -kv[1]):
         gloss = f" ({_REASON_GLOSS[why]})" if why in _REASON_GLOSS else ""
         parts.append(f"{n} {why}{gloss}")

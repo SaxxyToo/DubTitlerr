@@ -470,6 +470,40 @@ def decoder_stamp_identity() -> dict:
     return {"asr_backend": backend, "asr_model": model}
 
 
+# The repair stage's default model, HERE because that stage's identity has to be readable from
+# two processes: repair.py writes it into its summary, generate.py compares it when a request
+# asks "did the stage I just switched to actually run?". repair.py sources its own default from
+# this constant rather than repeating the literal, so the two cannot drift.
+REPAIR_DEFAULT_MODEL = "qwen3-4b-instruct"
+
+
+def repair_stamp_identity() -> dict:
+    """The repair identity an episode's ``repair-summary`` records: ``{"model", "model_secondary"}``.
+
+    Same shape and same keys the summary has carried since it existed, so a comparison is a
+    dict comparison and nothing downstream (review_status, the review UI) had to move.
+
+    WHY IT EXISTS. The repair stage is the only TEXT-tier stage that calls a model, and no
+    tier version can see a model change: TEXT_VERSION describes what the CODE did to the
+    output. So switching a stage's Connection to another model leaves every delivered episode
+    reading current in every gate -- the stamp, the merge pass's ``delivered()``, the version
+    census -- and a request that expects to exercise the new model reports a full text rebuild
+    with the stage in question never re-run. Measured 2026-11-24 on Chainsaw Man S01: five
+    forced requests finished green, ``rebuilt=12`` each, while all twelve repair summaries
+    still named the previous model.
+
+    Read at CALL time, not import time, so the value compared is the one the settings exporter
+    put into THIS process's environment (the catalog scopes REPAIR_MODEL to gen+merge, so both
+    the reporter and the stage see the same stored Connection)."""
+    model = (os.environ.get("REPAIR_MODEL") or REPAIR_DEFAULT_MODEL).strip()
+    return {
+        "model": model,
+        # Empty means unset: the settings exporter writes REPAIR_MODEL_SECONDARY= when no
+        # Connection names a second model, and repair reads empty as "same as model".
+        "model_secondary": (os.environ.get("REPAIR_MODEL_SECONDARY") or "").strip() or model,
+    }
+
+
 def _stamp_stem(path: str) -> str:
     """The store key for a stamp path: the caller's path minus ``STAMP_SUFFIX``.
 

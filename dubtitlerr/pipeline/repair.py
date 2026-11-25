@@ -113,6 +113,7 @@ from dubtitlerr.core import artifact_store, decisions, reftracks, unanchored, un
 from dubtitlerr.core.common import (
     MEDIA_GID,
     MEDIA_UID,
+    REPAIR_DEFAULT_MODEL,
     atomic_write,
     dialogue_intervals,
     find_video,
@@ -164,7 +165,7 @@ OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
 # offender the comment here used to describe) -- not a reversal of that finding, a fresh
 # measurement of a model that didn't exist when C1 ran. qwen3-4b-instruct was also the
 # 2026-08-31 unanchored verdict-bake-off's exact-match leader (59/90 vs nanbeige's 43/90).
-MODEL = os.environ.get("REPAIR_MODEL", "qwen3-4b-instruct")
+MODEL = os.environ.get("REPAIR_MODEL", REPAIR_DEFAULT_MODEL)
 # llamacpp, not ollama. The owner swapped to it on measurement -- it was the stronger
 # performer -- and it is what both arms of the quant A/B run on, so the default matches
 # what the numbers in the README will have been taken on. It costs a beta user a harder
