@@ -566,8 +566,9 @@ a rollback switch, not a stored setting.
 ### A refused reply loses the name it carried
 
 Every guard judges a whole proposal, and a refusal discards all of it -- so a reply whose only
-virtue is a correct proper noun ships nothing. Measured on Chainsaw Man S01E03 (`Meowie` ->
-`Meowy`, 2026-11-24), the gate does **not** refuse the spelling: the one-token swap is admitted
+virtue is a correct proper noun ships nothing unless the stage can cut it down (see below).
+Measured on Chainsaw Man S01E03 (`Meowie` -> `Meowy`, 2026-11-24), the gate does **not** refuse the
+spelling: the one-token swap is admitted
 with a reference, without one, and riding a split fix, and the live run recorded those admissions
 (`Meowie may already be dead, but still, I can't give up.` -> `Meowy may ...` was admitted by
 `accept_repair`). What gets refused is the line the name arrives on -- `ref_borrow` when the model
@@ -590,8 +591,8 @@ Two consequences for measuring a build:
   it). Compare the finished sidecar, or wait for the pass to end.
 - `glossary.correct` will not snap a one-letter name variant (`Meowie` -> `Meowy`: 0 changes). The
   names list only matches on exact, hard-fix or fuzzy tiers and this pair is below the fuzzy tier,
-  so the LLM repair is the only route to the correct spelling -- which is why a refused reply
-  costs it.
+  so the LLM repair is the only route to the correct spelling -- and why a reply that cannot be cut
+  down still costs it.
 
 Second reported instance, `Yet there's no escaping, Mishima.` -> `Makima` (same show, S01E05): the
 gate **admits** it with the card's translation reference, and the live run recorded no proposal for
@@ -602,6 +603,22 @@ in the first place. Its cause is glossary coverage: this show lists **both** `Mi
 as canonical names (`Mishima` is right in S01E09), so the prompt vouches for the wrong spelling on
 the S01E05 card. Fix the glossary, not the gate. For the same reason S01E09's `Shuzo Mishima.` ->
 `Shuuzou Mishima.` is refused as `invents_name` on every run: `Shuuzou` is not listed.
+
+### Salvaging a name fix out of a refused reply
+
+Because every refusal is correct about its LINE, the fix is not the gate: it is to cut the reply
+down. On the refusal path only, `repair.salvage_name_fixes` keeps just the same-length word
+replacements whose destination is a listed glossary name and whose source is not itself a name,
+and reverts every other change to the original card. The elided `...cat, Meowie, away.` reply
+`...cat, Meowy.` therefore yields `...cat, Meowy, away.`: the one-token spelling fix, with the
+dropped word restored and the reply's own punctuation not carried over (only the word is taken).
+
+The cut-down is then offered to `accept_repair` as its own candidate. Every guard still judges it
+-- a spelling that still does not fit the card is still refused -- and it queues as an ordinary
+`repair_applied` proposal, flagged `salvaged`, while the raw reply's refusal stays recorded as the
+evidence for why it was cut. `repair-summary` counts them in `salvaged`, a subset of `repaired`;
+the target is counted once, so the summary buckets still add up to `targets`. No guard's behaviour
+changes outside that path.
 
 ### Recording
 

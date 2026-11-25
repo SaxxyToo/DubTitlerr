@@ -1307,6 +1307,93 @@ def accept_repair(orig, new, ref, dur, gloss, prev_text=None, ref_role=None):
     return rejecting_guard(orig, new, ref, dur, gloss, prev_text=prev_text, ref_role=ref_role) is None
 
 
+# A reply refused for its LINE can carry a correct glossary-name spelling fix down with it: the
+# guard is right about the line (a dropped word, the fansub's own sentence) and the corrected
+# name goes with it, so the card keeps the old spelling until another run proposes the name
+# alone. The fix is to CUT THE REPLY DOWN, never to loosen a guard: across the store, 276
+# one-token glossary-name refusals replayed through this gate refused 0 for content_drop, and
+# the dominant class (202) is fits_card -- the longer spelling genuinely does not fit the card.
+# See docs/wiki/Reference.md, "Salvaging a name fix out of a refused reply".
+SALVAGE_PAIR_SIMILARITY = 0.5  # a destination token must still look like the word it replaces
+
+
+def _salvage_core(token):
+    """The lower-cased name core of one whitespace token (possessive stripped), else its bare text."""
+    cores = _name_tokens(token)
+    return cores[0] if cores else token.lower()
+
+
+def _salvage_swap(orig_token, name):
+    """``name`` wearing ``orig_token``'s surrounding punctuation -- and its possessive, if it had one.
+
+    The reply's punctuation belongs to the reply's sentence ('...cat, Meowy.' ends there); the
+    line being repaired still has its own ('...cat, Meowie, away.'), so only the WORD is taken from
+    the reply. ``name`` is the glossary's canonical spelling.
+    """
+    m = glossary._TOKEN_RE.match(orig_token)
+    if not m:
+        return name
+    core = name
+    if re.search(r"['\u2019]s$", m.group(2)) and not re.search(r"['\u2019]s$", core):
+        core += m.group(2)[-2:]
+    return m.group(1) + core + m.group(3)
+
+
+def salvage_name_fixes(orig, new, gloss):
+    """Cut a refused reply down to the glossary-name spelling fixes it carries.
+
+    Keeps ONLY same-length word replacements -- one token exchanged for one -- whose destination
+    is a name the glossary lists and whose source is not itself a name. ``...cat, Meowie, away.``
+    -> ``...cat, Meowy.`` therefore yields ``...cat, Meowy, away.``: the name fix with the dropped
+    word restored. Every other change reverts to ``orig``, so a dropped clause, an added word or
+    the fansub's phrasing cannot ride along. Returns ``""`` when nothing qualifies.
+
+    The result is a CANDIDATE, not an acceptance. The caller offers it to ``accept_repair``,
+    which judges it with every guard exactly as it judges a model reply -- a name fix that still
+    does not fit the card is refused, as it must be. Within each differing run, tokens are paired
+    by character similarity, so a word dropped at either end does not shift which token the name
+    replaces. Only the refusal path calls this: an admitted reply has nothing to cut down.
+
+    ``gloss`` is the same mapping ``accept_repair`` takes; ``token_fixes`` destinations count as
+    listed names because the other name guards treat them that way.
+    """
+    import difflib
+
+    known = {n.lower(): n for n in (gloss.get("names") or [])}
+    known.update({v.lower(): v for v in (gloss.get("token_fixes") or {}).values()})
+    if not known:
+        return ""
+    o, n = (orig or "").split(), (new or "").split()
+    oc, nc = [_salvage_core(t) for t in o], [_salvage_core(t) for t in n]
+    out, changed = [], False
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, oc, nc, autojunk=False).get_opcodes():
+        if tag != "replace":
+            # equal keeps the ORIGINAL token (and spelling); an insert contributes nothing, a
+            # delete keeps what the reply dropped.
+            out.extend(o[i1:i2])
+            continue
+        pairs = sorted(
+            (
+                (difflib.SequenceMatcher(None, oc[i], nc[j]).ratio(), i, j)
+                for i in range(i1, i2)
+                for j in range(j1, j2)
+            ),
+            reverse=True,
+        )
+        kept, used = {}, set()
+        for score, i, j in pairs:  # greedy, best pair first; each token pairs at most once
+            if score < SALVAGE_PAIR_SIMILARITY or i in kept or j in used:
+                continue
+            used.add(j)
+            if nc[j] in known and oc[i] not in known:
+                kept[i] = _salvage_swap(o[i], known[nc[j]])
+                changed = True
+            else:
+                kept[i] = o[i]  # not a glossary name taking a non-name's slot: revert it
+        out.extend(kept.get(i, o[i]) for i in range(i1, i2))
+    return " ".join(out) if changed else ""
+
+
 def _accept_punct_case_only() -> bool:
     """REPAIR_ACCEPT_PUNCT_CASE_ONLY=1 (default off): see rejecting_guard. Read per call."""
     return os.environ.get("REPAIR_ACCEPT_PUNCT_CASE_ONLY") == "1"
@@ -1971,6 +2058,7 @@ def _process_episode(target):
     rejected_4xx = 0  # request-scoped client errors (llm_openai): no repair for that line, not an outage
     rejected_secondary = 0  # C5: second-pass output refused by the gate
     rejected_name_part = 0  # subset of rejected: the repair added or removed a part of a name
+    salvaged = 0  # replies refused for their line whose cut-down glossary-name fix was admitted
     transport_retries_at_start = transport_retries_total()
     dismissed_large_change = 0  # subset of rejected: recorded but kept out of the queue (REPAIR_AUTO_DISMISS_WORDS)
     accepted_punct_case_only = 0  # repairs admitted only by REPAIR_ACCEPT_PUNCT_CASE_ONLY
@@ -2205,6 +2293,7 @@ def _process_episode(target):
         # reached with no ruling at all -- which is why that branch needs no ruling guard of
         # its own to avoid re-queueing a settled line.
         admitted = ruling in APPLYING or accept_repair(c["text"], new, ref, dur, gloss, prev_text, ref_role=ref_role)
+        salvaged_from_refusal = ""  # set when this card ships a cut-down of a refused reply
         if (
             admitted
             and ruling not in APPLYING
@@ -2215,7 +2304,6 @@ def _process_episode(target):
             accepted_punct_case_only += 1  # admitted only because of REPAIR_ACCEPT_PUNCT_CASE_ONLY
         if not admitted:
             if new and new.lower() != c["text"].lower():
-                rejected += 1  # surfaced in the summary so the guard stays visible
                 # ...but the PROPOSAL was discarded, and it is the whole evidence a human
                 # needs to judge whether the guard was right or overzealous.
                 if invents_name(c["text"], new, gloss, dub_name_exemption(ref, ref_role)):
@@ -2228,7 +2316,6 @@ def _process_episode(target):
                 dismissed_fields = unresolved.dismissal(c["text"], new, phrases=gloss.get("phrases") or [])
                 dismissed_large_change += bool(dismissed_fields)
                 guard_name = rejecting_guard(c["text"], new, ref, dur, gloss, prev_text=prev_text, ref_role=ref_role)
-                rejected_terminal_punct += guard_name == "terminal_punct"
                 unresolved.record(
                     stem,
                     "repair",
@@ -2241,12 +2328,27 @@ def _process_episode(target):
                     **dismissed_fields,
                     **ref_fields,
                 )
+                # The passenger case: the refusal is about the LINE, and a correct glossary-name
+                # spelling fix can be riding it. Cut the reply down to just that same-length word
+                # replacement and offer the cut-down to the SAME gate as its own candidate. Every
+                # guard still judges it (a longer spelling that does not fit the card is still
+                # refused), it queues as an ordinary proposal, and nothing is loosened. The raw
+                # reply's refusal above stays recorded as the evidence for why it was cut.
+                cut = salvage_name_fixes(c["text"], new, gloss)
+                if cut and accept_repair(c["text"], cut, ref, dur, gloss, prev_text, ref_role=ref_role):
+                    salvaged += 1
+                    new = cut
+                    admitted = True
+                    salvaged_from_refusal = cut
+                else:
+                    rejected += 1  # surfaced in the summary so the guard stays visible
+                    rejected_terminal_punct += guard_name == "terminal_punct"
             else:
                 # `new` is non-empty (the `if not new` above returned), so this is exactly
                 # the verbatim echo. NOT queued: there is no proposal for a human to judge,
                 # and queueing every unrepaired line would flood the review page.
                 unchanged += 1
-        else:
+        if admitted:
             # A3: re-verify divergent-looking repairs (esp. name changes) with the secondary
             # model. No-op by default (REPAIR_MODEL_SECONDARY == REPAIR_MODEL).
             #
@@ -2258,7 +2360,10 @@ def _process_episode(target):
             # settled. The substitution would reach the viewer with nothing recording it.
             # (not once the episode deadline has passed: that bounds the overrun to one request)
             wants_second = MODEL_SECONDARY != MODEL and not _deadline_passed()
-            if not ruling and wants_second and _needs_secondary_check(c["text"], new, gloss):
+            # A salvaged cut-down is not a divergent proposal: it is the one-token name fix the
+            # gate has already judged, so it needs no re-verification (and the secondary would
+            # be shown the same prompt that produced the refused full reply).
+            if not ruling and not salvaged_from_refusal and wants_second and _needs_secondary_check(c["text"], new, gloss):
                 t1, slept1 = time.monotonic(), _retry_slept
                 new2 = llm(prompt, model=MODEL_SECONDARY)
                 latency_ms += round((time.monotonic() - t1 - (_retry_slept - slept1)) * 1000)
@@ -2304,6 +2409,7 @@ def _process_episode(target):
                     new,
                     reference=ref[:REF_WINDOW_CAP] or None,
                     avg_logprob=c.get("avg_logprob"),
+                    **({"salvaged": True} if salvaged_from_refusal else {}),
                     **ref_fields,
                 )
             c["text"] = new
@@ -2396,8 +2502,12 @@ def _process_episode(target):
         "llm_empty": llm_empty,
         "unreachable": unreachable,
         "rejected_4xx": rejected_4xx,  # subset of llm_empty: the provider rejected that one request
-        "rejected_guard": rejected,  # model proposed an edit, accept_repair() refused it
+        "rejected_guard": rejected,  # model proposed an edit, accept_repair() refused it and nothing was salvaged
         "rejected_name_part": rejected_name_part,  # subset of rejected_guard: it added/removed a name part
+        # Subset of repaired: the reply was refused for its LINE, but the one-token glossary-name
+        # fix cut out of it passed the SAME gate and shipped. The raw refusal is still recorded in
+        # the queue; the target is counted once, here and in `repaired`, so the buckets below add up.
+        "salvaged": salvaged,
         **({"dismissed_large_change": dismissed_large_change} if unresolved.auto_dismiss_threshold() is not None else {}),
         **({"accepted_punct_case_only": accepted_punct_case_only} if _accept_punct_case_only() else {}),
         **({"rejected_terminal_punct": rejected_terminal_punct} if _guard_terminal_punct() else {}),
@@ -2411,7 +2521,9 @@ def _process_episode(target):
         "unchanged": unchanged,  # model echoed the line back; nothing proposed, nothing shipped
         # [S-4]. targets == repaired + skipped_no_ref + llm_empty + rejected_guard +
         # verdict_reject + verdict_unfittable + verdict_rescued + verdict_owed + unchanged,
-        # for every episode. `unchanged`
+        # for every episode. `salvaged` is NOT one of those buckets: it is the subset of
+        # `repaired` whose candidate was cut out of a refused reply, so adding it would
+        # double-count. `unchanged`
         # was missing until 2026-08-29 and it is the LARGEST bucket, so the identity this
         # comment asserts was false everywhere it was read. Pinned by
         # test_every_target_lands_in_exactly_one_summary_bucket -- add an outcome to the
