@@ -1267,7 +1267,7 @@ def changes_name_parts(orig, new, gloss):
     return broken(n, inserted, kept_new) or broken(o, deleted, kept_old)
 
 
-def accept_repair(orig, new, ref, dur, gloss, prev_text=None, ref_role=None):
+def accept_repair(orig, new, ref, dur, gloss, prev_text=None, ref_role=None, next_text=None):
     """Whether to write ``new`` over ``orig`` on a card lasting ``dur`` seconds.
 
     A dubtitle must carry what the DUB AUDIO says. The reference is a different translation
@@ -1311,7 +1311,7 @@ def accept_repair(orig, new, ref, dur, gloss, prev_text=None, ref_role=None):
     attests are evidence (``dub_vouches``). None -- an unclassified or legacy reference --
     and ``translation`` keep the classic gates exactly.
     """
-    return rejecting_guard(orig, new, ref, dur, gloss, prev_text=prev_text, ref_role=ref_role) is None
+    return rejecting_guard(orig, new, ref, dur, gloss, prev_text=prev_text, ref_role=ref_role, next_text=next_text) is None
 
 
 # A reply refused for its LINE can carry a correct glossary-name spelling fix down with it: the
@@ -1493,6 +1493,88 @@ def terminal_punct_changed(orig, new) -> bool:
     return ell(a) != ell(b) and bool(a) and bool(b)
 
 
+# ---- cue-flow style guards -------------------------------------------------------------
+# The delivered house style runs a sentence across cues with NO trailing period and a
+# lowercase continuation. A proposal can be well-formed and still break that: a period
+# appended where the next cue continues the sentence, a capital added to a continuation, or
+# the ASR's '?'/'!' flattened into a period. None of that needs semantic judgement -- the
+# neighbouring cues are known at proposal time -- and each refusal carries its own label so
+# the run report shows the class. Guards never fire on a genuine sentence end: the next cue
+# starting a sentence is exactly the negative case.
+STYLE_CONTINUATION_BREAK = "style:continuation-break"
+STYLE_TONE_FLATTENED = "style:tone-flattened"
+STYLE_CONTINUATION_CAP = "style:continuation-cap"
+STYLE_GUARDS = frozenset({STYLE_CONTINUATION_BREAK, STYLE_TONE_FLATTENED, STYLE_CONTINUATION_CAP})
+
+
+def _guard_cue_style() -> bool:
+    """REPAIR_GUARD_CUE_STYLE (default on): the three cue-flow style guards. ``0`` turns all of them off. Read per call."""
+    return os.environ.get("REPAIR_GUARD_CUE_STYLE", "1") != "0"
+
+
+def _first_letter(text):
+    """The first LETTER of ``text``, skipping quotes, brackets, dashes and digits; ``""`` when it holds none."""
+    for ch in text or "":
+        if ch.isalpha():
+            return ch
+    return ""
+
+
+def _continues_sentence(next_text):
+    """The NEXT cue begins mid-sentence: its first letter is lowercase. An empty or missing next cue says nothing
+    (``False``), so no refusal rests on a neighbour nobody supplied; a cue opening on a sentence mark is its own
+    sentence whatever follows."""
+    lead = (next_text or "").lstrip()
+    if not lead or lead[:1] in ".!?":
+        return False
+    return _first_letter(lead).islower()
+
+
+def _plain_period_added(orig, new):
+    """``new`` finishes the card on a plain period where ``orig`` did not finish a sentence. An added '?', '!',
+    ellipsis or comma is a different question (and never this guard's)."""
+    return not _ends_sentence(orig) and _ends_sentence(new) and _terminal_run(new) == "."
+
+
+def _continuation_break(orig, new, next_text):
+    """A sentence-ending period added where the next cue continues the same sentence (lowercase first letter)."""
+    return _plain_period_added(orig, new) and _continues_sentence(next_text)
+
+
+def _tone_flattened(orig, new):
+    """The ASR's own tone mark -- '!' or '?' -- replaced by a plain period. That mark is evidence about how the
+    line was said, so a proposal that turns it into a statement drops something the audio carried."""
+    return ("!" in _terminal_run(orig) or "?" in _terminal_run(orig)) and _terminal_run(new) == "."
+
+
+def _continuation_cap(orig, new, prev_text, gloss):
+    """A Title-case capital added to the card's FIRST word where the previous cue does not finish a sentence -- the
+    'hawks' -> 'Hawks' continuation cap. Only the card-initial word: mid-card capitals are ordinary English
+    capitalisation ('American', 'I', 'OK') and cannot be told from a style cap without judgement.
+
+    A listed glossary name is the fix, not a cap (``glossary.correct`` would snap it anyway), and an all-caps
+    token ('OK', 'TV') is not this case. The word-list test fails OPEN: if the list cannot be read the guard does
+    not fire, because without it no word can be told from a name."""
+    if prev_text is None or _card_starts_sentence(prev_text):
+        return False  # unknown, or a genuine sentence start: a capital there is correct
+    old_words, new_words = (orig or "").split(), (new or "").split()
+    if not old_words or not new_words:
+        return False
+    m_old, m_new = unresolved._WORD.search(old_words[0]), unresolved._WORD.search(new_words[0])
+    if not m_old or not m_new:
+        return False
+    word_old, word_new = m_old.group(), m_new.group()
+    title_case = word_new[:1].isupper() and word_new[1:].islower() and word_new.lower() == word_old.lower()
+    if not (word_old[:1].islower() and title_case):
+        return False  # the first word was rewritten, or the capital is not a re-casing of it
+    core = word_new.lower()
+    known = {str(n).lower() for n in (gloss.get("names") or [])}
+    known |= {str(v).lower() for v in (gloss.get("token_fixes") or {}).values()}
+    if core in known:
+        return False
+    return glossary.wordlist_status() != "missing" and glossary.is_ordinary_word(word_new)
+
+
 def is_punct_case_only(orig, new, gloss=None, prev_text=None) -> bool:
     """``new`` differs from ``orig`` (exactly) but changes no word and only ADDS punctuation: the words are the same SEQUENCE
     (a reorder is a change), the punctuation between them differs only by added '.' and ',' (nothing removed, replaced or
@@ -1553,16 +1635,34 @@ def _no_new_layout_fault(new, dur, orig):
     return all(a <= b + s + reflow.EPS for a, b, s in zip(after, before, slack))
 
 
-def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=None, ref_role=None):
+def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=None, ref_role=None, next_text=None):
     """The name of the FIRST guard that refuses ``new`` for ``orig``, or None when accept_repair admits it. accept_repair is
     exactly ``rejecting_guard(...) is None``; the name is what the review queue records (key 'guard') so a human, and later
     measurements, can tell why a proposal was refused:
 
-        empty, unchanged, terminal_punct, invents_name, name_part, vouched_name, length_ratio,
-        fits_card, content_drop, replaced, ref_borrow
+        empty, unchanged, style:continuation-cap, terminal_punct, style:continuation-break,
+        style:tone-flattened, invents_name, name_part, vouched_name, length_ratio, fits_card,
+        content_drop, replaced, ref_borrow
 
     ``unchanged`` ignores typographic glyph swaps: a proposal equal to the source after
     folding curly/straight quotes and apostrophes is not an edit (see ``fold_glyphs``).
+
+    The three ``style:`` labels are the cue-flow style guards (``REPAIR_GUARD_CUE_STYLE``,
+    default on; ``0`` turns them off). They refuse a proposal that looks well-formed but breaks
+    the delivered house style, which runs a sentence across cues with no trailing period and a
+    lowercase continuation:
+
+    - ``style:continuation-cap``: a Title-case capital added to the card's first word while
+      ``prev_text`` does not finish a sentence ('hawks' -> 'Hawks' at a continuation). A listed
+      glossary name and an all-caps token are not caps; without a readable word list it does
+      not fire.
+    - ``style:continuation-break``: a plain period added at the card's end while the NEXT cue
+      (``next_text``) continues the same sentence, i.e. starts lowercase.
+    - ``style:tone-flattened``: the ASR's terminal '!' or '?' replaced by a plain period.
+
+    A genuine sentence end is the negative case and passes: ``prev_text`` ending a sentence
+    makes the capital correct, and ``next_text`` starting a sentence (upper case) makes the
+    period correct. An empty/absent neighbour is no information and never causes a refusal.
 
     ``content_drop`` refuses a proposal that deletes a content word the reference does not
     carry (see ``dropped_content_words``); it is not applied when ``ref_role='dub'``, where
@@ -1596,10 +1696,17 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
     if punct_case_ok is None:
         punct_case_ok = _accept_punct_case_only()
     special = punct_case_ok and is_punct_case_only(orig, new, gloss, prev_text)
+    if _guard_cue_style() and _continuation_cap(orig, new, prev_text, gloss):
+        return STYLE_CONTINUATION_CAP  # a capital at a continuation: a case-only edit, so this runs before "unchanged"
     if new.lower() == (orig or "").lower() and not special:
         return "unchanged"  # nothing changed
     if _guard_terminal_punct() and terminal_punct_changed(orig, new):
         return "terminal_punct"  # a question became a statement (or the reverse), or an ellipsis became '.'/'!'
+    if _guard_cue_style():
+        if _continuation_break(orig, new, next_text):
+            return STYLE_CONTINUATION_BREAK  # a period added before a lowercase continuation
+        if _tone_flattened(orig, new):
+            return STYLE_TONE_FLATTENED  # the ASR's '!'/'?' replaced by a period
     vouched = dub_vouches(orig, new, ref, ref_role)
     if invents_name(orig, new, gloss, dub_name_exemption(ref, ref_role)):
         return "invents_name"  # phonetic-name-guard: fabricated proper noun, not a real correction
@@ -2070,6 +2177,10 @@ def _process_episode(target):
     dismissed_large_change = 0  # subset of rejected: recorded but kept out of the queue (REPAIR_AUTO_DISMISS_WORDS)
     accepted_punct_case_only = 0  # repairs admitted only by REPAIR_ACCEPT_PUNCT_CASE_ONLY
     rejected_terminal_punct = 0  # subset of rejected: REPAIR_GUARD_TERMINAL_PUNCT refused them
+    # Subset of rejected: the cue-flow style guards refused them (REPAIR_GUARD_CUE_STYLE, default on).
+    rejected_style_continuation_break = 0
+    rejected_style_tone_flattened = 0
+    rejected_style_continuation_cap = 0
     unreachable_secondary = 0  # the second-pass backend call itself failed (first pass stands)
     # The model returned the line verbatim -- the single most common outcome of this stage
     # (568 of 836 targets on the SAO pass). accept_repair refuses it and the `not admitted`
@@ -2299,18 +2410,29 @@ def _process_episode(target):
         # Every applying verdict is admitted here, so `not admitted` below can only be
         # reached with no ruling at all -- which is why that branch needs no ruling guard of
         # its own to avoid re-queueing a settled line.
-        admitted = ruling in APPLYING or accept_repair(c["text"], new, ref, dur, gloss, prev_text, ref_role=ref_role)
+        admitted = ruling in APPLYING or accept_repair(
+            c["text"], new, ref, dur, gloss, prev_text, ref_role=ref_role, next_text=next_text
+        )
         salvaged_from_refusal = ""  # set when this card ships a cut-down of a refused reply
         if (
             admitted
             and ruling not in APPLYING
             and _accept_punct_case_only()
             and is_punct_case_only(c["text"], new, gloss, prev_text)
-            and rejecting_guard(c["text"], new, ref, dur, gloss, punct_case_ok=False, ref_role=ref_role) is not None
+            and rejecting_guard(
+                c["text"], new, ref, dur, gloss, punct_case_ok=False, ref_role=ref_role, next_text=next_text
+            )
+            is not None
         ):
             accepted_punct_case_only += 1  # admitted only because of REPAIR_ACCEPT_PUNCT_CASE_ONLY
         if not admitted:
-            if new and new.lower() != c["text"].lower():
+            # A cue-flow style refusal can be a CASE-ONLY proposal (the continuation cap), which the
+            # old `new.lower() != orig.lower()` test called "the verbatim echo". It is a real refusal
+            # with its own label, so it is queued and counted like any other.
+            guard_name = rejecting_guard(
+                c["text"], new, ref, dur, gloss, prev_text=prev_text, ref_role=ref_role, next_text=next_text
+            )
+            if new and (new.lower() != c["text"].lower() or guard_name in STYLE_GUARDS):
                 # ...but the PROPOSAL was discarded, and it is the whole evidence a human
                 # needs to judge whether the guard was right or overzealous.
                 if invents_name(c["text"], new, gloss, dub_name_exemption(ref, ref_role)):
@@ -2322,7 +2444,6 @@ def _process_episode(target):
                     reason = "rejected_guard"
                 dismissed_fields = unresolved.dismissal(c["text"], new, phrases=gloss.get("phrases") or [])
                 dismissed_large_change += bool(dismissed_fields)
-                guard_name = rejecting_guard(c["text"], new, ref, dur, gloss, prev_text=prev_text, ref_role=ref_role)
                 unresolved.record(
                     stem,
                     "repair",
@@ -2342,7 +2463,7 @@ def _process_episode(target):
                 # refused), it queues as an ordinary proposal, and nothing is loosened. The raw
                 # reply's refusal above stays recorded as the evidence for why it was cut.
                 cut = salvage_name_fixes(c["text"], new, gloss)
-                if cut and accept_repair(c["text"], cut, ref, dur, gloss, prev_text, ref_role=ref_role):
+                if cut and accept_repair(c["text"], cut, ref, dur, gloss, prev_text, ref_role=ref_role, next_text=next_text):
                     salvaged += 1
                     new = cut
                     admitted = True
@@ -2350,6 +2471,9 @@ def _process_episode(target):
                 else:
                     rejected += 1  # surfaced in the summary so the guard stays visible
                     rejected_terminal_punct += guard_name == "terminal_punct"
+                    rejected_style_continuation_break += guard_name == STYLE_CONTINUATION_BREAK
+                    rejected_style_tone_flattened += guard_name == STYLE_TONE_FLATTENED
+                    rejected_style_continuation_cap += guard_name == STYLE_CONTINUATION_CAP
             else:
                 # `new` is non-empty (the `if not new` above returned), so this is exactly
                 # the verbatim echo. NOT queued: there is no proposal for a human to judge,
@@ -2385,7 +2509,9 @@ def _process_episode(target):
                     # the first pass with no validation at all -- same gate, same card. When
                     # it fails, the already-accepted first-pass repair stands rather than the
                     # card being left garbled.
-                    if new2 and accept_repair(c["text"], new2, ref, dur, gloss, prev_text, ref_role=ref_role):
+                    if new2 and accept_repair(
+                        c["text"], new2, ref, dur, gloss, prev_text, ref_role=ref_role, next_text=next_text
+                    ):
                         new = new2
                     elif new2 and new2.lower() != new.lower():
                         rejected_secondary += 1
@@ -2518,6 +2644,16 @@ def _process_episode(target):
         **({"dismissed_large_change": dismissed_large_change} if unresolved.auto_dismiss_threshold() is not None else {}),
         **({"accepted_punct_case_only": accepted_punct_case_only} if _accept_punct_case_only() else {}),
         **({"rejected_terminal_punct": rejected_terminal_punct} if _guard_terminal_punct() else {}),
+        **(
+            {
+                # Each cue-flow style class on its own, so the run report shows which one fired.
+                "rejected_style_continuation_break": rejected_style_continuation_break,
+                "rejected_style_tone_flattened": rejected_style_tone_flattened,
+                "rejected_style_continuation_cap": rejected_style_continuation_cap,
+            }
+            if _guard_cue_style()
+            else {}
+        ),
         **(
             {"transport_retries": transport_retries_total() - transport_retries_at_start}
             if REPAIR_BACKEND == "openai" and _transport_retries()
