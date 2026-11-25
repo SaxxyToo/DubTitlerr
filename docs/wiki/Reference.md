@@ -108,6 +108,26 @@ else is stale and is regenerated the next time the pipeline reaches it.
 | `text_version` | `common.TEXT_VERSION` | behind — anything after the word list changed |
 | `asr_backend` + `asr_model` | `common.decoder_stamp_identity()` (`ASR_BACKEND`, then `ASR_MODEL` for the endpoint backend or `WHISPER_MODEL` for the local one) | different from today's, **or absent** |
 
+**When to bump `TEXT_VERSION`.** One question decides it: *would re-running an already-processed
+episode produce different output?* If yes, **bump** — episodes stamped at the old number carry
+sidecars the current code would not produce, and only a bump asks for them to be re-decided. If the
+change only affects episodes not yet processed, or touches no product code at all (tests, docs),
+**do not** bump: a bump is a library-wide text re-pass and it should buy something.
+
+It is not a judgement about size, and the tell is usually in the change's own justification. A fix
+that cites existing library cases it intends to correct — *"across the store, N refusals of this
+shape"* — is asking for those cases to be re-decided, which is a bump by definition. So is a
+refusal-path change that salvages a **written** repair out of a refused reply: a card that was
+previously left alone now carries a name fix, so a re-run differs. Conversely, a follow-up that
+only adds tests and documentation changes nothing an episode would produce.
+
+Bumping is also how a fix reaches the episodes that **already exist** rather than only the ones
+processed after the deploy. Without it, a change that only matters to already-stamped episodes never
+arrives — the fix sits dormant until some unrelated text-tier change forces the next re-pass.
+
+The pin lives in `tests/test_common.py`: the pin test's docstring **and** its assertion, and the
+convention with it is that `TRANSCRIBE_VERSION` must not follow a text bump.
+
 A **model change is not a version bump.** Switching `WHISPER_MODEL` or `ASR_MODEL` changes the
 transcript without changing the code, and the tier numbers cannot see it, so the decoder identity is
 recorded in every new stamp and compared directly. A different model marks the episode stale in
