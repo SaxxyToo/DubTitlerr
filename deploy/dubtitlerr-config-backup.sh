@@ -41,6 +41,23 @@ chmod 700 "$BACKUP_DIR" 2>/dev/null || true
 mkdir -p "$OUT"
 chmod 700 "$OUT" 2>/dev/null || true
 
+# COPY_TO is the off-host half of the story. A local destination is accepted, but its base
+# directory must exist (rsync will not create it, so a missing base fails the whole run) and a
+# local destination on the SAME filesystem as BACKUP_DIR is not off-host: it reads as a working
+# mirror and then loses both copies with the one disk. Warn loudly instead of failing, because
+# a second local disk is a legitimate choice.
+if [ -n "$COPY_TO" ]; then
+    case "$COPY_TO" in
+    *:*) : ;; # rsync's remote syntax (user@host:/path); the remote base must already exist
+    *)
+        mkdir -p "$COPY_TO"
+        if [ "$(df -P "$BACKUP_DIR" | awk 'NR==2 {print $1}')" = "$(df -P "$COPY_TO" | awk 'NR==2 {print $1}')" ]; then
+            echo "WARNING: COPY_TO=$COPY_TO is on the same filesystem as BACKUP_DIR -- this snapshot is NOT off-host; use user@host:/path or an independent disk" >&2
+        fi
+        ;;
+    esac
+fi
+
 if [ -f "$CONFIG_DIR/artifacts.db" ]; then
     if ! command -v sqlite3 >/dev/null 2>&1; then
         echo "FATAL: sqlite3 is required to snapshot $CONFIG_DIR/artifacts.db consistently" >&2
