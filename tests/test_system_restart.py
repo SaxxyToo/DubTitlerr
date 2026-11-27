@@ -96,6 +96,15 @@ def test_a_restart_request_ends_the_whole_container_script_with_exit_0_after_the
         "MERGE_INTERVAL": "1",
         "CONFIG_DIR": str(tmp_path),
     }
+    # The image provides the media binaries; the boot check refuses without them (deliberately),
+    # so the harness supplies stubs -- CI has no mkvmerge, and a dev box must not need it either.
+    bins = tmp_path / "bin"
+    bins.mkdir()
+    for name in ("ffmpeg", "ffprobe", "mkvmerge"):
+        stub = bins / name
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+    env["PATH"] = f"{bins}:{env.get('PATH', '')}"
     proc = subprocess.Popen(
         ["sh", os.path.join(REPO, "container_run.sh")],
         env=env,

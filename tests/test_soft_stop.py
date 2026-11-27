@@ -257,6 +257,16 @@ def _supervisor(tmp_path):
         RESCAN_INTERVAL="1",
         PYTHONPATH=str(app),
     )
+    # The image provides the media binaries; the boot check refuses without them, deliberately, so
+    # every harness that boots the real script supplies stubs -- CI has no mkvmerge, and a dev box
+    # must not need it either.
+    bins = tmp_path / "bin"
+    bins.mkdir()
+    for name in ("ffmpeg", "ffprobe", "mkvmerge"):
+        stub = bins / name
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+    env["PATH"] = f"{bins}:{env.get('PATH', '')}"
     p = subprocess.Popen(
         ["sh", CONTAINER_RUN],
         cwd=str(app),

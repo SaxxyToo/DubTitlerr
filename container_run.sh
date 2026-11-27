@@ -63,11 +63,16 @@ export DT_VERSION
 # >>> media binaries
 # ffmpeg, ffprobe and mkvmerge resolve through PATH at every call site, so a build (or PATH)
 # that lacks one used to surface as a per-episode failure once the loops were already working
-# -- and a mux-stage failure can park an episode. Refuse at boot instead; the check and the
-# message live in the module, so `python3 -m dubtitlerr.core.binaries` answers the same way
-# anywhere. bsdtar is deliberately not in the list (refs/acquire degrades per-feature).
-if ! python3 -m dubtitlerr.core.binaries; then
-	echo "FATAL: missing media binaries -- refusing to start (the image must provide them)"
+# -- and a mux-stage failure can park an episode. Refuse at boot instead. Shell builtins only,
+# deliberately: like the flock below, this check must not depend on python or the app package
+# (a misbuilt app still boots; missing media binaries are a refusal). bsdtar is deliberately
+# not in the list: refs/acquire guards it per-feature (.rar reference archives only).
+_missing_bins=""
+for _bin in ffmpeg ffprobe mkvmerge; do
+	command -v "$_bin" >/dev/null 2>&1 || _missing_bins="$_missing_bins $_bin"
+done
+if [ -n "$_missing_bins" ]; then
+	echo "FATAL: missing media binaries:$_missing_bins -- refusing to start (the image must provide them)"
 	exit 1
 fi
 # <<< media binaries

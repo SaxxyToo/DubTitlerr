@@ -1,9 +1,10 @@
-"""Boot refuses when a media binary is missing: container_run.sh runs `python3 -m dubtitlerr.core.binaries` first.
+"""Boot refuses when a media binary is missing: container_run.sh checks before any loop starts.
 
-The check runs before the up banner and before any loop starts. The block is driven under `sh`
-with a stub python3, so the wiring (refuse, say why, start nothing) is pinned without depending
-on the test host's PATH -- CI has no mkvmerge, and the dev machine must not be assumed either.
-The module's own behavior is pinned in tests/test_binaries.py.
+The check runs before the up banner and before any loop starts, and it uses shell builtins only
+-- no python, no app package -- exactly like the flock claim, because a misbuilt app must still
+boot while a missing ffmpeg/ffprobe/mkvmerge must not wait for the first episode to fail. The
+block is driven under /bin/sh with a controlled PATH, so the outcome does not depend on what
+the test host has installed (CI installs ffmpeg but not mkvtoolnix).
 """
 
 import os
@@ -19,34 +20,42 @@ def block():
     return SCRIPT[start:end]
 
 
-def run_boot(tmp_path, stub_rc):
-    """The block, then "started": what a boot that got past the check would go on to do.
-
-    The stub python3 shadows the real one via PATH order; `sh` and the shell builtins still
-    resolve from the inherited PATH.
-    """
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    stub = bin_dir / "python3"
-    stub.write_text(f'#!/bin/sh\necho "FATAL: missing media binaries: ffmpeg, ffprobe, mkvmerge" >&2\nexit {stub_rc}\n')
-    stub.chmod(0o755)
+def run_boot(tmp_path, provide):
+    bins = tmp_path / "bin"
+    bins.mkdir(exist_ok=True)
+    for name in provide:
+        stub = bins / name
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
     script = f"set -u\n{block()}\necho started\n"
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
-    return subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=30)
+    return subprocess.run(["/bin/sh", "-c", script], env={"PATH": str(bins)}, capture_output=True, text=True, timeout=30)
 
 
-def test_boot_refuses_before_starting_when_the_check_fails(tmp_path):
-    res = run_boot(tmp_path, 1)
+def test_boot_refuses_and_names_the_missing_binary(tmp_path):
+    res = run_boot(tmp_path, provide=("ffmpeg", "mkvmerge"))
     assert res.returncode == 1
     assert "started" not in res.stdout.splitlines()
-    assert "refusing to start" in res.stdout
-    assert "missing media binaries" in res.stderr
+    assert "missing media binaries: ffprobe --" in res.stdout
 
 
-def test_boot_proceeds_when_the_check_passes(tmp_path):
-    res = run_boot(tmp_path, 0)
+def test_boot_names_every_binary_when_none_are_present(tmp_path):
+    res = run_boot(tmp_path, provide=())
+    assert res.returncode == 1
+    assert "missing media binaries: ffmpeg ffprobe mkvmerge --" in res.stdout
+
+
+def test_boot_proceeds_when_all_three_resolve(tmp_path):
+    res = run_boot(tmp_path, provide=("ffmpeg", "ffprobe", "mkvmerge"))
     assert res.returncode == 0, res.stdout + res.stderr
-    assert res.stdout.splitlines() == ["started"]
+    assert res.stdout.splitlines()[-1] == "started"
+
+
+def test_the_check_needs_no_python_or_app_package():
+    # The design point, pinned: the block must survive the minimal app-dir harnesses and a
+    # misbuilt image, so no executable line may delegate to the package the way other boot
+    # steps do. (The comment explains the rule; only code lines count.)
+    code = [line for line in block().splitlines() if not line.lstrip().startswith("#")]
+    assert not any("python" in line for line in code)
 
 
 def test_the_check_sits_before_the_up_banner_and_every_loop():
