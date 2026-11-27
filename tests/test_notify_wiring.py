@@ -319,6 +319,11 @@ def _run_container(tmp_path, notify_exit="0"):
         NOTIFYLOG=str(tmp_path / "notify.log"),
         NOTIFY_EXIT=notify_exit,
     )
+    # The image provides the media binaries; the boot check refuses without them (deliberately),
+    # so the harness supplies stubs -- CI has no mkvmerge, and a dev box must not need it either.
+    for name in ("ffmpeg", "ffprobe", "mkvmerge"):
+        bindir = _fake_bin(tmp_path, name)
+    env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
     res = subprocess.run(
         ["sh", str(REPO / "container_run.sh")], env=env, cwd=str(app), capture_output=True, text=True, timeout=60
     )
