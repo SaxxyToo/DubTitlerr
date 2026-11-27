@@ -138,6 +138,45 @@ def test_a_fragment_absorbed_into_a_word_is_not_a_drop():
     assert not repair._absorbed("guarding", ["guard"])
 
 
+def test_a_truncated_word_is_not_a_compensating_gain():
+    """``drunker`` -> ``drunk`` hands back a HEAD of the dropped word, not a substitute for it: the
+    drop stands and the guard fires. Hand-judge fixture (2026-11-26, r6 CSM S01 replay, byte-for-byte):
+    the one live truncation that sailed through when a gain of any shape counted as compensation."""
+    orig, new = "But I'll do it when I'm drunker.", "But I'll do it when I'm drunk"
+    assert repair.dropped_content_words(orig, new, "") == ["drunker"]
+    assert repair.rejecting_guard(orig, new, "", 6.0, GL) == "content_drop"
+    assert not repair.accept_repair(orig, new, "", 6.0, GL)
+
+
+def test_the_mid_word_cut_the_same_hand_judge_flagged_is_refused():
+    """``Tayo`` -> ``T``: the fragment filter (under ``MIN_CONTENT_DROP`` and not a word) already
+    refuses it; pinned here as the measured row beside the truncation clause above."""
+    assert (
+        repair.rejecting_guard("You're getting on my nerves, Tayo!", "You're getting on my nerves, T", "", 6.0, GL)
+        == "content_drop"
+    )
+
+
+def test_a_one_letter_clipping_is_a_contraction_not_a_truncation():
+    """``coming`` -> ``comin'`` sheds one letter -- ordinary colloquial dub style, not a cut word,
+    and it must keep shipping; only two or more letters of loss are a truncation."""
+    assert repair.dropped_content_words("It's coming right at us!", "It's comin' right at us!", "") == []
+    assert repair.rejecting_guard("It's coming right at us!", "It's comin' right at us!", "", 6.0, GL) is None
+
+
+def test_a_capitalised_truncation_shaped_name_fix_still_ships():
+    """``Poway`` -> ``Pow`` is the one real r6 row the truncation clause could misread: a capitalised
+    source word is proper-noun territory, and the name-swap replay pinned that content_drop must not
+    over-match it (Reference.md, '0 on content_drop'). Byte-for-byte from the replay -- both qwen and
+    granite replied with the same corrected row."""
+    orig = "Smoky Moe is asking for me and Poway, so we're gonna bounce ."
+    new = "Smoky Moe is asking for me and Pow, so we're gonna bounce."
+    ref = "Makima wants to see me and Pow, so we're leaving."
+    assert repair.dropped_content_words(orig, new, ref) == []
+    assert repair.rejecting_guard(orig, new, ref, 6.0, GL) is None
+    assert repair.accept_repair(orig, new, ref, 6.0, GL)
+
+
 def test_the_content_drop_guard_is_not_applied_to_a_dub_transcript():
     """Under role=dub the reference IS the audio's transcript, so a word it lacks is likelier ASR
     noise than a deletion; the other guards still apply."""
