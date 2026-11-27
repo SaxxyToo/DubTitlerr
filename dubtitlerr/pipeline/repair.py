@@ -927,7 +927,8 @@ def dropped_content_words(orig, new, ref):
     a word the reference carries is left alone (it attests the word, so the model is judging the audio). A drop
     compensated by a word GAINED elsewhere is a substitution and is not refused -- that is what keeps
     ``What you ain't`` -> ``What aren't you?`` and a contraction expansion (``It'd`` -> ``It would``) shipping,
-    alongside the split/join fixes ``_absorbed`` covers."""
+    alongside the split/join fixes ``_absorbed`` covers. A gain that is merely the HEAD of a dropped word
+    (``drunker`` -> ``drunk``) is a truncation, not a compensation, and does not excuse the drop."""
     import collections
 
     src, dst = _words(orig), _words(new)
@@ -948,6 +949,28 @@ def dropped_content_words(orig, new, ref):
     ref_letters = {_letters(w) for w in _words(ref)}
     dropped = [w for w in _content_tokens(gone, ref_letters) if not _absorbed(w, dst)]
     gained = [w for w in gained if len(_letters(w)) >= 2]  # any word-shaped gain compensates, function word or not
+    # ...but a TRUNCATION is not a compensation. ``drunker`` -> ``drunk`` sheds the ending and hands
+    # a head of the same word back: what returns is not a substitute for what left, so the drop
+    # stands. Three shapes stay out of scope: a one-letter colloquial clipping (``coming`` ->
+    # ``comin'``), a contraction's stem riding its own expansion (``we've`` -> ``we`` in
+    # ``We've`` -> ``We have``, a pinned wanted fix), and a capitalised source word (``Poway`` ->
+    # ``Pow`` is the name-correction shape the 2026-11-24 replay promised content_drop would not
+    # over-match -- see Reference.md). Only two or more letters vanishing from a plain, lowercase
+    # word fire. Measured on the 2026-11-26 hand-judge of the r6 replay (CSM S01, 406 anchored
+    # lines): `But I'll do it when I'm drunker.` -> `... drunk` was the one live truncation that
+    # sailed through here; the same judge's mid-word cut (`...nerves, Tayo!` -> `...nerves, T`) was
+    # already refused by the fragment filter above.
+    capitalised = {t.lower() for t in re.findall(r"[A-Za-z']+", fold_glyphs(orig)) if t[:1].isupper()}
+    gone_bases = {(_letters(w), "'" in w, w in capitalised) for w in gone if len(_letters(w)) >= 3}
+
+    def _reaped_as_head(word):
+        letters = _letters(word)
+        return any(
+            base.startswith(letters) and len(base) - len(letters) >= 2 and not had_apostrophe and not was_capitalised
+            for base, had_apostrophe, was_capitalised in gone_bases
+        )
+
+    gained = [w for w in gained if not _reaped_as_head(w)]
     if len(dropped) > len(gained):
         return dropped
     return []
