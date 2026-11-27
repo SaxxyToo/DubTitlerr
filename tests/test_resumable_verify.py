@@ -143,7 +143,7 @@ def test_a_corrupt_journal_does_not_abort_the_run(run):
 @pytest.fixture
 def decision(run, monkeypatch):
     monkeypatch.setattr(gv, "VERIFY_BACKEND", "decision")
-    monkeypatch.setenv("VERIFY_DECISION_MODEL", "inception/mercury-decide:free")
+    monkeypatch.setenv("VERIFY_DECISION_MODEL", "typesafe/jev-1.13")
     monkeypatch.setenv("VERIFY_DECISION_TAU", "0.5")
     monkeypatch.setenv("VERIFY_DECISION_FALLBACK", "local")
     monkeypatch.setattr(gv, "begin_run", lambda *a, **k: None)
@@ -163,7 +163,7 @@ def test_decision_results_are_journaled_with_the_model_and_threshold_and_reused(
     decision()
     assert len(decision.decision_calls) == len(TERMS)
     prov = journal_lines(decision)[0]["prov"]
-    assert prov["backend"] == "decision" and prov["model"] == "inception/mercury-decide:free" and prov["tau"] == 0.5
+    assert prov["backend"] == "decision" and prov["model"] == "typesafe/jev-1.13" and prov["tau"] == 0.5
     decision()
     assert len(decision.decision_calls) == len(TERMS), "reused"
     monkeypatch.setenv("VERIFY_DECISION_TAU", "0.9")
@@ -329,7 +329,7 @@ def test_each_keyed_input_changes_the_identity(monkeypatch):
 
 
 def test_the_decision_client_version_is_part_of_the_identity(monkeypatch):
-    monkeypatch.setenv("VERIFY_DECISION_MODEL", "inception/mercury-decide:free")
+    monkeypatch.setenv("VERIFY_DECISION_MODEL", "typesafe/jev-1.13")
     base = gv.backend_identity("decision", "pick")
     assert base["client"] == gd.DECISION_CLIENT_VERSION
     monkeypatch.setattr(gd, "DECISION_CLIENT_VERSION", "next")

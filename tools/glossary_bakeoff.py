@@ -470,10 +470,8 @@ ARMS = {
             {"chat_template_kwargs": {"enable_thinking": False}},
             delay=1.6,
         ),  # fmt: skip
-        Arm("mercury-decide", "decision", "inception/mercury-decide:free", _DECISIONS, _JEV_KEY),
         Arm("span-01-lite", "decision", "respan/span-01-lite", _DECISIONS, _JEV_KEY),
         Arm("solar-decide-flash", "decision", "upstage/solar-decide-flash", _DECISIONS, _JEV_KEY),
-        Arm("pplx-decider", "decision", "perplexity/pplx-decider-v1.1-27b", _DECISIONS, _JEV_KEY),
         Arm("gpt-6-luna-decisions", "decision", "openai/gpt-6-luna-decisions", _DECISIONS, _JEV_KEY),
         # jev runs on CommandCode's Provider API (user instruction), with its own key and no OpenRouter fallback.
         Arm("jev", "decision", "typesafe/jev", decision_client.COMMANDCODE_URL, "COMMANDCODE_API_KEY", provider="commandcode"),

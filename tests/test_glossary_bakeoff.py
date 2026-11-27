@@ -302,7 +302,7 @@ def test_the_registry_names_every_arm_with_its_endpoint_and_key():
     r = gb.ARMS
     assert set(r) == {
         "qwen-local", "longcat-2.0", "longcat-2.5", "nemotron-super",
-        "mercury-decide", "span-01-lite", "solar-decide-flash", "pplx-decider", "gpt-6-luna-decisions", "jev",
+        "span-01-lite", "solar-decide-flash", "gpt-6-luna-decisions", "jev",
     }  # fmt: skip
     assert r["longcat-2.0"].url == "https://api.longcat.chat/openai/v1/chat/completions"
     assert r["longcat-2.0"].key_env == "LONGCATAI_API_KEY" and r["longcat-2.0"].extra_body == {"thinking": {"type": "disabled"}}
@@ -416,7 +416,7 @@ def _choice(opt, probs=None, conf=0.9):
 def test_a_decision_arm_asks_one_choice_question_and_stores_the_raw_answer(tmp_path, items_file, monkeypatch):
     seen = []
     _fake_decide(monkeypatch, _choice("c2", {"c1": 0.1, "c2": 0.8, "none": 0.1}, 0.77), seen)
-    _, rows, _ = _run(tmp_path, items_file, "mercury-decide", "--stage", "verify")
+    _, rows, _ = _run(tmp_path, items_file, "solar-decide-flash", "--stage", "verify")
     q = seen[0]["questions"]["pick"]
     assert q["type"] == "choice" and q["criteria"] == {
         "c1": "Zoro",
@@ -424,7 +424,7 @@ def test_a_decision_arm_asks_one_choice_question_and_stores_the_raw_answer(tmp_p
         "none": "no candidate is the same named entity",
     }
     assert seen[0]["state"] == {"show": "Alpha Show", "term": "Zoro"} and seen[0]["key_env"] == "OPENROUTER_JEV_API_KEY"
-    assert seen[0]["model"] == "inception/mercury-decide:free"
+    assert seen[0]["model"] == "upstage/solar-decide-flash"
     row = rows[0]
     assert row["parsed"] == {
         "choice": "c2",
@@ -485,7 +485,7 @@ def test_a_decision_failure_is_an_error_row_with_no_pick(tmp_path, items_file, m
         raise dc.DecisionHTTPError(429)
 
     monkeypatch.setattr(dc, "decide", boom)
-    _, rows, _ = _run(tmp_path, items_file, "pplx-decider", "--stage", "verify")
+    _, rows, _ = _run(tmp_path, items_file, "gpt-6-luna-decisions", "--stage", "verify")
     sent = [r for r in rows if not r.get("local")]
     assert len(sent) == 2 and all(r["error"] == "HTTP 429" and r["parsed"] is None for r in sent)
 
@@ -601,9 +601,9 @@ def test_progress_goes_to_stderr_every_25_items_and_never_shows_content(tmp_path
 
 def test_the_startup_line_names_exactly_the_fields_sent_to_a_third_party(tmp_path, items_file, monkeypatch, capsys):
     _fake_decide(monkeypatch, _choice("c1"))
-    _run(tmp_path, items_file, "mercury-decide", "--stage", "verify")
+    _run(tmp_path, items_file, "solar-decide-flash", "--stage", "verify")
     first = capsys.readouterr().out.splitlines()[0]
-    assert "mercury-decide" in first and "show title" in first and "mined term" in first and "wiki candidate titles" in first
+    assert "solar-decide-flash" in first and "show title" in first and "mined term" in first and "wiki candidate titles" in first
     assert "transcript" not in first  # verify only
     _fake_local(monkeypatch, '{"canonical": "Zoro", "confidence": "high"}')
     _run(tmp_path, items_file, "qwen-local", "--stage", "verify", out="local.jsonl")
@@ -1176,7 +1176,7 @@ def test_jev_passes_its_provider_and_key_env_to_the_client(tmp_path, items_file,
     assert seen[0]["model"] == "typesafe/jev" and seen[0]["key_env"] == "COMMANDCODE_API_KEY"
     assert seen[0]["provider"] == "commandcode" and seen[0]["url"] == "https://api.commandcode.ai/provider/v1/systemone"
     seen.clear()
-    _run(tmp_path, items_file, "mercury-decide", "--stage", "verify", "--only", "gold", out="m.jsonl")
+    _run(tmp_path, items_file, "solar-decide-flash", "--stage", "verify", "--only", "gold", out="m.jsonl")
     assert seen[0]["provider"] == "openrouter" and seen[0]["key_env"] == "OPENROUTER_JEV_API_KEY"
 
 
@@ -1366,7 +1366,6 @@ def test_span_01_lite_below_half_is_still_a_titled_pick_the_tau_sweep_abstains(t
 @pytest.mark.parametrize(
     "arm,env,served,noul,same",
     [
-        ("mercury-decide", "MERCURY_DECIDE", "inception/mercury-decide-20260930", 0.9669140186318742, True),
         ("span-01-lite", "SPAN_01_LITE", SPAN_SERVED, 0.11070899, False),
         ("jev", "JEV", "typesafe/jev", 0.79, True),
         ("jev", "JEV", "typesafe/jev", 0.5, True),  # the boundary: >= 0.5 is "same entity"
@@ -1425,16 +1424,16 @@ V2_INSTRUCTION = (
 
 
 def test_at_v2_arms_resolve_to_the_base_entry_with_framing_v2():
-    base = gb.ARMS["mercury-decide"]
-    v2 = gb.resolve_arm("mercury-decide@v2")
-    assert v2.name == "mercury-decide@v2" and v2.framing == "v2" and v2.base == "mercury-decide"
+    base = gb.ARMS["solar-decide-flash"]
+    v2 = gb.resolve_arm("solar-decide-flash@v2")
+    assert v2.name == "solar-decide-flash@v2" and v2.framing == "v2" and v2.base == "solar-decide-flash"
     assert (v2.model, v2.url, v2.key_env, v2.provider, v2.kind) == (base.model, base.url, base.key_env, base.provider, base.kind)
-    assert gb.resolve_arm("mercury-decide") is base and base.framing == "v1"
-    for name in ("jev@v2", "span-01-lite@v2", "solar-decide-flash@v2", "pplx-decider@v2", "gpt-6-luna-decisions@v2"):
+    assert gb.resolve_arm("solar-decide-flash") is base and base.framing == "v1"
+    for name in ("jev@v2", "span-01-lite@v2", "solar-decide-flash@v2", "gpt-6-luna-decisions@v2"):
         assert gb.resolve_arm(name).framing == "v2" and name in gb.ARM_CHOICES
 
 
-@pytest.mark.parametrize("bad", ["longcat-2.0@v2", "qwen-local@v2", "nemotron-super@v2", "nope@v2", "mercury-decide@v3"])
+@pytest.mark.parametrize("bad", ["longcat-2.0@v2", "qwen-local@v2", "nemotron-super@v2", "nope@v2", "solar-decide-flash@v3"])
 def test_only_decision_arms_have_a_v2(tmp_path, items_file, bad):
     with pytest.raises(SystemExit) as e:
         gb.main(["run", "--items", str(items_file), "--arm", bad, "--out", str(tmp_path / "o.jsonl")])
@@ -1444,13 +1443,13 @@ def test_only_decision_arms_have_a_v2(tmp_path, items_file, bad):
 def test_the_v2_choice_question_is_the_frozen_text_over_the_candidate_titles_only(tmp_path, items_file, monkeypatch):
     seen = []
     _fake_decide(monkeypatch, lambda m, s, q: _choice_for(q, "c2", 0.81), seen)
-    _, rows, _ = _run(tmp_path, items_file, "mercury-decide@v2", "--stage", "verify", "--only", "gold")
+    _, rows, _ = _run(tmp_path, items_file, "solar-decide-flash@v2", "--stage", "verify", "--only", "gold")
     q = seen[0]["questions"]["pick"]
     assert q["type"] == "choice" and q["criteria"] == {"c1": "Zoro", "c2": "Roronoa Zoro"}  # no `none` option
     assert q["instructions"] == V2_INSTRUCTION.format(term="Zoro", show="Alpha Show")
-    assert seen[0]["state"] == {"show": "Alpha Show", "term": "Zoro"} and seen[0]["model"] == "inception/mercury-decide:free"
+    assert seen[0]["state"] == {"show": "Alpha Show", "term": "Zoro"} and seen[0]["model"] == "upstage/solar-decide-flash"
     r = rows[0]
-    assert r["arm"] == "mercury-decide@v2" and r["framing"] == "v2" and r["order"] == "fwd" and r["error"] is None
+    assert r["arm"] == "solar-decide-flash@v2" and r["framing"] == "v2" and r["order"] == "fwd" and r["error"] is None
     assert r["parsed"]["canonical"] == "Roronoa Zoro" and r["parsed"]["choice"] == "c2" and r["parsed"]["confidence"] == 0.81
 
 
@@ -1479,16 +1478,16 @@ def test_v2_skips_single_candidate_items_for_choice_arms_and_says_so(tmp_path, m
     )
     seen = []
     _fake_decide(monkeypatch, lambda m, s, q: _choice_for(q, "c1", 0.9), seen)
-    _, rows, _ = _run(tmp_path, p, "mercury-decide@v2")
+    _, rows, _ = _run(tmp_path, p, "solar-decide-flash@v2")
     assert [r["id"] for r in rows] == ["verify:Alpha Show:Duo"] and len(seen) == 1
     assert "skipped (single candidate" in capsys.readouterr().out
-    _, rows1, _ = _run(tmp_path, p, "mercury-decide", out="v1.jsonl")  # framing v1 still asks the single-candidate item
+    _, rows1, _ = _run(tmp_path, p, "solar-decide-flash", out="v1.jsonl")  # framing v1 still asks the single-candidate item
     assert len(rows1) == 2
 
 
 def test_v2_runs_no_acquire_items_and_says_so(tmp_path, items_file, monkeypatch, capsys):
     _fake_decide(monkeypatch, lambda m, s, q: _choice_for(q, "c1", 0.9))
-    _, rows, _ = _run(tmp_path, items_file, "mercury-decide@v2", "--stage", "both")
+    _, rows, _ = _run(tmp_path, items_file, "solar-decide-flash@v2", "--stage", "both")
     assert rows and all(r["id"].startswith("verify:") for r in rows)
     assert "skipped (not applicable): 2" in capsys.readouterr().out
 
@@ -1496,18 +1495,18 @@ def test_v2_runs_no_acquire_items_and_says_so(tmp_path, items_file, monkeypatch,
 def test_v2_and_v1_rows_share_one_results_file_without_colliding(tmp_path, items_file, monkeypatch):
     _fake_decide(monkeypatch, lambda m, s, q: _choice_for(q, "c1", 0.9) if "pick" in q else {})
     out = tmp_path / "res" / "both.jsonl"
-    for arm in ("mercury-decide", "mercury-decide@v2"):
+    for arm in ("solar-decide-flash", "solar-decide-flash@v2"):
         gb.main(["run", "--items", str(items_file), "--arm", arm, "--out", str(out), "--stage", "verify", "--only", "gold"])
     rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
-    assert sorted(r["arm"] for r in rows) == ["mercury-decide", "mercury-decide@v2"]
-    assert "framing" not in next(r for r in rows if r["arm"] == "mercury-decide")  # v1 rows keep their old shape
+    assert sorted(r["arm"] for r in rows) == ["solar-decide-flash", "solar-decide-flash@v2"]
+    assert "framing" not in next(r for r in rows if r["arm"] == "solar-decide-flash")  # v1 rows keep their old shape
     gb.main(
         [
             "run",
             "--items",
             str(items_file),
             "--arm",
-            "mercury-decide@v2",
+            "solar-decide-flash@v2",
             "--out",
             str(out),
             "--stage",
@@ -1534,7 +1533,7 @@ def test_v1_framing_is_unchanged_byte_for_byte(tmp_path, items_file, monkeypatch
     """GUARD: passes on the old code."""
     seen = []
     _fake_decide(monkeypatch, lambda m, s, q: _choice_for(q, "c1", 0.9), seen)
-    _, rows, _ = _run(tmp_path, items_file, "mercury-decide", "--stage", "verify", "--only", "gold")
+    _, rows, _ = _run(tmp_path, items_file, "solar-decide-flash", "--stage", "verify", "--only", "gold")
     assert seen[0]["questions"] == {"pick": V1_QUESTION} and seen[0]["state"] == {"show": "Alpha Show", "term": "Zoro"}
     assert set(rows[0]) == {"id", "arm", "order", "raw", "parsed", "latency_s", "usage", "error", "served_model"}
     assert set(rows[0]["parsed"]) == {"choice", "canonical", "probabilities", "confidence"}

@@ -38,15 +38,15 @@ DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 USER_AGENT = "DubTitlerr-glossary-bakeoff/1.0"  # an honest UA; OpenRouter accepts it
 ALLOWED_MODELS = frozenset(
     {
-        "inception/mercury-decide:free",
         "respan/span-01-lite",
         "respan/span-01-lite:free",
         "upstage/solar-decide-flash",
-        "perplexity/pplx-decider-v1.1-27b",
         "openai/gpt-6-luna-decisions",
         "typesafe/jev-1.13",
     }
 )
+# Retired upstream and removed 2026-11-26 (both answer "No endpoints found"): `inception/mercury-decide:free`
+# and `perplexity/pplx-decider-v1.1-27b`. Re-add an id only once it serves again.
 # CommandCode's Provider API serves the same request/answer shape at its own endpoint, under its own model ids. The two
 # id sets are disjoint on purpose: an id is valid only for the provider it belongs to (typesafe/jev-1.13 is OpenRouter's,
 # typesafe/jev is CommandCode's), so a stray arm cannot send a model to the wrong place or key.
@@ -186,7 +186,7 @@ def validate_response(model, questions, resp):
             if conf is not None and not _is_prob(conf):
                 raise DecisionError(f"bad response: answer {qid!r} has a confidence outside 0..1")
         elif q["type"] == "noul":
-            # Captured live (Mercury, Span-01 Lite, Jev): {"type": "noul", "noul": <P(true) in 0..1>}. Nothing else is an answer.
+            # Captured live (Span-01 Lite, Jev): {"type": "noul", "noul": <P(true) in 0..1>}. Nothing else is an answer.
             if not isinstance(a, dict) or a.get("type") != "noul" or not _is_prob(a.get("noul")):
                 raise DecisionError(f"bad response: answer {qid!r} is not a noul answer with a probability in 0..1")
         else:  # score: its live shape was not captured, so the earlier strict rule stays (a bare number or an object with one)

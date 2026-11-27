@@ -177,7 +177,7 @@ def test_tier_b_term_picks_are_journaled_and_reused(tmp_path, monkeypatch):
 
 def test_decision_pair_answers_are_journaled_with_model_and_acquire_tau_and_a_fallback_answer_is_not(acq, monkeypatch):
     monkeypatch.setenv("ACQUIRE_BACKEND", "decision")
-    monkeypatch.setenv("VERIFY_DECISION_MODEL", "inception/mercury-decide:free")
+    monkeypatch.setenv("VERIFY_DECISION_MODEL", "typesafe/jev-1.13")
     monkeypatch.setenv("ACQUIRE_DECISION_TAU", "0.8")
     monkeypatch.setattr(gv, "backend_problem", lambda backend=None: "")
     monkeypatch.setattr(gv, "begin_run", lambda *a, **k: None)
@@ -197,7 +197,7 @@ def test_decision_pair_answers_are_journaled_with_model_and_acquire_tau_and_a_fa
     keys = {e["key"].split(aj.SEP)[1] for e in acq.journal()}
     assert keys == {"Tilvash", "Jorvane", "Kelmara"}
     prov = acq.journal()[0]["prov"]
-    assert prov["backend"] == "decision" and prov["model"] == "inception/mercury-decide:free" and prov["tau"] == 0.8
+    assert prov["backend"] == "decision" and prov["model"] == "typesafe/jev-1.13" and prov["tau"] == 0.8
 
 
 # ---- kill and restart ---------------------------------------------------------------------------------------------------

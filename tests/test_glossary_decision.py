@@ -13,7 +13,7 @@ from dubtitlerr.glossary import glossary_decision as gd
 from dubtitlerr.glossary import glossary_verify as gv
 
 KEY = "sk-or-SECRET-key-0123456789"  # gitleaks:allow -- test fixture, not a real credential
-MODEL = "inception/mercury-decide:free"
+MODEL = "typesafe/jev-1.13"
 TITLES = ["Roronoa Zoro", "Zorro"]
 
 
@@ -108,11 +108,12 @@ def test_the_harness_and_production_build_the_same_requests(decision, monkeypatc
     import tools.glossary_bakeoff as gb
 
     assert gb.NONE_OPTION is gd.NONE_OPTION
-    srv = decision(lambda q, b: choice_answer("c1", 0.9))
+    srv = decision(lambda q, b: choice_answer("c1", 0.9), served="upstage/solar-decide-flash")
+    monkeypatch.setenv("VERIFY_DECISION_MODEL", "upstage/solar-decide-flash")
     gv.adjudicate("Zoro", TITLES, "One Piece")
-    arm = gb.resolve_arm("mercury-decide")
+    arm = gb.resolve_arm("solar-decide-flash")
     item = {"stage": "verify", "term": "Zoro", "show": "One Piece", "candidates": [{"title": t} for t in TITLES]}
-    monkeypatch.setenv("GLOSSARY_BAKEOFF_MERCURY_DECIDE_URL", srv.base + "/api/alpha/decisions")
+    monkeypatch.setenv("GLOSSARY_BAKEOFF_SOLAR_DECIDE_FLASH_URL", srv.base + "/api/alpha/decisions")
     monkeypatch.setenv(arm.key_env, KEY)
     gb._verify_decision(arm, item, TITLES)
     prod, harness = srv.requests[0]["body"], srv.requests[1]["body"]

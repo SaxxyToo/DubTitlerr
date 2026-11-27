@@ -8,7 +8,7 @@ from dubtitlerr.core import decision_client as dc
 from dubtitlerr.pipeline import repair
 
 KEY = "sk-SENTINEL-KEY-12345"  # gitleaks:allow -- test fixture, not a real credential
-MODEL = "inception/mercury-decide:free"
+MODEL = "typesafe/jev-1.13"
 CHOICE_Q = {
     "pick": {"type": "choice", "instructions": "Which?", "criteria": {"c1": "Zoro", "c2": "Luffy", "none": "no candidate"}}
 }
@@ -96,7 +96,7 @@ def test_http_errors_carry_the_status_only(capsys):
 def test_an_unknown_model_is_rejected_before_any_request():
     with pytest.raises(dc.DecisionError, match="allowlist"):
         dc.decide("someone/else", {}, CHOICE_Q, "TEST_DECISION_KEY", post=lambda *a, **k: pytest.fail("no request"))
-    assert "typesafe/jev-1.13" in dc.ALLOWED_MODELS and len(dc.ALLOWED_MODELS) == 7
+    assert "typesafe/jev-1.13" in dc.ALLOWED_MODELS and len(dc.ALLOWED_MODELS) == 5
 
 
 def test_429_then_200_is_retried_and_honours_retry_after():
@@ -288,8 +288,10 @@ def test_a_dated_version_suffix_is_accepted_and_the_served_id_is_kept():
 
 
 def test_the_free_tag_is_a_routing_tag_not_part_of_the_identity():
-    res = dc.decide(MODEL, {}, CHOICE_Q, "TEST_DECISION_KEY", post=_post_returning(_ok(model="inception/mercury-decide")))
-    assert res.model == "inception/mercury-decide"
+    # No :free id is in the live set any more; the rule is exercised directly so it holds for the next one.
+    assert dc._same_model("example/model:free", "example/model")
+    assert not dc._same_model("example/model:free", "example/other")
+    assert not dc._same_model("example/model:free", "other/model")
 
 
 def test_non_finite_numbers_anywhere_in_the_response_are_rejected():
@@ -503,12 +505,6 @@ def test_the_default_hosts_are_accepted():
 QNOUL = {"q": {"type": "noul", "instructions": "Same entity?", "criteria": {"true": "yes", "false": "no"}}}
 REAL_NOUL = [
     # (requested model, provider, served model echoed by the server, the answer as captured)
-    (
-        "inception/mercury-decide:free",
-        "openrouter",
-        "inception/mercury-decide-20260930",
-        {"type": "noul", "noul": 0.9669140186318742},
-    ),
     ("respan/span-01-lite", "openrouter", "respan/span-01-lite-20260925", {"type": "noul", "noul": 0.11070899}),
     ("typesafe/jev", "commandcode", "typesafe/jev", {"type": "noul", "noul": 0.79}),
 ]

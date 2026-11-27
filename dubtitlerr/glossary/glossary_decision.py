@@ -1,4 +1,4 @@
-"""The glossary stages' DECISION backend: a decision model (Mercury Decide, Jev, ...) answers verify's and acquire's questions.
+"""The glossary stages' DECISION backend: a decision model (Jev, Solar Decide, ...) answers verify's and acquire's questions.
 
 One implementation for production and the bake-off: tools/glossary_bakeoff.py imports the question builders from here, so what
 the evaluation measured is what runs. The transport, response validation, key hygiene and https/host binding are
@@ -20,7 +20,7 @@ Either way `counters()` says how many calls were made, succeeded, failed, fell b
 one summary line and put the same numbers in their report, so a rebuild can prove the old model was not used silently.
 
 Environment (all optional; read per call):
-  VERIFY_DECISION_MODEL      default inception/mercury-decide:free (any id decision_client allows for its provider; not Span)
+  VERIFY_DECISION_MODEL      default typesafe/jev-1.13 (any id decision_client allows for its provider; not Span)
   VERIFY_DECISION_URL        the provider's endpoint; default per provider; https on the provider's host. Loopback
                              (127.0.0.1 / localhost) is also accepted, for tests, in production too
   VERIFY_DECISION_KEY_ENV    the NAME of the env var holding the key; default OPENROUTER_JEV_API_KEY (OpenRouter models) or
@@ -46,7 +46,7 @@ from dubtitlerr.core import decision_client
 from dubtitlerr.core.common import log
 
 NONE_OPTION = "no candidate is the same named entity"
-DEFAULT_MODEL = "inception/mercury-decide:free"
+DEFAULT_MODEL = "typesafe/jev-1.13"
 DEFAULT_KEY_ENV = {"openrouter": "OPENROUTER_JEV_API_KEY", "commandcode": "COMMANDCODE_API_KEY"}
 FALLBACKS = ("none", "local")
 
