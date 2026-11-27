@@ -110,7 +110,7 @@ def test_stage_rules_refuse_two_different_ollama_connections_across_all_five_sta
 def test_stage_rules_refuse_host_decision_client_will_not_call():
     connections = [
         conn(name="unsupported_cloud", kind="openai", url="https://api.openai.com/v1/chat/completions", model="gpt-4o"),
-        conn(name="openrouter", kind="openai", url=decision_client.DECISIONS_URL, model="inception/mercury-decide:free"),
+        conn(name="openrouter", kind="openai", url=decision_client.DECISIONS_URL, model="typesafe/jev-1.13"),
         conn(name="commandcode", kind="openai", url=decision_client.COMMANDCODE_URL, model="typesafe/jev"),
         conn(name="loopback", kind="openai", url="http://127.0.0.1:8000/v1", model="m"),
     ]

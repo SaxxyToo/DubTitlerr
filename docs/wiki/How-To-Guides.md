@@ -502,8 +502,9 @@ expansions, 38 of them right.
 
 **Know where your text goes.** Each decision sends the **show name, the term and the candidate
 wiki titles** to the provider. No dialogue goes. CommandCode's `typesafe/jev`, the model the
-maintainer uses, bills per call; OpenRouter's `inception/mercury-decide:free` does not, and in
-testing it wrote few names, most of them right.
+maintainer uses, bills per call; the OpenRouter decision models bill about $0.00002 per call.
+(`inception/mercury-decide:free`, the old free default, was retired upstream in November 2026;
+the live set is `typesafe/jev-1.13`, `upstage/solar-decide-flash` and `openai/gpt-6-luna-decisions`.)
 
 **1. Give the container the key by name.** The key lives in a host environment variable. Config
 carries only the variable's name.

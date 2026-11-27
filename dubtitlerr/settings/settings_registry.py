@@ -354,7 +354,7 @@ VERIFY_LLAMACPP_URL^connections^url^""^gen,merge^next_show^connections^Verify ll
 VERIFY_OPENAI_URL^connections^url^""^gen,merge^next_show^connections^Verify hosted URL^Derived from the verify Connection.
 VERIFY_OPENAI_KEY_ENV^connections^string^""^gen,merge^next_show^connections^Verify key variable^Name of the variable holding the verify key.
 VERIFY_OPENAI_EXTRA_BODY^connections^string^""^gen,merge^next_show^connections^Verify extra body^JSON merged into hosted verify requests.
-VERIFY_DECISION_MODEL^connections^string^"inception/mercury-decide:free"^gen,merge^next_show^connections^Decision model^Derived from the decision Connection.
+VERIFY_DECISION_MODEL^connections^string^"typesafe/jev-1.13"^gen,merge^next_show^connections^Decision model^Derived from the decision Connection.
 VERIFY_DECISION_URL^connections^url^""^gen,merge^next_show^connections^Decision URL^Derived from the decision Connection.
 VERIFY_DECISION_KEY_ENV^connections^string^""^gen,merge^next_show^connections^Decision key variable^Name of the variable holding the decision key.
 ACQUIRE_BACKEND^connections^enum^""^gen,merge^next_show^connections^Acquire backend^Derived from the acquire Connection.
