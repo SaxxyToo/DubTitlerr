@@ -1658,14 +1658,51 @@ def _no_new_layout_fault(new, dur, orig):
     return all(a <= b + s + reflow.EPS for a, b, s in zip(after, before, slack))
 
 
+# ---- negation-polarity guard ---------------------------------------------------------
+# A repair that adds or drops negation reverses the line's truth conditions, and no other
+# guard can see it: 'It's futile.' -> 'It's not futile.' passed every check, measured over
+# the saved 2026-11-27 CSM rounds (4 corruptions of this shape shipped across 14 model
+# runs; every candidate refusal was hand-classified). The refusal is symmetric because the
+# gate cannot tell an ASR drop being restored from a hallucinated 'not', and a refusal keeps
+# the safe line: the original stands until a human or a later run settles it. Contraction
+# expansions ("ain't" -> "not", "isn't" -> "is not") keep the polarity and pass, as does
+# joining a spaced contraction ("don 't" -> "don't").
+_NEGATION_WORDS = frozenset({"not", "no", "never", "nothing", "none", "nobody", "nowhere", "neither", "nor", "cannot"})
+
+# ASR sometimes splits a clitic off its host ("don 't", "you 're"). The polarity check must
+# read those as the joined word, or a plain re-spacing would look like a gain or drop of
+# negation. Only clitic tails common in contractions are joined -- never general quotes.
+_CLITIC_SPLIT_BEFORE = re.compile(r"(\w)\s+'(t|s|re|ve|ll|d|m)\b", re.IGNORECASE)
+_CLITIC_SPLIT_AFTER = re.compile(r"(\w)'\s+(t|s|re|ve|ll|d|m)\b", re.IGNORECASE)
+
+
+def _guard_negation() -> bool:
+    """REPAIR_GUARD_NEGATION (default on): the negation-polarity guard. ``0`` turns it off. Read per call."""
+    return os.environ.get("REPAIR_GUARD_NEGATION", "1") != "0"
+
+
+def flips_negation(orig, new) -> bool:
+    """True when ``new`` carries negation where ``orig`` does not, or vice versa (see rejecting_guard).
+
+    A word carries negation by its "n't" tail (isn't, can't, ain't, won't...), by being one of
+    ``_NEGATION_WORDS``, or by an ASR-split clitic that joins onto its host ("don 't" -> don't).
+    """
+    def has_negation(text):
+        t = _CLITIC_SPLIT_BEFORE.sub(r"\1'\2", fold_glyphs(text or ""))
+        t = _CLITIC_SPLIT_AFTER.sub(r"\1'\2", t)
+        return any(w in _NEGATION_WORDS or w.endswith("n't") for w in _words(t))
+
+    return has_negation(orig) != has_negation(new)
+
+
 def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=None, ref_role=None, next_text=None):
     """The name of the FIRST guard that refuses ``new`` for ``orig``, or None when accept_repair admits it. accept_repair is
     exactly ``rejecting_guard(...) is None``; the name is what the review queue records (key 'guard') so a human, and later
     measurements, can tell why a proposal was refused:
 
         empty, unchanged, style:continuation-cap, terminal_punct, style:continuation-break,
-        style:tone-flattened, invents_name, name_part, vouched_name, length_ratio, fits_card,
-        content_drop, replaced, ref_borrow
+        style:tone-flattened, negation_flip, invents_name, name_part, vouched_name, length_ratio,
+        fits_card, content_drop, replaced, ref_borrow
 
     ``unchanged`` ignores typographic glyph swaps: a proposal equal to the source after
     folding curly/straight quotes and apostrophes is not an edit (see ``fold_glyphs``).
@@ -1686,6 +1723,14 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
     A genuine sentence end is the negative case and passes: ``prev_text`` ending a sentence
     makes the capital correct, and ``next_text`` starting a sentence (upper case) makes the
     period correct. An empty/absent neighbour is no information and never causes a refusal.
+
+    ``negation_flip`` refuses a proposal that gains or loses negation -- the line's truth
+    conditions reversed, which no other mechanical check can see ('It's futile.' -> 'It's not
+    futile.'). Symmetric on purpose: the gate cannot tell an ASR drop being restored from a
+    hallucinated 'not', and a refusal keeps the safe line. It fires whatever ``ref_role`` says,
+    like ``terminal_punct``: a polarity change is not something a reference attests.
+    Contraction expansions and spaced contractions keep the polarity and pass (see
+    ``flips_negation``); ``REPAIR_GUARD_NEGATION`` (default on; ``0`` turns it off).
 
     ``content_drop`` refuses a proposal that deletes a content word the reference does not
     carry (see ``dropped_content_words``); it is not applied when ``ref_role='dub'``, where
@@ -1754,6 +1799,11 @@ def rejecting_guard(orig, new, ref, dur, gloss, punct_case_ok=None, prev_text=No
         return "replaced"  # the line was discarded, not repaired: an instruction fragment or boilerplate
     if not vouched and (len(borrowed_from_ref(orig, new, ref)) >= MAX_REF_BORROW or borrowed_phrase_from_ref(orig, new, ref)):
         return "ref_borrow"
+    # The safety net runs LAST: every refusal above is a more concrete diagnosis, and a
+    # proposal they already refuse keeps its recorded label (the 'replaced' churn cases
+    # included) -- this guard only speaks when nothing else did.
+    if _guard_negation() and flips_negation(orig, new):
+        return "negation_flip"  # the line's truth conditions were reversed
     return None
 
 
