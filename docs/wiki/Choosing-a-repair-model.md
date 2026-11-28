@@ -110,6 +110,68 @@ Only reach for `Gemma 4 E4B` or `Granite 4.2 8B` if you have a specific reason �
 table you want to follow, or structured output you would rather not prompt for. Neither is a
 measured winner here, because nobody has run them through this pipeline yet.
 
+## Measured standings (2026-11-27)
+
+Everything above this section is vendor claims. These are the project's own numbers: the anchored
+Chainsaw Man S01 bench (406 judged lines per round), every saved proposal re-judged by the
+acceptance gate this codebase ships, then split by edit kind —
+
+- **glyph** — case/punctuation-only (renders near-identically),
+- **contra** — contraction expansion (`don't` → `do not`),
+- **borrow** — imported a word the fansub reference carries,
+- **edit** — a real repair. **This is the comparable column.** Raw "admitted" counts rank
+  punctuation churn first and misled an earlier round; split them.
+
+`tools/repair_standings.py` reproduces the table from any round's saved outputs (counts only —
+no subtitle text is printed or written).
+
+### Local models, production prompt
+
+| model | edit | borrow | note |
+| --- | ---: | ---: | --- |
+| `z5-granite-4.0-h-1b` (Q5-class) | **34** | 22 | the bench leader; keeps names; heavy glyph churn |
+| `cand-gemma-3-1b` | 30 | 15 | name-strong; heavy contraction churn |
+| `exaone-4.0-1.2b` | 28 | 26 | borrow-heavy |
+| `falcon-h1-1.5b` | 24 | 33 | borrow-heavier still |
+| `aion-2.3b` | 13 | 21 | needs a patched llama.cpp — no upstream arch support |
+| `qwen3.5:4b` | 10 | 26 | the production default; see the end-to-end note below |
+
+Two measured notes on top of the table:
+
+- **Quantisation: no upgrade.** The leader at Q5-class posts 34 edits; Q6_K 24 and Q8_0 28.
+  More bits did not buy more (or safer) work — the live Q5-class file stays.
+- **The fansub reference in the prompt is net-positive.** Hiding it collapses borrowing for every
+  model but also drops name fixes; keep it, and let the gate police the copies (measured
+  2026-11-27).
+
+### Hosted models, capable prompt (round 7, re-scored)
+
+| model (OpenRouter) | edit | borrow | note |
+| --- | ---: | ---: | --- |
+| `llama-4-scout` | **65** | 76 | most active; most risk (hand-read found wrong-name swaps) |
+| `qwen3.7-flash` | 45 | 49 | 25 empty errors — needs reasoning-budget handling |
+| `gpt-oss-120b` | 36 | 43 | cleanest hand-read of the hosted set |
+| `gpt-5-nano` | 29 | 34 | clean runner |
+| `claude-haiku-4.5` | 23 | 64 | copies the reference heavily |
+
+For scale: under the same capable prompt the local models manage 20 (`cand-gemma-3-1b`) and 14
+(`qwen3.5:4b`) edits, so the hosted leaders genuinely out-work them — at heavier borrow and with
+hand-judge caveats. The earlier rounds where hosted models "lost" failed on three mechanical
+shapes, not quality: outputs too verbose for a subtitle line (`length_ratio` refusals), the
+fansub treated as the answer (`ref_borrow`), and reasoning models truncating to empty replies.
+
+### What is not settled
+
+- **End-to-end, the delivered artifact decides.** The 2026-11-25 season A/B kept `qwen3.5:4b`
+  as the default over `cand-gemma-3-1b` despite the bench gap — gemma's bench activity did not
+  survive the end-to-end name check (corruptions the mechanical gate cannot see). A
+  `z5-granite-4.0-h-1b` end-to-end A/B is the standing next test.
+- **One show so far.** Every number above is Chainsaw Man S01. A second show is the next
+  confirmation round.
+- **The review queue is load-bearing.** Whole classes (wrong-name swaps, tone flips) pass the
+  mechanical gate by design; the standings measure edit volume and type, not truth against the
+  dub.
+
 ## Sources
 
 Model cards and release notes: [Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507),
