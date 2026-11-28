@@ -95,45 +95,33 @@ REASONS = {
 # The queue a reviewer opens by default. Keyed on (stage, reason), not reason alone, because
 # "rejected_guard" belongs to BOTH `repair` and `punctuation`.
 #
-# Two different reasons for what is left out, and they must not be confused:
+# OWNER DECISION 2026-11-27: the default view carries ONLY what a human verdict can settle.
+# `repair/decision_unfittable` is the reviewer's OWN decision coming back refused ([S-4]):
+# left out of the default view, their verdict would vanish silently, which is precisely what
+# the entry was written to prevent -- and unlike everything below it is actionable per line
+# (the answer is shorter text).
 #
-#   NOT ACTIONABLE per line. `no_reference` is mostly "this release has no fansub" -- true,
-#   and one fact about the release rather than N facts about N cards. `llm_empty` is a dead
-#   endpoint, likewise one fact about the run. Measured: ~25 primary entries per episode
-#   against ~86 recorded, and this module already refuses to queue the hallucination flag on
-#   the same grounds -- "a queue nobody can face is worse than no queue."
+# Everything else stays recorded and audited, reachable through the all-reasons view
+# (`handle_episode(all_reasons=True)`) and the `--review` CLI walk:
 #
-#   NO VERDICT TO GIVE. `punctuation`/`rejected_guard` records `original_text` AND
-#   `proposed_text` (punctuation.py:290-296) -- the identical two-text shape as the repair
-#   rejection that IS included, and just as judgeable by reading them. An earlier version of
-#   this comment claimed otherwise; that was false and an adversarial review caught it. The
-#   real bar is that a reviewer's verdict has nowhere to go. accept_restoration() is not a
-#   judgement gate like accept_repair(): it is word-identity (punctuation.py:134-144), so a
-#   rejection means the model CHANGED A WORD, and applying it anyway breaks _apply()'s stated
-#   precondition that "past the guard the correspondence is exact" -- tokens would misalign
-#   across the run. Of the four verdicts only `reject` is implementable; `accept`/`force`
-#   are not, and `correct` only for text of identical token count. Restoration also runs on
-#   the word list BEFORE reflow (generate.py:944-951) while repair runs on cards after it,
-#   so [S-5]'s card write-back cannot apply a punctuation decision at all -- that needs a
-#   TEXT-tier replay.
+#   NOT A QUESTION. `repair_applied/accepted` is the audit trail of repairs that SHIPPED --
+#   "sample, never queue". `no_reference` is mostly "this release has no fansub" -- true,
+#   and one fact about the release rather than N facts about N cards; `llm_empty` is a dead
+#   endpoint, likewise one fact about the run.
 #
-#   OWNER DECISION 2026-08-27: widening waits until there is a way to ACT on a punctuation
-#   review, not merely display one. Until then those entries stay reachable through the
-#   unfiltered walk and the --review CLI. The per-episode volume has never been measured;
-#   the only sample is the 7 live rejections behind _split_dashes (punctuation.py:80-85),
-#   3 of which were false rejections from a guard bug -- found from the QC event channel,
-#   which already carries both texts, not from this queue.
-PRIMARY = (
-    ("repair_applied", "accepted"),
-    ("repair", "rejected_guard"),
-    ("repair", "rejected_name_invented"),
-    ("repair", "rejected_name_part"),
-    # [S-4]. In PRIMARY because it is the reviewer's OWN decision coming back refused: left
-    # out of the default view, their verdict would vanish silently, which is precisely what
-    # the entry was written to prevent. Unlike the punctuation entries held out above, this
-    # one is actionable per line -- the answer is shorter text.
-    ("repair", "decision_unfittable"),
-)
+#   SAMPLE, DON'T SIT ON. `repair/rejected_guard` and the name-part refusals record a
+#   proposal the guard refused: the ORIGINAL text shipped -- the safe outcome -- and the
+#   question they raise (was the guard too strict?) is P32's "sample the evidence, then
+#   widen the rule", answered from the all-reasons view, not one row at a time. Punctuation
+#   refusals stay out on the older, stronger bar (2026-08-27): a punctuation verdict has
+#   nowhere to go until a text-tier replay exists to apply it.
+#
+# The volume forced this. Measured once at ~25 primary entries per episode (2026-08-27);
+# the 2026-11-27 library reconstruction produced 60+ per episode, 58 of them accepted
+# repairs alone -- "a queue nobody can face is worse than no queue", the same bar this
+# module already applies to the hallucination flag. The 2026-08-27 judgement stands for
+# what remains excluded: widening waits until a verdict has somewhere to go.
+PRIMARY = (("repair", "decision_unfittable"),)
 
 
 def items(stem: str) -> list:
@@ -401,6 +389,22 @@ def _is_dismissed(entry: dict) -> bool:
     return bool(entry.get("dismissed")) and entry.get("reason") in DISMISSIBLE
 
 
+def needs_human(entries: list) -> list:
+    """The entries worth a human's attention: PRIMARY classes, live, not dismissed as a large change.
+
+    One definition of "the queue" -- the default episode view, the episode index and the
+    status routes all express it through here, so they cannot disagree about what still
+    needs a person."""
+    return [
+        e
+        for e in entries
+        if queue_policy.is_open(e)
+        and (queue_policy.age_days(e) or 0.0) <= EXPIRY_DAYS
+        and (e.get("stage"), e.get("reason")) in PRIMARY
+        and not _is_dismissed(e)
+    ]
+
+
 def pending(stem: str, primary_only: bool = False) -> list:
     """Unresolved entries; with ``primary_only``, only those worth a human's attention (and not dismissed as a large change).
 
@@ -411,11 +415,9 @@ def pending(stem: str, primary_only: bool = False) -> list:
     ``EXPIRY_DAYS`` is no longer a question -- the sweep marks it expired and audits it, and
     until that sweep runs the page must not present it as pending. Applying the rule at read
     keeps the queue bounded even between sweeps, without a write on a GET route."""
-    out = [e for e in items(stem) if not e.get("resolved") and not e.get("expired")]
+    out = [e for e in items(stem) if queue_policy.is_open(e)]
     out = [e for e in out if (queue_policy.age_days(e) or 0.0) <= EXPIRY_DAYS]
-    if primary_only:
-        out = [e for e in out if (e.get("stage"), e.get("reason")) in PRIMARY and not _is_dismissed(e)]
-    return out
+    return needs_human(out) if primary_only else out
 
 
 CONF_SUFFIX = ".dubtitles.conf.json"

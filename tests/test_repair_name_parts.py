@@ -209,12 +209,12 @@ def test_a_prompt_without_a_glossary_has_no_name_rule():
 # ---- the reviewer can see and overrule a refusal ---------------
 
 
-def test_a_name_part_refusal_is_in_the_review_queue_and_can_be_forced(tmp_path):
+def test_a_name_part_refusal_is_recorded_and_can_be_forced(tmp_path):
     from dubtitlerr.core import unresolved
     from dubtitlerr.review import review_server
 
     key = ("repair", "rejected_name_part")
-    assert "rejected_name_part" in unresolved.REASONS["repair"] and key in unresolved.PRIMARY
+    assert "rejected_name_part" in unresolved.REASONS["repair"] and key not in unresolved.PRIMARY
     assert unresolved._EVIDENCE["rejected_name_part"] == unresolved._EVIDENCE["rejected_guard"]
     assert unresolved._CLI_VERDICT[key] == {"k": "reject", "f": "force"}
     assert review_server.OFFERED[key] == ("force", "reject", "correct")
@@ -222,7 +222,8 @@ def test_a_name_part_refusal_is_in_the_review_queue_and_can_be_forced(tmp_path):
     unresolved.record(
         stem, "repair", "rejected_name_part", original_text="Momonosuke is here", proposed_text="Kouzuki Momonosuke is here"
     )
-    assert [e["reason"] for e in unresolved.pending(stem, primary_only=True)] == ["rejected_name_part"]
+    assert [e["reason"] for e in unresolved.pending(stem)] == ["rejected_name_part"]
+    assert unresolved.pending(stem, primary_only=True) == []  # audit since the 2026-11-27 owner decision
 
 
 def test_the_prompt_rule_goes_with_the_check(monkeypatch):

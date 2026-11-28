@@ -8,7 +8,7 @@ import {
   writeSortPref,
 } from '../src/lib/episodeSort.js';
 
-const ep = (show, season, name, admitted) => ({ stem: `${show}/${season}/${name}`, show, season, name, admitted });
+const ep = (show, season, name, admitted) => ({ stem: `${show}/${season}/${name}`, show, season, name, pending: admitted, admitted, refused: 0 });
 // The server order: most admitted first.
 const served = [
   ep('Neon Harbor', 'Season 1', 'Neon Harbor S01E10', 5),

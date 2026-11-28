@@ -40,7 +40,7 @@ def test_word_changes_counts_a_known_phrase_respacing_as_zero():
 
 
 def test_the_respacing_is_not_hidden_when_it_is_refused_for_another_reason(tmp_path, monkeypatch):
-    """End to end through repair.process: a re-spacing that a guard refuses stays in the primary queue."""
+    """End to end through repair.process: a re-spacing that a guard refuses keeps its entry and label in the walk."""
     import test_repair_dismiss as d
 
     gloss = gl()
@@ -48,7 +48,7 @@ def test_the_respacing_is_not_hidden_when_it_is_refused_for_another_reason(tmp_p
     stem, _summary = d._episode(tmp_path, monkeypatch, ORIG, NEW, gloss)
     (entry,) = unresolved.items(stem)
     assert entry["reason"] in ("rejected_name_invented", "rejected_guard") and "dismissed" not in entry
-    assert unresolved.pending(stem, primary_only=True) != []
+    assert unresolved.pending(stem) != []
 
 
 def test_the_respacing_ships_end_to_end_through_repair_process(tmp_path, monkeypatch):

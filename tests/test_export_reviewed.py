@@ -129,8 +129,8 @@ def _two_line_episode(tmp_path, show="One Pace"):
     _conf(ep, [{"start": 0.0, "end": 2.0, "text": "line 1"}, {"start": 2.0, "end": 4.0, "text": "line 2"}])
     _unresolved(
         ep,
-        {"original_text": "line 1", "proposed_text": "line 1.", "stage": "repair_applied", "reason": "accepted"},
-        {"original_text": "line 2", "proposed_text": "line 2.", "stage": "repair_applied", "reason": "accepted"},
+        {"original_text": "line 1", "proposed_text": "line 1.", "stage": "repair", "reason": "decision_unfittable"},
+        {"original_text": "line 2", "proposed_text": "line 2.", "stage": "repair", "reason": "decision_unfittable"},
     )
     return ep
 
@@ -179,7 +179,7 @@ def test_correct_accepts_nonempty_text_only(tmp_path):
     _unresolved(
         ep,
         *[
-            {"original_text": f"line {i}", "proposed_text": f"line {i}.", "stage": "repair_applied", "reason": "accepted"}
+            {"original_text": f"line {i}", "proposed_text": f"line {i}.", "stage": "repair", "reason": "decision_unfittable"}
             for i in range(1, 6)
         ],
     )
