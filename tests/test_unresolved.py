@@ -127,14 +127,14 @@ def test_repair_applied_is_a_known_stage_with_its_own_evidence(tmp_path):
     assert "my fellow Samadai" in rendered and "my fellow Samurai." in rendered
 
 
-def test_the_primary_filter_returns_only_the_judgement_worthy_reasons(tmp_path):
-    """Breaks if the primary filter stops excluding the non-actionable reasons.
+def test_the_primary_filter_returns_only_the_reasons_a_verdict_can_settle(tmp_path):
+    """The default view holds only what a human can act on; everything else is audit.
 
     Asserted on ABSENCE. pending() applies no stage filter of its own
     (unresolved.py:89), so a filter that returned everything would satisfy any
-    presence-only assertion while burying the owner: ~25 judgement-worthy entries per
-    episode against ~86 recorded. no_reference is mostly "this release has no fansub" --
-    true, and not actionable line by line."""
+    presence-only assertion while burying the owner: the 2026-11-27 reconstruction
+    measured 60+ primary entries per episode under the old set. See the OWNER
+    DECISION comment on PRIMARY."""
     stem = str(tmp_path / "ep")
     unresolved.record(stem, "repair_applied", "accepted", original_text="a", proposed_text="b")
     unresolved.record(stem, "repair", "rejected_guard", original_text="c", proposed_text="d")
@@ -145,19 +145,16 @@ def test_the_primary_filter_returns_only_the_judgement_worthy_reasons(tmp_path):
     # REASONS["punctuation"] also carries "rejected_guard", so a filter keyed on the reason
     # alone would sweep this in. The stage is half the identity.
     unresolved.record(stem, "punctuation", "rejected_guard", original_text="j", proposed_text="k")
+    # The one reason the default view still carries: the reviewer's own verdict, refused.
+    unresolved.record(stem, "repair", "decision_unfittable", original_text="l", proposed_text="m")
 
     primary = unresolved.pending(stem, primary_only=True)
-    assert {(e["stage"], e["reason"]) for e in primary} == {
-        ("repair_applied", "accepted"),
-        ("repair", "rejected_guard"),
-        ("repair", "rejected_name_invented"),
-    }
-    assert not any(e["reason"] in ("no_reference", "llm_empty") for e in primary)
+    assert {(e["stage"], e["reason"]) for e in primary} == {("repair", "decision_unfittable")}
     # Excluded by SCOPE, not because it cannot be judged: punctuation records both texts
-    # too. If the owner widens PRIMARY, this line is the one to change -- deliberately, not
-    # by discovering it broke.
+    # too. If the owner widens PRIMARY back, these lines are the ones to change --
+    # deliberately, not by discovering they broke.
     assert not any(e["stage"] == "punctuation" for e in primary)
-    assert len(unresolved.pending(stem)) == 7, "the unfiltered walk must still return everything"
+    assert len(unresolved.pending(stem)) == 8, "the unfiltered walk must still return everything"
 
 
 # --- [F-1] a CLI verdict must reach the decision store -----------------------

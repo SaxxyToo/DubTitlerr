@@ -24,7 +24,7 @@ from dubtitlerr.review import review_server
 # pipeline cannot produce, and the same class of trap that cost two earlier sprints. It also
 # matters directly now: [S-6]'s orphan filter releases an episode whose queue entries match
 # no current conf.json row, so a careless fixture would quietly describe an orphaned queue.
-_CARDS = ["I saw spondum", "the ship sailed", "he went thataway", "we run this joint"]
+_CARDS = ["I saw spondum", "the ship sailed", "he went thataway", "we run this joint", "a settle card here"]
 
 
 def _episode(tmp_path, name="ep"):
@@ -39,6 +39,10 @@ def _episode(tmp_path, name="ep"):
     )
     unresolved.record(stem, "repair", "no_reference", original_text=_CARDS[2])
     unresolved.record(stem, "repair", "llm_empty", original_text=_CARDS[3])
+    # Two rows only a verdict can settle; since the 2026-11-27 owner decision the default
+    # view carries `decision_unfittable` only, and every older row above is audit.
+    unresolved.record(stem, "repair", "decision_unfittable", original_text=_CARDS[4], proposed_text="settle one")
+    unresolved.record(stem, "repair", "decision_unfittable", original_text=_CARDS[4], proposed_text="settle two")
     return stem
 
 
@@ -150,16 +154,19 @@ def test_an_unknown_stem_is_refused_by_every_route(tmp_path, monkeypatch):
 
 def test_the_default_view_omits_non_primary_reasons(tmp_path, monkeypatch):
     """Asserted on the ABSENCE. unresolved.pending() applies no stage filter of its own, so
-    a server that simply returned everything would pass a presence-only check."""
+    a server that simply returned everything would pass a presence-only check. Since the
+    2026-11-27 owner decision the default set is settle-only and the audit classes are
+    asserted absent."""
     stem = _episode(tmp_path)
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
     reasons = {e["reason"] for e in review_server.handle_episode(stem)["entries"]}
-    assert "no_reference" not in reasons and "llm_empty" not in reasons
-    assert {"accepted", "rejected_guard"} <= reasons
+    assert reasons == {"decision_unfittable"}, "the default view carries settle-only rows"
 
     all_reasons = {e["reason"] for e in review_server.handle_episode(stem, all_reasons=True)["entries"]}
-    assert {"no_reference", "llm_empty"} <= all_reasons, "the full walk is still reachable"
+    assert {"accepted", "rejected_guard", "no_reference", "llm_empty"} <= all_reasons, (
+        "the audit rows are still reachable through the all-reasons walk"
+    )
 
 
 def test_the_verdicts_offered_depend_on_the_entry(tmp_path, monkeypatch):
@@ -168,7 +175,7 @@ def test_the_verdicts_offered_depend_on_the_entry(tmp_path, monkeypatch):
     accept_repair is too strict rests on knowing how often a human overrode it."""
     stem = _episode(tmp_path)
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
-    by_reason = {e["reason"]: e for e in review_server.handle_episode(stem)["entries"]}
+    by_reason = {e["reason"]: e for e in review_server.handle_episode(stem, all_reasons=True)["entries"]}
 
     assert "force" not in by_reason["accepted"]["offered"]
     assert "accept" in by_reason["accepted"]["offered"]
@@ -191,7 +198,7 @@ def test_forcing_an_unanchored_card_is_labelled_permanent(tmp_path, monkeypatch)
     unresolved.record(stem, "repair", "rejected_guard", original_text="p", proposed_text="q")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
-    entries = review_server.handle_episode(stem)["entries"]
+    entries = review_server.handle_episode(stem, all_reasons=True)["entries"]
     assert entries[0]["permanent"] is False, "an anchored card can be repaired again later"
     assert entries[1]["permanent"] is True, "an unanchored one cannot"
 
@@ -231,7 +238,7 @@ def test_a_classified_repair_is_labelled_with_the_role_of_its_reference(tmp_path
     unresolved.record(stem, "repair", "rejected_guard", original_text=cards[2], proposed_text="he went that way")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
-    by_text = {e["original_text"]: e for e in review_server.handle_episode(stem)["entries"]}
+    by_text = {e["original_text"]: e for e in review_server.handle_episode(stem, all_reasons=True)["entries"]}
 
     dub = by_text[cards[0]]
     assert dub["ref_class"] == "dub"
@@ -260,7 +267,7 @@ def test_a_legacy_entry_with_a_reference_is_unclassified_not_unanchored(tmp_path
     unresolved.record(stem, "repair", "rejected_guard", original_text=cards[1], proposed_text="a legacy bare line.")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
-    by_text = {e["original_text"]: e for e in review_server.handle_episode(stem)["entries"]}
+    by_text = {e["original_text"]: e for e in review_server.handle_episode(stem, all_reasons=True)["entries"]}
 
     legacy = by_text[cards[0]]
     assert legacy["ref_class"] == "unclassified"
@@ -340,7 +347,7 @@ def test_duplicate_queue_entries_from_a_rerun_collapse_to_one_row(tmp_path, monk
         unresolved.record(stem, "repair", "rejected_guard", original_text="I saw spondum", proposed_text="I saw Spandam")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
-    entries = review_server.handle_episode(stem)["entries"]
+    entries = review_server.handle_episode(stem, all_reasons=True)["entries"]
 
     assert len(entries) == 1, "four identical reruns of the same event must render as one question, not four"
 
@@ -356,13 +363,15 @@ def test_deciding_the_collapsed_row_clears_every_duplicate_next_load(tmp_path, m
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
     monkeypatch.setattr(decisions, "DECISIONS_DIR", str(tmp_path))
     monkeypatch.setattr(review_server, "show_for", lambda p: "Show")
-    collapsed_index = review_server.handle_episode(stem)["entries"][0]["index"]
+    collapsed_index = review_server.handle_episode(stem, all_reasons=True)["entries"][0]["index"]
 
     res = review_server.handle_decide(stem, collapsed_index, "reject", note="regression")
     review_server.forget(stem)
 
     assert res.get("saved") is True
-    assert review_server.handle_episode(stem)["entries"] == [], "all three duplicates must be gone, not just the one decided"
+    assert review_server.handle_episode(stem, all_reasons=True)["entries"] == [], (
+        "all three duplicates must be gone, not just the one decided"
+    )
 
 
 def test_decide_persists_a_verdict_and_resolves_the_queue_entry(tmp_path, monkeypatch):
@@ -416,10 +425,11 @@ def test_apply_invokes_the_write_back(tmp_path, monkeypatch):
     assert seen == {"stem": stem, "apply": True}, "the route must actually write, not dry-run"
 
 
-def test_the_index_lists_only_episodes_with_something_pending(tmp_path, monkeypatch):
+def test_the_index_lists_only_episodes_with_something_a_human_must_settle(tmp_path, monkeypatch):
     """An index padded with episodes that need nothing is how a review queue stops being
-    read. Counted on the PRIMARY view, matching what the episode page opens with."""
-    busy = _episode(tmp_path, "busy")
+    read. `pending` counts the default view's classes, matching what the episode page opens
+    with -- audit-only entries (accepted repairs, guard refusals) do not list an episode."""
+    busy = _episode(tmp_path, "busy")  # its default-view queue carries two settle-only rows
     quiet = str(tmp_path / "quiet")
     store_seed.conf(quiet + ".dubtitles.conf.json", [{"start": 0.0, "end": 1.0, "text": "q"}])
     unresolved.record(quiet, "repair", "no_reference", original_text="q")
@@ -427,7 +437,7 @@ def test_the_index_lists_only_episodes_with_something_pending(tmp_path, monkeypa
 
     names = {e["name"]: e["pending"] for e in review_server.handle_index()["episodes"]}
 
-    assert names == {"busy": 2}, "no_reference alone is not a reason to open an episode"
+    assert names == {"busy": 2}, "only settleable entries count; audit classes do not open an episode"
 
 
 def test_known_stems_only_finds_episodes_under_the_configured_roots(tmp_path, monkeypatch):
@@ -802,27 +812,23 @@ def test_the_episode_view_hides_entries_orphaned_by_a_re_transcription(tmp_path,
     unresolved.record(stem, "repair_applied", "accepted", original_text="text from an OLD transcript", proposed_text="fix2")
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
-    entries = review_server.handle_episode(stem)["entries"]
+    entries = review_server.handle_episode(stem, all_reasons=True)["entries"]
 
     assert [e["original_text"] for e in entries] == ["a line the episode still has"]
 
 
-def test_the_index_separates_admitted_repairs_from_refusals(tmp_path, monkeypatch):
-    """One number for both was misleading in exactly the way that matters.
-
-    An ADMITTED repair is a change nothing checked the meaning of -- it shipped, and
-    `factory -> needle` passes every gate. A REFUSAL means the ASR text shipped, which is the
-    safe outcome; reviewing it asks whether the guard was too strict. The first is the reason
-    this loop exists, the second is an audit. A single "pending: 23" told the operator they
-    had 23 of the first when they had 0."""
-    stem = _episode(tmp_path)  # 1 accepted + 1 rejected_guard, both live against its conf
+def test_the_index_counts_only_what_a_person_must_settle(tmp_path, monkeypatch):
+    """[Rewritten for the 2026-11-27 owner decision: `pending` is the default view's count --
+    `unresolved.needs_human` -- while admitted/refused ride along as the audit counts the
+    inbox's summary and include-refused toggle read; neither audit count opens an episode.]"""
+    stem = _episode(tmp_path)  # 2 settle-only rows; accepted/refused/no_reference/llm_empty are audit
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
     ep = review_server.handle_index()["episodes"][0]
 
-    assert ep["admitted"] == 1, "repairs that shipped unchecked"
-    assert ep["refused"] == 1, "repairs the gate turned down"
-    assert ep["pending"] == 2, "and the total still adds up"
+    assert ep["pending"] == 2, "settle-only rows, the ones a human must answer"
+    assert ep["admitted"] == 1, "the shipped-repair audit count rides along"
+    assert ep["refused"] == 1, "rejected_* only: no_reference and llm_empty are not refusals"
 
 
 # --- the index has to survive a real library ---------------------------------
@@ -830,43 +836,40 @@ def test_the_index_separates_admitted_repairs_from_refusals(tmp_path, monkeypatc
 # "0 admitted", with no way to find a show. Built without ever being looked at at that size.
 
 
-def _lib(tmp_path, spec):
-    """spec: {(show, season): [(name, n_admitted, n_refused)]} -> stems on disk."""
+def _settle_lib(tmp_path, spec):
+    """spec: {(show, season, name): n_settle} -> stems on disk with that many settle-only rows."""
     stems = []
-    for (show, season), eps in spec.items():
+    for (show, season, name), n in spec.items():
         d = tmp_path / show / season
         d.mkdir(parents=True, exist_ok=True)
-        for name, adm, ref in eps:
-            stem = str(d / name)
-            cards = [{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": f"card {i}"} for i in range(adm + ref)]
-            store_seed.conf(stem + ".dubtitles.conf.json", cards)
-            for i in range(adm):
-                unresolved.record(stem, "repair_applied", "accepted", original_text=f"card {i}", proposed_text=f"fix {i}")
-            for i in range(adm, adm + ref):
-                unresolved.record(stem, "repair", "rejected_guard", original_text=f"card {i}", proposed_text=f"no {i}")
-            stems.append(stem)
+        stem = str(d / name)
+        cards = [{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": f"card {i}"} for i in range(max(n, 1))]
+        store_seed.conf(stem + ".dubtitles.conf.json", cards)
+        for i in range(n):
+            unresolved.record(stem, "repair", "decision_unfittable", original_text=f"card {i}", proposed_text="short")
+        stems.append(stem)
     return stems
 
 
-def test_the_index_carries_show_and_season_and_sorts_by_admitted(tmp_path, monkeypatch):
-    """Ordering is the whole point: with everything at 0 admitted the flat list had no
-    meaningful order at all, so the one episode that later gains an accepted repair has to
-    surface without the reviewer hunting for it."""
-    stems = _lib(
+def test_the_index_carries_show_and_season_and_sorts_by_settle_count(tmp_path, monkeypatch):
+    """Ordering is the whole point: the rows that open an episode are the settle-only ones
+    (2026-11-27 owner decision), so the episode carrying the most of them comes first --
+    and an episode with nothing settle-only is not listed at all."""
+    stems = _settle_lib(
         tmp_path,
         {
-            ("One Pace", "Season 31"): [("ep_a", 3, 1)],
-            ("Trigun", "Season 01"): [("ep_b", 0, 40)],
-            ("JUJUTSU KAISEN", "Season 01"): [("ep_c", 7, 2)],
+            ("One Pace", "Season 31", "ep_a"): 7,
+            ("Trigun", "Season 01", "ep_b"): 3,
+            ("JUJUTSU KAISEN", "Season 01", "ep_c"): 0,
         },
     )
     monkeypatch.setattr(review_server, "known_stems", lambda: stems)
 
     eps = review_server.handle_index()["episodes"]
 
-    assert [e["admitted"] for e in eps] == [7, 3, 0], "most admitted first, refusals last"
-    assert eps[0]["show"] == "JUJUTSU KAISEN" and eps[0]["season"] == "Season 01"
-    assert {e["show"] for e in eps} == {"One Pace", "Trigun", "JUJUTSU KAISEN"}
+    assert [e["pending"] for e in eps] == [7, 3], "most settle-only first; the empty episode is not listed"
+    assert eps[0]["show"] == "One Pace" and eps[0]["season"] == "Season 31"
+    assert {e["show"] for e in eps} == {"One Pace", "Trigun"}
 
 
 def _triage_episode(tmp_path, name="triage"):
@@ -929,7 +932,7 @@ def test_the_episode_queue_puts_the_word_changing_repairs_first(tmp_path, monkey
     monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
     monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
 
-    entries = review_server.handle_episode(stem)["entries"]
+    entries = review_server.handle_episode(stem, all_reasons=True)["entries"]
 
     assert [e["risk"] for e in entries] == ["words", "substitution", "punctuation"], (
         "words added or dropped first -- that is where the flame-flame deletion lives and no "
@@ -958,7 +961,7 @@ def test_a_refusal_sorts_after_every_admitted_repair(tmp_path, monkeypatch):
     monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
     monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
 
-    stages = [e["stage"] for e in review_server.handle_episode(stem)["entries"]]
+    stages = [e["stage"] for e in review_server.handle_episode(stem, all_reasons=True)["entries"]]
 
     assert stages == ["repair_applied"] * 3 + ["repair"], "the refusal sorts last despite substituting a word"
 
@@ -981,8 +984,8 @@ def test_decide_batch_saves_every_verdict_in_one_store_write(tmp_path, monkeypat
 
     assert res["saved"] == 2 and not res.get("errors"), res
     assert len(saves) == 1, "one store write for the whole batch, not one per verdict"
-    pending = review_server.handle_episode(stem)["entries"]
-    assert [e["index"] for e in pending] == [], "and both entries left the queue"
+    pending = review_server.handle_episode(stem, all_reasons=True)["entries"]
+    assert {e["index"] for e in pending} == {2, 3, 4, 5}, "the two decided entries left; the never-decided rows remain"
     store = review_server.decisions.load("One Pace", str(tmp_path))
     first = review_server.decisions.lookup(store, _CARDS[0], "I saw Spandam") or {}
     second = review_server.decisions.lookup(store, _CARDS[1], "the ship has sailed") or {}
@@ -1013,7 +1016,7 @@ def test_decide_batch_lands_the_good_verdicts_and_names_the_bad_one(tmp_path, mo
     assert len(res["errors"]) == 2
     assert {e["index"] for e in res["errors"]} == {0, 99}
     assert "not offered" in res["errors"][0]["error"]
-    left = {e["index"] for e in review_server.handle_episode(stem)["entries"]}
+    left = {e["index"] for e in review_server.handle_episode(stem, all_reasons=True)["entries"]}
     assert 1 not in left and 0 in left, "the accepted entry is still queued, the forced one is not"
 
 
@@ -1046,20 +1049,20 @@ def test_a_line_decided_on_one_episode_is_hidden_on_every_other(tmp_path, monkey
     monkeypatch.setattr(review_server.decisions, "show_for", lambda p, *a, **k: "One Pace")
     stems = [_triage_episode(tmp_path, n) for n in ("e01", "e02")]
 
-    e01 = review_server.handle_episode(stems[0])["entries"]
+    e01 = review_server.handle_episode(stems[0], all_reasons=True)["entries"]
     # By INDEX, which addresses the jsonl row -- not by display position, which the triage
     # sort reorders. Picking the deletion deliberately: it is the class no gate can see.
     target = next(e for e in e01 if "flame fruit" in e["proposed_text"])
-    before = len(review_server.handle_episode(stems[1])["entries"])
+    before = len(review_server.handle_episode(stems[1], all_reasons=True)["entries"])
 
     review_server.handle_decide_batch(stems[0], [{"index": target["index"], "verdict": "reject"}])
-    after = review_server.handle_episode(stems[1])["entries"]
+    after = review_server.handle_episode(stems[1], all_reasons=True)["entries"]
 
     assert len(after) == before - 1, "the same line, decided next door, is no longer asked"
     assert all("flame fruit" not in e["proposed_text"] for e in after)
-    assert review_server.handle_episode(stems[1])["settled_elsewhere"] == 1, "and the page says so"
+    assert review_server.handle_episode(stems[1], all_reasons=True)["settled_elsewhere"] == 1, "and the page says so"
     idx = {e["stem"]: e for e in review_server.handle_index()["episodes"]}
-    assert idx[stems[1]]["admitted"] == before - 1, "and the index count agrees with the page"
+    assert idx[stems[1]]["pending"] == 0, "the settled line is not work anywhere; only its audit count rides along"
 
 
 def _shared_library(tmp_path):
@@ -1107,12 +1110,12 @@ def test_deciding_a_shared_line_clears_it_from_every_episode(tmp_path, monkeypat
     monkeypatch.setattr(review_server, "_STEMS_CACHE", (0.0, []))
     monkeypatch.setattr(review_server.decisions, "DECISIONS_DIR", str(tmp_path))
     monkeypatch.setattr(review_server, "show_for", lambda s: "One Pace")
-    assert [len(review_server.handle_episode(s)["entries"]) for s in stems] == [2, 2, 2]
+    assert [len(review_server.handle_episode(s, all_reasons=True)["entries"]) for s in stems] == [2, 2, 2]
 
     res = review_server.handle_shared_decide([{"id": review_server.handle_shared()["pairs"][0]["id"], "verdict": "accept"}])
 
     assert res["saved"] == 1 and not res["errors"]
-    assert [len(review_server.handle_episode(s)["entries"]) for s in stems] == [1, 1, 1], "gone from all three"
+    assert [len(review_server.handle_episode(s, all_reasons=True)["entries"]) for s in stems] == [1, 1, 1], "gone from all three"
     assert review_server.handle_shared()["pairs"] == [], "and off the shared page too"
 
 
@@ -1286,7 +1289,9 @@ def test_deciding_re_reads_that_episode_and_leaves_the_rest_cached(tmp_path, mon
     monkeypatch.setattr(review_server.decisions, "DECISIONS_DIR", str(tmp_path))
     monkeypatch.setattr(review_server, "show_for", lambda s: "One Pace")
     review_server.handle_index()
-    target = next(e for e in review_server.handle_episode(stems[0])["entries"] if "flame fruit" in e["proposed_text"])
+    target = next(
+        e for e in review_server.handle_episode(stems[0], all_reasons=True)["entries"] if "flame fruit" in e["proposed_text"]
+    )
     reads = []
     real = unresolved.items
     monkeypatch.setattr(unresolved, "items", lambda s: (reads.append(s), real(s))[1])
@@ -1308,12 +1313,14 @@ def test_a_verdict_is_visible_immediately_despite_the_queue_cache(tmp_path, monk
     monkeypatch.setattr(review_server, "_QUEUE_CACHE", {})
     monkeypatch.setattr(review_server.decisions, "DECISIONS_DIR", str(tmp_path))
     monkeypatch.setattr(review_server, "show_for", lambda s: "One Pace")
-    before = len(review_server.handle_episode(stems[1])["entries"])
-    target = next(e for e in review_server.handle_episode(stems[0])["entries"] if "flame fruit" in e["proposed_text"])
+    before = len(review_server.handle_episode(stems[1], all_reasons=True)["entries"])
+    target = next(
+        e for e in review_server.handle_episode(stems[0], all_reasons=True)["entries"] if "flame fruit" in e["proposed_text"]
+    )
 
     review_server.handle_decide_batch(stems[0], [{"index": target["index"], "verdict": "reject"}])
 
-    assert len(review_server.handle_episode(stems[1])["entries"]) == before - 1, (
+    assert len(review_server.handle_episode(stems[1], all_reasons=True)["entries"]) == before - 1, (
         "the sibling episode's queue file did not change, but the answer did"
     )
 
@@ -1409,7 +1416,7 @@ def test_an_entry_carries_the_cards_either_side_of_it(tmp_path, monkeypatch):
     monkeypatch.setattr(review_server, "ROOTS", [str(tmp_path)])
     monkeypatch.setattr(review_server, "_STEMS_CACHE", None)
     stem = _episode(tmp_path)
-    out = review_server.handle_episode(stem)
+    out = review_server.handle_episode(stem, all_reasons=True)
 
     by_orig = {e["original_text"]: e for e in out["entries"]}
     mid = by_orig["the ship sailed"]  # _CARDS[1] -- a neighbour on each side
@@ -1607,25 +1614,27 @@ def test_oldest_pending_at_is_the_earliest_entry_ts_among_the_undecided(tmp_path
     stem = _episode(tmp_path, "busy")
     rows = unresolved.items(stem)
     rows[0]["ts"] = _recent_ts(3)
-    rows[1]["ts"] = _recent_ts(4)  # rejected_guard: pending, the oldest
+    rows[1]["ts"] = _recent_ts(9)  # rejected_guard: audit, not a question -- not counted
     rows[2]["ts"] = _recent_ts(2)
-    rows[3]["ts"] = _recent_ts(6)  # llm_empty is not a primary reason: not counted
+    rows[3]["ts"] = _recent_ts(6)  # llm_empty is not a question: not counted
+    rows[4]["ts"] = _recent_ts(4)  # decision_unfittable: pending, the oldest counted row
+    rows[5]["ts"] = _recent_ts(1)
     unresolved._rewrite(stem, rows)
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
-    assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == rows[1]["ts"]
+    assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == rows[4]["ts"]
 
 
 def test_oldest_pending_at_ignores_a_decided_entry(tmp_path, monkeypatch):
     stem = _episode(tmp_path, "busy")
     rows = unresolved.items(stem)
-    for e, days in zip(rows, (2, 5, 1, 3)):
+    for e, days in zip(rows, (2, 5, 1, 3, 9, 4)):
         e["ts"] = _recent_ts(days)
-    rows[1]["resolved"] = True  # the oldest is settled
+    rows[4]["resolved"] = True  # the oldest settle-only row is settled
     unresolved._rewrite(stem, rows)
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
-    assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == rows[0]["ts"]
+    assert review_server.handle_index()["episodes"][0]["oldest_pending_at"] == rows[5]["ts"]
 
 
 def test_oldest_pending_at_falls_back_to_the_store_mtime_when_no_entry_has_a_ts(tmp_path, monkeypatch):

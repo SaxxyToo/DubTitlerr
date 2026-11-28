@@ -10,7 +10,7 @@ const natural = (/** @type {string} */ a, /** @type {string} */ b) =>
   a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 
 /**
- * @template {{ show: string, season: string, name: string, admitted: number, oldest_pending_at?: string | null }} T
+ * @template {{ show: string, season: string, name: string, pending: number, admitted: number, oldest_pending_at?: string | null }} T
  * @param {T} a
  * @param {T} b
  */
@@ -18,14 +18,14 @@ const byEpisode = (a, b) => natural(a.show, b.show) || natural(a.season, b.seaso
 
 /**
  * A sorted copy of the episodes. Unknown orders keep the input order.
- * @template {{ show: string, season: string, name: string, admitted: number, oldest_pending_at?: string | null }} T
+ * @template {{ show: string, season: string, name: string, pending: number, admitted: number, oldest_pending_at?: string | null }} T
  * @param {T[]} episodes
  * @param {string} order
  * @returns {T[]}
  */
 export function sortEpisodes(episodes, order) {
   if (order === 'episode') return episodes.slice().sort(byEpisode);
-  if (order === 'pending') return episodes.slice().sort((a, b) => b.admitted - a.admitted || byEpisode(a, b));
+  if (order === 'pending') return episodes.slice().sort((a, b) => b.pending - a.pending || byEpisode(a, b));
   // oldest_pending_at is the oldest undecided entry's own timestamp (the queue file's write time only when no entry
   // carries one), ISO 8601 UTC in one fixed format, so string order is time order. Episodes without one go last.
   if (order === 'oldest')

@@ -65,8 +65,8 @@ test('the queue labels what each repair was anchored on and filters by it', asyn
   await anchors.selectOption('all');
   await expect(page.getByTestId('evidence')).toContainText(/Line \d+ of 4/);
 
-  // A card with no reference at all. S02E04 holds only a refused entry, so the inbox hides it
-  // until the include-refused toggle is on.
+  // A card with no reference at all. S02E04 also carries a refused entry as its audit example;
+  // its unanchored question is what the workspace opens on (2026-11-27 default-view change).
   await page.getByRole('checkbox', { name: /Include episodes where every repair was turned down/ }).check();
   await page.getByLabel('Search episodes').fill('Paper Moon');
   await page.getByRole('button', { name: /Paper Moon.*S02E04/ }).click();
