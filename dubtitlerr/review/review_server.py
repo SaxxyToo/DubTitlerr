@@ -627,7 +627,9 @@ def handle_shared() -> dict:
         show = show_for(stem)
         if not show:
             continue  # a decision has nowhere to go without one, so there is nothing to offer
-        for e in unresolved.undecided(open_entries(stem), _store_for(stem, stores)):
+        # The unfiltered walk on purpose: `repair_applied` entries left the default view in
+        # the 2026-11-27 owner decision, and this cross-episode batching is their surface.
+        for e in unresolved.undecided(unresolved.live_only(stem, unresolved.pending(stem)), _store_for(stem, stores)):
             if e.get("stage") != "repair_applied":
                 continue
             orig, prop = e.get("original_text", ""), e.get("proposed_text", "")

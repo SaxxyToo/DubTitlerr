@@ -59,13 +59,13 @@ def test_dismissal_is_empty_when_off_or_not_over_the_threshold(monkeypatch):
 # ---- the queue skips dismissed entries and can show them ----------- ----
 
 
-def test_pending_primary_only_skips_dismissed_but_the_full_view_keeps_them(tmp_path):
+def test_pending_primary_only_no_longer_shows_guard_refusals_but_the_full_view_keeps_them(tmp_path):
     stem = str(tmp_path / "ep")
     unresolved.record(stem, "repair", "rejected_guard", original_text="a", proposed_text="b")
     unresolved.record(
         stem, "repair", "rejected_guard", original_text="c", proposed_text="d e f g h", dismissed="large_change", changes=6
     )
-    assert [e["original_text"] for e in unresolved.pending(stem, primary_only=True)] == ["a"]
+    assert unresolved.pending(stem, primary_only=True) == []  # audit classes left the default view (2026-11-27)
     assert len(unresolved.pending(stem)) == 2  # the unfiltered walk (and the page's all-reasons toggle) still returns everything
 
 
@@ -151,12 +151,12 @@ def test_a_large_change_is_recorded_dismissed_and_counted(tmp_path, monkeypatch)
     assert unresolved.pending(stem, primary_only=True) == []
 
 
-def test_a_small_change_is_still_queued(tmp_path, monkeypatch):
+def test_a_small_change_is_not_dismissed(tmp_path, monkeypatch):
     monkeypatch.setenv("REPAIR_AUTO_DISMISS_WORDS", "6")
     stem, summary = _episode(tmp_path, monkeypatch, "the old line", "the old line is here now")  # ratio too big
     (entry,) = unresolved.items(stem)
     assert "dismissed" not in entry and summary["dismissed_large_change"] == 0
-    assert len(unresolved.pending(stem, primary_only=True)) == 1
+    assert len(unresolved.pending(stem)) == 1  # kept in the walk; the default view no longer shows refusals
 
 
 def test_a_name_invented_rejection_is_dismissed_too(tmp_path, monkeypatch):

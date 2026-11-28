@@ -24,7 +24,9 @@ def episode(tmp_path, monkeypatch):
             {"start": 3.0, "end": 5.0, "text": "We need a factory."},
         ],
     )
-    unresolved.record(stem, "repair_applied", "accepted", original_text="We need a factory.", proposed_text="We need a needle.")
+    unresolved.record(
+        stem, "repair", "decision_unfittable", original_text="We need a factory.", proposed_text="We need a needle."
+    )
     gloss = tmp_path / "glossaries"
     gloss.mkdir()
     (gloss / "Test Show.json").write_text('{"show":"Test Show"}')
@@ -60,7 +62,7 @@ def test_workspace_stale_verdict_cannot_decide_replaced_row(episode):
             }
         ],
     )
-    result = rs.handle_decide_batch(episode, [{"index": row["index"], "id": stale_id, "verdict": "accept"}])
+    result = rs.handle_decide_batch(episode, [{"index": row["index"], "id": stale_id, "verdict": "reject"}])
     assert result["saved"] == 0
     assert "stale" in result["errors"][0]["error"]
     assert not decisions.load("Test Show", decisions.DECISIONS_DIR)
@@ -141,7 +143,7 @@ def test_workspace_already_resolved_row_is_refused_as_stale(episode):
     row = rs.handle_episode(episode)["entries"][0]
     assert unresolved.resolve(episode, row["index"], accept=False, note="resolved elsewhere")
     assert not decisions.load("Test Show", decisions.DECISIONS_DIR)
-    result = rs.handle_decide_batch(episode, [{"index": row["index"], "id": row["id"], "verdict": "accept"}])
+    result = rs.handle_decide_batch(episode, [{"index": row["index"], "id": row["id"], "verdict": "reject"}])
     assert result["saved"] == 0
     assert "stale" in result["errors"][0]["error"]
     assert not decisions.load("Test Show", decisions.DECISIONS_DIR), "no verdict was written for a row nobody could still decide"
@@ -161,6 +163,11 @@ def test_a_save_with_nothing_to_save_has_the_documented_shape(episode):
 def test_shared_errors_are_keyed_by_id_everywhere(episode, monkeypatch):
     stem2 = episode.replace("S01E01", "S01E02")
     store_seed.conf(stem2 + rs.CONF_SUFFIX, [{"start": 3.0, "end": 5.0, "text": "We need a factory."}])
+    # The shared view batches only repair_applied rows (a refusal's ASR text is not batched),
+    # and the fixture's own row is settle-class now -- record the pair on both episodes.
+    unresolved.record(
+        episode, "repair_applied", "accepted", original_text="We need a factory.", proposed_text="We need a needle."
+    )
     unresolved.record(stem2, "repair_applied", "accepted", original_text="We need a factory.", proposed_text="We need a needle.")
     monkeypatch.setattr(rs, "_STEMS_CACHE", None)
     monkeypatch.setattr(rs, "_QUEUE_CACHE", {})
