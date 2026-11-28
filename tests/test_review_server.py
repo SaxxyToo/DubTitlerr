@@ -818,16 +818,17 @@ def test_the_episode_view_hides_entries_orphaned_by_a_re_transcription(tmp_path,
 
 
 def test_the_index_counts_only_what_a_person_must_settle(tmp_path, monkeypatch):
-    """[Rewritten for the 2026-11-27 owner decision: the index's `pending` is the default
-    view's count -- `unresolved.needs_human` -- and the admitted/refused audit rows no
-    longer open an episode or count as work.]"""
-    stem = _episode(tmp_path)  # 2 settle-only rows now; the older rows are audit
+    """[Rewritten for the 2026-11-27 owner decision: `pending` is the default view's count --
+    `unresolved.needs_human` -- while admitted/refused ride along as the audit counts the
+    inbox's summary and include-refused toggle read; neither audit count opens an episode.]"""
+    stem = _episode(tmp_path)  # 2 settle-only rows; accepted/refused/no_reference/llm_empty are audit
     monkeypatch.setattr(review_server, "known_stems", lambda: [stem])
 
     ep = review_server.handle_index()["episodes"][0]
 
     assert ep["pending"] == 2, "settle-only rows, the ones a human must answer"
-    assert ep["admitted"] == 0, "audit rows no longer count here"
+    assert ep["admitted"] == 1, "the shipped-repair audit count rides along"
+    assert ep["refused"] == 1, "rejected_* only: no_reference and llm_empty are not refusals"
 
 
 # --- the index has to survive a real library ---------------------------------
@@ -1061,7 +1062,7 @@ def test_a_line_decided_on_one_episode_is_hidden_on_every_other(tmp_path, monkey
     assert all("flame fruit" not in e["proposed_text"] for e in after)
     assert review_server.handle_episode(stems[1], all_reasons=True)["settled_elsewhere"] == 1, "and the page says so"
     idx = {e["stem"]: e for e in review_server.handle_index()["episodes"]}
-    assert stems[1] not in idx, "its remaining rows are audit-only since the 2026-11-27 owner decision"
+    assert idx[stems[1]]["pending"] == 0, "the settled line is not work anywhere; only its audit count rides along"
 
 
 def _shared_library(tmp_path):

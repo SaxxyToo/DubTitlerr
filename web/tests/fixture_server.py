@@ -121,28 +121,31 @@ def main():
                     (
                         "We're looking for a factory.",
                         "We're looking for a needle.",
-                        "repair_applied",
-                        "accepted",
+                        "repair",
+                        "decision_unfittable",
                         "We need to find the factory.",
                         DUB,
                     ),
                     (
                         "meet me at the harbor",
                         "Meet me at the harbor.",
-                        "repair_applied",
-                        "accepted",
+                        "repair",
+                        "decision_unfittable",
                         "Meet at the port.",
                         TRANS,
                     ),
                     (
                         "The blue compass is ours.",
                         "The compass is ours.",
-                        "repair_applied",
-                        "accepted",
+                        "repair",
+                        "decision_unfittable",
                         "That blue compass belongs to us.",
                         {},
                     ),
-                    ("Wait for me!", "Weigh four me!", "repair", "rejected_guard", "Wait!", {}),
+                    ("Wait for me!", "Weigh four me!", "repair", "decision_unfittable", "Wait!", {}),
+                    # One half of the shared pair; S01E02 carries the other. Audit-only, so it
+                    # never renders as a default-view row (the "of 4" above stays honest).
+                    ("Let's move.", "Lets move!", "repair_applied", "accepted", "", {}),
                 ],
             ),
             (
@@ -158,18 +161,21 @@ def main():
                         TRANS,
                     ),
                     ("we can do this", "We can do this.", "repair_applied", "accepted", "We can manage.", {}),
+                    # Half of the shared pair; its partner is S01E03 -- shared pairs never
+                    # cross shows (one stored verdict keys on the show).
+                    ("Let's move.", "Lets move!", "repair_applied", "accepted", "", {}),
                 ],
             ),
             (
                 "Paper Moon",
                 "S02E03",
                 [
-                    ("The stars are bright.", "The scars are bright.", "repair_applied", "accepted", "Bright stars.", DUB),
+                    ("The stars are bright.", "The scars are bright.", "repair", "decision_unfittable", "Bright stars.", DUB),
                     (
                         "<img src=x onerror=alert(1)>",
                         "<script>bad</script>",
-                        "repair_applied",
-                        "accepted",
+                        "repair",
+                        "decision_unfittable",
                         "Untrusted subtitle text.",
                         {},
                     ),
@@ -180,6 +186,9 @@ def main():
                 "S02E04",
                 [
                     ("Stop there!", "Shop where!", "repair", "rejected_guard", "", {}),
+                    # The unanchored question the workspace opens on (the refusal above is
+                    # audit since 2026-11-27 and never renders as a default-view row).
+                    ("Stop there!", "Stop right there.", "repair", "decision_unfittable", "", {}),
                 ],
             ),
         ]

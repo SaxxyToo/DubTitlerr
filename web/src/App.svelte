@@ -226,17 +226,17 @@
   });
 
   const staged = $derived(Object.keys(drafts).length);
-  const admitted = $derived(episodes.reduce((n, ep) => n + ep.admitted, 0));
+  const pendingTotal = $derived(episodes.reduce((n, ep) => n + ep.pending, 0));
   const refused = $derived(episodes.reduce((n, ep) => n + ep.refused, 0));
   const shows = $derived([...new Set(episodes.map((ep) => ep.show))].sort());
-  // Episodes with at least one repair waiting for a person: the number the sidebar badge and the inbox agree on.
-  const toReview = $derived(episodes.filter((ep) => ep.admitted > 0).length);
+  // Episodes with at least one line only a person can settle: the number the sidebar badge and the inbox agree on.
+  const toReview = $derived(episodes.filter((ep) => ep.pending > 0).length);
   const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
   // The muted status line under the page title.
   const queueSummary = $derived(
     view === 'shared'
       ? `${plural(shared.length, 'repeated change')} across episodes. One verdict settles every copy.`
-      : `${plural(admitted, 'repair')} in ${plural(toReview, 'episode')} need a decision.` +
+      : `${plural(pendingTotal, 'repair')} in ${plural(toReview, 'episode')} need a decision.` +
           (refused
             ? ` ${plural(refused, 'other repair')} turned down by the safety check kept the original text.`
             : ''),
@@ -245,7 +245,9 @@
     sortEpisodes(
       episodes.filter(
         (ep) =>
-          (showRefused || ep.admitted > 0) &&
+          // The default list is the work: episodes with settle-only rows. The toggle adds the
+          // refusal-only audit episodes back; a shipped repair never lists an episode on its own.
+          (ep.pending > 0 || (showRefused && ep.admitted === 0 && ep.refused > 0)) &&
           (show === 'all' || ep.show === show) &&
           `${ep.show} ${ep.name} ${ep.season}`.toLowerCase().includes(query.toLowerCase()),
       ),
@@ -932,7 +934,7 @@
                     disabled={saving || loading}
                     ><span class="episode-copy"
                       ><strong>{ep.name}</strong><small
-                        >{ep.season}, {ep.admitted} to check{ep.refused
+                        >{ep.season}, {ep.pending} to check{ep.refused
                           ? `, ${ep.refused} turned down`
                           : ''}</small
                       ></span
@@ -1018,10 +1020,15 @@
                   <div class="card-meta">
                     <div>
                       <span class="badge neutral">{riskLabels[current.risk]}</span>{#if 'stage' in current}
-                        <!-- An admitted repair waits for a verdict; a turned-down one already kept the original text. -->
+                        <!-- An admitted repair waits for a verdict; a settle-only row is the
+                             reviewer's own decision come back refused; a turned-down one already
+                             kept the original text. -->
                         {#if current.stage === 'repair_applied'}<StatusBadge
                             status="pending"
                             label="Repair to check"
+                          />{:else if current.reason === 'decision_unfittable'}<StatusBadge
+                            status="pending"
+                            label="Verdict to settle"
                           />{:else}<StatusBadge
                             status="stale"
                             label="Turned down, original kept"

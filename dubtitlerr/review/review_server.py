@@ -285,18 +285,23 @@ def _stems_ttl(elapsed: float) -> float:
     return max(STEMS_TTL, elapsed * STEMS_TTL_FACTOR)
 
 
-def open_entries(stem: str) -> list:
-    """This episode's primary, still-live queue entries. Read once per walk, then held.
+def open_entries(stem: str, full: bool = False) -> list:
+    """This episode's still-live queue entries. Read once per walk, then held.
+
+    ``full=False`` (default): the primary, settle-only view -- the rows a person must settle.
+    ``full=True``: every live entry -- the audit walk the index reads admitted/refused counts
+    from and /api/shared batches ``repair_applied`` rows from. Both shapes share one cache
+    fill, so asking for the audit shape never costs a second store read.
 
     NOT filtered by the decisions store. That file is small, is read once per request, and
     changes on every save -- so filtering stays live and a verdict is reflected everywhere
     the moment it lands. Callers apply unresolved.undecided themselves."""
     cached = _QUEUE_CACHE.get(stem, _CACHE_MISS)
-    if cached is not _CACHE_MISS:
-        return cached
-    entries = unresolved.live_only(stem, unresolved.pending(stem, primary_only=True))
-    _QUEUE_CACHE[stem] = entries
-    return entries
+    if cached is _CACHE_MISS:
+        entries_all = unresolved.live_only(stem, unresolved.pending(stem))
+        cached = (unresolved.needs_human(entries_all), entries_all)
+        _QUEUE_CACHE[stem] = cached
+    return cached[1] if full else cached[0]
 
 
 def forget(stem: str) -> None:
@@ -378,13 +383,13 @@ def queue_written_at(stem: str):
 def handle_index() -> dict:
     """Every episode with something pending, split by what kind of question it is.
 
-    ADMITTED and REFUSED are not the same job and one number for both misleads. An admitted
-    repair is a change nothing checked the meaning of -- it SHIPPED, and `factory -> needle`
-    passes every gate; that is the reason this whole loop exists. A refusal means the ASR
-    text shipped, which is the safe outcome, and reviewing it asks the audit question of
-    whether the guard was too strict. Measured on the live library 2026-08-27: 8,662 pending
-    items, every one of them a refusal and none an admitted repair -- a single count read as
-    thousands of the urgent kind."""
+    PENDING counts what the default view opens with -- `unresolved.needs_human` -- the rows a
+    person must settle. ADMITTED and REFUSED are audit counts from the unfiltered live walk,
+    kept so the inbox can still tell a shipped repair from a turned-down one: the summary line
+    and the include-refused toggle read them, and neither audit count opens an episode on its
+    own (2026-11-27 owner decision; the old split's rationale lives in unresolved.PRIMARY). A
+    refusal is `rejected_*` only -- no_reference and llm_empty are release/run facts, not
+    refusals, and do not list an episode."""
     out, stores = [], {}
     for stem in known_stems():
         live = open_entries(stem)
@@ -392,9 +397,14 @@ def handle_index() -> dict:
         # opening song is 24 episodes of the same question; without this the count here
         # keeps promising work that the episode page no longer has.
         live = unresolved.undecided(live, _store_for(stem, stores))
-        if not live:
+        # The audit counts ride along from the FULL live walk: `pending` is the settle-only
+        # count the default view opens with, while admitted/refused let the inbox's summary
+        # and include-refused toggle still tell a shipped repair from a turned-down one.
+        full = unresolved.undecided(open_entries(stem, full=True), _store_for(stem, stores))
+        admitted = sum(1 for e in full if e.get("stage") == "repair_applied")
+        refused = sum(1 for e in full if str(e.get("reason") or "").startswith("rejected_"))
+        if not live and not admitted and not refused:
             continue
-        admitted = sum(1 for e in live if e.get("stage") == "repair_applied")
         season = os.path.basename(os.path.dirname(stem))
         # Entries written before they were stamped have no ts; the sidecar's mtime stands in only when none of these has one.
         stamps = [e["ts"] for e in live if isinstance(e.get("ts"), str) and e["ts"]]
@@ -411,13 +421,13 @@ def handle_index() -> dict:
                 "show": os.path.basename(os.path.dirname(os.path.dirname(stem))),
                 "pending": len(live),
                 "admitted": admitted,
-                "refused": len(live) - admitted,
+                "refused": refused,
                 "oldest_pending_at": oldest_at,
             }
         )
-    # Most admitted first. With everything at 0 the flat list had no meaningful order at all,
-    # so the episode that gains an accepted repair has to surface without being hunted for.
-    out.sort(key=lambda e: (-e["admitted"], -e["refused"], e["name"]))
+    # Most settle questions first, then the audit counts, then name. With the default view
+    # narrowed the questions are the work; the audit counts only order the tail.
+    out.sort(key=lambda e: (-e["pending"], -e["admitted"], -e["refused"], e["name"]))
     return {"episodes": out}
 
 
@@ -629,7 +639,7 @@ def handle_shared() -> dict:
             continue  # a decision has nowhere to go without one, so there is nothing to offer
         # The unfiltered walk on purpose: `repair_applied` entries left the default view in
         # the 2026-11-27 owner decision, and this cross-episode batching is their surface.
-        for e in unresolved.undecided(unresolved.live_only(stem, unresolved.pending(stem)), _store_for(stem, stores)):
+        for e in unresolved.undecided(open_entries(stem, full=True), _store_for(stem, stores)):
             if e.get("stage") != "repair_applied":
                 continue
             orig, prop = e.get("original_text", ""), e.get("proposed_text", "")
